@@ -1,0 +1,10 @@
+{
+    "defaultTemplate": "",
+    "templates": [
+        {
+            "name": "示例模板",
+            "file": "example.docx",
+            "description": "标准文档结构模板"
+        }
+    ]
+}

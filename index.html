@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmartDoc AI - 智能文档审核工具</title>
+    <script src="./libs/tailwind/tailwind.min.js"></script>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="./libs/fontawesome/css/all.min.css">
+    <script src="./libs/mammoth.browser.min.js"></script>
+    <script src="./libs/pdf.min.js"></script>
+    <script src="./libs/xlsx.full.min.js"></script>
+</head>
+<body class="bg-gray-50 text-gray-800 h-screen overflow-hidden">
+
+<!-- 顶部导航 -->
+<header class="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-6 shadow-sm z-20">
+    <div class="flex items-center gap-3">
+        <div class="w-8 h-8 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-lg flex items-center justify-center text-white font-bold">
+            <i class="fas fa-file-signature"></i>
+        </div>
+        <h1 class="font-bold text-lg text-gray-900">SmartDoc <span class="text-blue-600">AI</span></h1>
+        <span class="px-2 py-0.5 bg-blue-50 text-blue-600 text-xs rounded-full border border-blue-100">Beta</span>
+    </div>
+    
+    <div class="flex items-center gap-4">
+        <button onclick="app.toggleSettings()" class="text-gray-600 hover:text-gray-900 transition-colors">
+            <i class="fas fa-cog mr-1"></i> API设置
+        </button>
+        <div class="h-4 w-px bg-gray-300"></div>
+        <button onclick="app.exportReport()" class="bg-gray-900 hover:bg-gray-800 text-white px-4 py-1.5 rounded-lg text-sm transition-all flex items-center gap-2">
+            <i class="fas fa-download"></i> 导出报告
+        </button>
+    </div>
+</header>
+
+<!-- 主体三栏布局 -->
+<div class="flex h-[calc(100vh-3.5rem)]">
+    
+    <!-- 左侧面板：模板与结构 -->
+    <aside class="w-80 bg-white border-r border-gray-200 flex flex-col">
+        <div class="p-4 border-b border-gray-100">
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="font-semibold text-gray-900">文档结构</h2>
+                <span id="structureScore" class="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-600 hidden">匹配度: --</span>
+            </div>
+            
+            <!-- 上传区 -->
+            <div class="space-y-2">
+                <div class="relative group">
+                    <input type="file" id="templateInput" accept=".docx,.pdf,.txt,.md" class="hidden" onchange="app.handleTemplateUpload(this)">
+                    <label for="templateInput" class="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg cursor-pointer hover:bg-blue-100 transition-colors">
+                        <i class="fas fa-file-import text-blue-600"></i>
+                        <div class="text-sm">
+                            <div class="font-medium text-blue-900">上传模板</div>
+                            <div class="text-xs text-blue-600">作为标准结构</div>
+                        </div>
+                    </label>
+                </div>
+                
+                <div class="relative group">
+                    <input type="file" id="docInput" accept=".docx,.pdf,.txt,.md" class="hidden" onchange="app.handleDocUpload(this)">
+                    <label for="docInput" class="flex items-center gap-2 p-3 bg-gray-50 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors">
+                        <i class="fas fa-file-alt text-gray-600"></i>
+                        <div class="text-sm">
+                            <div class="font-medium text-gray-900">上传待审文档</div>
+                            <div class="text-xs text-gray-500">需要检查的文件</div>
+                        </div>
+                    </label>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 结构树 -->
+        <div class="flex-1 overflow-y-auto p-4" id="structureTree">
+            <div class="text-center text-gray-400 mt-20">
+                <i class="fas fa-sitemap text-4xl mb-3 opacity-30"></i>
+                <p class="text-sm">请先上传文档</p>
+            </div>
+        </div>
+        
+        <!-- 结构比对结果 -->
+        <div class="border-t border-gray-200 p-4 bg-gray-50" id="structureDiff" style="display:none;">
+            <h3 class="text-xs font-semibold text-gray-500 uppercase mb-2">结构差异</h3>
+            <div id="diffList" class="space-y-1 max-h-40 overflow-y-auto text-sm"></div>
+        </div>
+    </aside>
+
+    <!-- 中央面板：文档预览与对比 -->
+    <main class="flex-1 flex flex-col bg-gray-50/50">
+        <!-- 标签页 -->
+        <div class="flex items-center gap-1 p-2 bg-white border-b border-gray-200">
+            <button onclick="app.switchTab('preview')" id="tab-preview" class="px-4 py-2 text-sm font-medium rounded-lg bg-gray-100 text-gray-900">
+                <i class="fas fa-eye mr-1"></i> 文档预览
+            </button>
+            <button onclick="app.switchTab('compare')" id="tab-compare" class="px-4 py-2 text-sm font-medium rounded-lg text-gray-600 hover:bg-gray-50">
+                <i class="fas fa-code-compare mr-1"></i> 结构对比
+            </button>
+            <button onclick="app.switchTab('audit')" id="tab-audit" class="px-4 py-2 text-sm font-medium rounded-lg text-gray-600 hover:bg-gray-50 relative">
+                <i class="fas fa-robot mr-1"></i> AI审核结果
+                <span id="auditBadge" class="hidden absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full"></span>
+            </button>
+        </div>
+
+        <!-- 内容区 -->
+        <div class="flex-1 overflow-hidden relative">
+            <!-- 预览视图 -->
+            <div id="view-preview" class="h-full overflow-y-auto p-8">
+                <div id="docContent" class="max-w-3xl mx-auto bg-white shadow-lg rounded-xl p-12 min-h-[800px]">
+                    <div class="text-center text-gray-400 mt-32">
+                        <i class="fas fa-file-lines text-6xl mb-4 opacity-20"></i>
+                        <p>上传文档后开始预览</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 对比视图 -->
+            <div id="view-compare" class="hidden h-full overflow-y-auto p-8">
+                <div class="grid grid-cols-2 gap-6 max-w-6xl mx-auto">
+                    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                        <h3 class="font-semibold mb-4 text-gray-900 flex items-center gap-2">
+                            <i class="fas fa-check-circle text-green-600"></i> 模板结构
+                        </h3>
+                        <div id="templateStructure" class="space-y-2 text-sm"></div>
+                    </div>
+                    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                        <h3 class="font-semibold mb-4 text-gray-900 flex items-center gap-2">
+                            <i class="fas fa-file-lines text-blue-600"></i> 实际文档
+                        </h3>
+                        <div id="docStructure" class="space-y-2 text-sm"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AI审核视图 -->
+            <div id="view-audit" class="hidden h-full overflow-y-auto p-8">
+                <div class="max-w-4xl mx-auto space-y-6" id="auditResults">
+                    <div class="text-center text-gray-400 mt-32">
+                        <i class="fas fa-clipboard-check text-6xl mb-4 opacity-20"></i>
+                        <p>点击"运行AI审核"开始检查</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 底部状态栏 -->
+        <div class="h-10 bg-white border-t border-gray-200 flex items-center justify-between px-4 text-xs text-gray-600">
+            <div class="flex items-center gap-4">
+                <span id="statusText">就绪</span>
+                <span id="progressBar" class="hidden w-32 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                    <span class="block h-full bg-blue-600 w-0 transition-all duration-300" id="progressFill"></span>
+                </span>
+            </div>
+            <div class="flex items-center gap-4">
+                <span id="wordCount">字数: 0</span>
+                <span id="apiStatus" class="flex items-center gap-1 text-yellow-600">
+                    <i class="fas fa-circle text-[8px]"></i> API未配置
+                </span>
+            </div>
+        </div>
+    </main>
+
+    <!-- 右侧面板：规则配置 -->
+    <aside class="w-96 bg-white border-l border-gray-200 flex flex-col">
+        <div class="p-4 border-b border-gray-100">
+            <h2 class="font-semibold text-gray-900 mb-3">审核规则</h2>
+            
+            <!-- Excel上传 -->
+            <div class="mb-4">
+                <input type="file" id="excelInput" accept=".xlsx,.xls,.csv" class="hidden" onchange="app.handleExcelUpload(this)">
+                <label for="excelInput" class="block p-3 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition-all cursor-pointer text-center">
+                    <i class="fas fa-table text-gray-400 mb-1"></i>
+                    <div class="text-xs text-gray-600 font-medium" id="excelLabel">上传Excel数据源</div>
+                    <div class="text-[10px] text-gray-400 mt-0.5">支持在规则中引用列数据</div>
+                </label>
+            </div>
+
+            <div class="flex gap-2">
+                <button onclick="app.addRule()" class="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2">
+                    <i class="fas fa-plus"></i> 添加规则
+                </button>
+                <button onclick="app.exportRulesToFile()" class="py-2 px-3 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-sm font-medium transition-colors" title="保存规则到文件">
+                    <i class="fas fa-save"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- 规则列表 -->
+        <div class="flex-1 overflow-y-auto p-4 space-y-3" id="rulesList">
+            <div class="text-center text-gray-400 mt-8 text-sm">
+                暂无规则，点击上方添加
+            </div>
+        </div>
+
+        <!-- 运行按钮 -->
+        <div class="p-4 border-t border-gray-200 bg-gray-50">
+            <button onclick="app.runAudit()" id="runAuditBtn" class="w-full py-3 bg-gray-900 hover:bg-gray-800 text-white rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                <i class="fas fa-play"></i> 运行AI审核
+            </button>
+            <div class="text-[10px] text-gray-500 text-center mt-2">
+                支持 {{excel.sheet.列名}} 语法引用Excel数据
+            </div>
+        </div>
+    </aside>
+</div>
+
+<!-- 设置模态框 -->
+<div id="settingsModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
+    <div class="bg-white rounded-2xl shadow-2xl w-[600px] max-h-[80vh] flex flex-col">
+        <div class="p-6 border-b border-gray-100 flex justify-between items-center">
+            <h2 class="text-xl font-bold text-gray-900">API 设置</h2>
+            <button onclick="app.toggleSettings()" class="text-gray-400 hover:text-gray-600">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+        
+        <div class="p-6 overflow-y-auto space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">API 提供商</label>
+                <select id="apiProvider" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    <option value="custom">自定义兼容OpenAI API</option>
+                </select>
+            </div>
+            
+            <div id="apiEndpointGroup">
+                <label class="block text-sm font-medium text-gray-700 mb-1">API Endpoint</label>
+                <input type="text" id="apiEndpoint" placeholder="https://api.openai.com/v1/chat/completions" 
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-mono text-sm">
+            </div>
+            
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">API Key</label>
+                <input type="password" id="apiKey" placeholder="sk-..." 
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-mono text-sm">
+                <p class="text-xs text-gray-500 mt-1">密钥仅保存在本地浏览器中</p>
+            </div>
+            
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">模型</label>
+                <input type="text" id="apiModel" placeholder="gpt-4" value="gpt-4"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-mono text-sm">
+            </div>
+            
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">审核角色</label>
+                <input type="text" id="auditRole" value="专业文档审核专家" 
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-mono text-sm">
+                <p class="text-xs text-gray-500 mt-1">设置AI审核员的角色身份</p>
+            </div>
+            
+            <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">
+                <i class="fas fa-info-circle mr-1"></i>
+                使用提示：支持所有兼容OpenAI API格式的服务，包括国产大模型转接
+            </div>
+        </div>
+        
+        <div class="p-6 border-t border-gray-100 flex justify-end gap-3">
+            <button onclick="app.testConnection()" class="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium">
+                测试连接
+            </button>
+            <button onclick="app.saveSettings()" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">
+                保存设置
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- 规则编辑模态框 -->
+<div id="ruleModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh]">
+        <div class="p-6 border-b border-gray-100 flex justify-between items-center">
+            <h2 class="text-lg font-bold text-gray-900">编辑审核规则</h2>
+            <button onclick="app.closeRuleModal()" class="text-gray-400 hover:text-gray-600">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+        
+        <div class="p-6 overflow-y-auto space-y-4 flex-1">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">规则名称</label>
+                <input type="text" id="ruleName" placeholder="例如：检查敏感词" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+            </div>
+            
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">审核内容描述（自然语言）</label>
+                <textarea id="rulePrompt" rows="6" placeholder="请检查文档中是否包含敏感词，如发现请指出具体位置和修改建议... 支持使用 {{excel.工作表1.列名}} 引用Excel数据" 
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm resize-none"></textarea>
+                <div class="flex justify-between mt-1">
+                    <span class="text-xs text-gray-500">支持变量：{{doc.content}}, {{doc.structure}}, {{excel.表名.列}}</span>
+                    <button onclick="app.insertExcelVar()" class="text-xs text-blue-600 hover:underline" id="insertVarBtn" style="display:none;">
+                        插入Excel变量
+                    </button>
+                </div>
+            </div>
+            
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">严重级别</label>
+                <select id="ruleSeverity" class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                    <option value="error">错误 (必须修复)</option>
+                    <option value="warning">警告 (建议修改)</option>
+                    <option value="info">提示 (仅供参考)</option>
+                </select>
+            </div>
+        </div>
+        
+        <div class="p-6 border-t border-gray-100 flex justify-end gap-3">
+            <button onclick="app.closeRuleModal()" class="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg text-sm">取消</button>
+            <button onclick="app.saveRule()" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">保存规则</button>
+        </div>
+    </div>
+</div>
+
+<!-- Excel列选择器 -->
+<div id="excelVarModal" class="hidden fixed inset-0 bg-black/30 backdrop-blur-sm z-[60] flex items-center justify-center">
+    <div class="bg-white rounded-xl shadow-2xl p-6 w-80">
+        <h3 class="font-bold text-gray-900 mb-4">选择Excel列</h3>
+        <div id="excelSheets" class="space-y-3 max-h-60 overflow-y-auto"></div>
+        <div class="mt-4 flex justify-end">
+            <button onclick="document.getElementById('excelVarModal').classList.add('hidden')" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm">关闭</button>
+        </div>
+    </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
