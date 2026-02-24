@@ -10,6 +10,11 @@
     <script src="./libs/mammoth.browser.min.js"></script>
     <script src="./libs/pdf.min.js"></script>
     <script src="./libs/xlsx.full.min.js"></script>
+    <script src="./js/config-loader.js"></script>
+    <script src="./js/document-parser.js"></script>
+    <script src="./js/rules-manager.js"></script>
+    <script src="./js/ai-audit.js"></script>
+    <script src="./js/ui-helpers.js"></script>
 </head>
 <body class="bg-gray-50 text-gray-800 h-screen overflow-hidden">
 
@@ -24,6 +29,9 @@
     </div>
     
     <div class="flex items-center gap-4">
+        <button onclick="app.showHelp()" class="text-gray-600 hover:text-gray-900 transition-colors">
+            <i class="fas fa-question-circle mr-1"></i> 使用说明
+        </button>
         <button onclick="app.toggleSettings()" class="text-gray-600 hover:text-gray-900 transition-colors">
             <i class="fas fa-cog mr-1"></i> API设置
         </button>
@@ -164,6 +172,15 @@
     <aside class="w-96 bg-white border-l border-gray-200 flex flex-col">
         <div class="p-4 border-b border-gray-100">
             <h2 class="font-semibold text-gray-900 mb-3">审核规则</h2>
+            
+            <!-- 规则组选择器 -->
+            <div class="mb-4">
+                <label class="text-xs text-gray-500 mb-1 block">规则组</label>
+                <select id="ruleGroupSelect" onchange="app.switchRuleGroup(this.value)" 
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    <option value="default">默认规则</option>
+                </select>
+            </div>
             
             <!-- Excel上传 -->
             <div class="mb-4">
@@ -317,6 +334,141 @@
         <div id="excelSheets" class="space-y-3 max-h-60 overflow-y-auto"></div>
         <div class="mt-4 flex justify-end">
             <button onclick="document.getElementById('excelVarModal').classList.add('hidden')" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm">关闭</button>
+        </div>
+    </div>
+</div>
+
+<!-- 使用说明模态框 -->
+<div id="helpModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col">
+        <div class="p-6 border-b border-gray-100 flex justify-between items-center">
+            <h2 class="text-xl font-bold text-gray-900">
+                <i class="fas fa-book-open text-blue-600 mr-2"></i>使用说明
+            </h2>
+            <button onclick="app.closeHelp()" class="text-gray-400 hover:text-gray-600">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+        
+        <div class="p-6 overflow-y-auto space-y-6 flex-1">
+            <!-- 快速开始 -->
+            <section>
+                <h3 class="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                    <span class="w-6 h-6 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-sm font-bold">1</span>
+                    快速开始
+                </h3>
+                <div class="bg-gray-50 rounded-xl p-4 space-y-3">
+                    <div class="flex items-start gap-3">
+                        <div class="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                            <i class="fas fa-key text-blue-600 text-sm"></i>
+                        </div>
+                        <div>
+                            <p class="font-medium text-gray-900">配置API</p>
+                            <p class="text-sm text-gray-500">点击右上角「API设置」，填写您的API密钥和端点地址</p>
+                        </div>
+                    </div>
+                    <div class="flex items-start gap-3">
+                        <div class="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                            <i class="fas fa-file-upload text-green-600 text-sm"></i>
+                        </div>
+                        <div>
+                            <p class="font-medium text-gray-900">上传文档</p>
+                            <p class="text-sm text-gray-500">上传模板（可选）和待审核文档，支持 docx、pdf、txt、md 格式</p>
+                        </div>
+                    </div>
+                    <div class="flex items-start gap-3">
+                        <div class="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                            <i class="fas fa-play text-purple-600 text-sm"></i>
+                        </div>
+                        <div>
+                            <p class="font-medium text-gray-900">运行审核</p>
+                            <p class="text-sm text-gray-500">选择规则组，点击「运行AI审核」按钮开始智能审核</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 功能说明 -->
+            <section>
+                <h3 class="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                    <span class="w-6 h-6 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-sm font-bold">2</span>
+                    功能说明
+                </h3>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="border border-gray-200 rounded-xl p-4">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fas fa-sitemap text-blue-500"></i>
+                            <span class="font-medium">结构对比</span>
+                        </div>
+                        <p class="text-sm text-gray-500">上传模板后，自动对比文档结构，检测缺失或多余的章节</p>
+                    </div>
+                    <div class="border border-gray-200 rounded-xl p-4">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fas fa-robot text-green-500"></i>
+                            <span class="font-medium">AI审核</span>
+                        </div>
+                        <p class="text-sm text-gray-500">基于自定义规则，AI智能分析文档内容并给出修改建议</p>
+                    </div>
+                    <div class="border border-gray-200 rounded-xl p-4">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fas fa-layer-group text-purple-500"></i>
+                            <span class="font-medium">规则组</span>
+                        </div>
+                        <p class="text-sm text-gray-500">预设多套规则组，可快速切换不同审核标准</p>
+                    </div>
+                    <div class="border border-gray-200 rounded-xl p-4">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fas fa-table text-orange-500"></i>
+                            <span class="font-medium">Excel数据</span>
+                        </div>
+                        <p class="text-sm text-gray-500">上传Excel作为数据源，在规则中引用动态数据</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 规则编写 -->
+            <section>
+                <h3 class="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                    <span class="w-6 h-6 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-sm font-bold">3</span>
+                    规则编写指南
+                </h3>
+                <div class="bg-gray-50 rounded-xl p-4">
+                    <p class="text-sm text-gray-600 mb-3">规则使用自然语言描述，AI会根据您的描述进行审核。支持的变量：</p>
+                    <div class="space-y-2 text-sm">
+                        <div class="flex items-center gap-2">
+                            <code class="bg-gray-200 px-2 py-0.5 rounded text-xs">{{excel.工作表名.列名}}</code>
+                            <span class="text-gray-500">引用Excel中的数据</span>
+                        </div>
+                    </div>
+                    <div class="mt-4 p-3 bg-white rounded-lg border border-gray-200">
+                        <p class="text-xs text-gray-500 mb-1">示例规则：</p>
+                        <p class="text-sm text-gray-700">"请检查文档中是否包含以下关键词：{{excel.敏感词表.关键词}}，如发现请指出具体位置。"</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 支持格式 -->
+            <section>
+                <h3 class="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                    <span class="w-6 h-6 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-sm font-bold">4</span>
+                    支持的文件格式
+                </h3>
+                <div class="flex flex-wrap gap-2">
+                    <span class="px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-sm"><i class="fas fa-file-word mr-1"></i>DOCX</span>
+                    <span class="px-3 py-1 bg-red-50 text-red-700 rounded-full text-sm"><i class="fas fa-file-pdf mr-1"></i>PDF</span>
+                    <span class="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm"><i class="fas fa-file-alt mr-1"></i>TXT</span>
+                    <span class="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm"><i class="fas fa-file-code mr-1"></i>MD</span>
+                    <span class="px-3 py-1 bg-green-50 text-green-700 rounded-full text-sm"><i class="fas fa-file-excel mr-1"></i>XLSX</span>
+                    <span class="px-3 py-1 bg-green-50 text-green-700 rounded-full text-sm"><i class="fas fa-file-excel mr-1"></i>XLS</span>
+                    <span class="px-3 py-1 bg-green-50 text-green-700 rounded-full text-sm"><i class="fas fa-file-csv mr-1"></i>CSV</span>
+                </div>
+            </section>
+        </div>
+        
+        <div class="p-6 border-t border-gray-100 flex justify-end">
+            <button onclick="app.closeHelp()" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">
+                我知道了
+            </button>
         </div>
     </div>
 </div>

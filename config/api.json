@@ -1,6 +1,6 @@
 {
     "provider": "custom",
-    "endpoint": "https://api.deepseek.com/chat/completions",
+    "endpoint": "https://api.deepseek.com/v1/chat/completions",
     "apiKey": "",
     "model": "deepseek-chat",
     "auditRole": "专业文档审核专家"
