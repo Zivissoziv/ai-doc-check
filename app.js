@@ -10,7 +10,7 @@ class SmartDocApp {
         this.currentEditingRule = null;
         this.auditResults = [];
         this.ruleGroups = [];
-        this.currentRuleGroup = RulesManager.getCurrentGroup();
+        this.currentRuleGroup = null;
         this.isAuditing = false;
         
         this.init();
@@ -28,6 +28,11 @@ class SmartDocApp {
         const config = await ConfigLoader.loadRuleGroups();
         this.ruleGroups = config.groups;
         this.defaultRuleGroup = config.defaultGroup;
+        
+        const savedGroup = RulesManager.getCurrentGroup();
+        const groupExists = this.ruleGroups.some(g => g.id === savedGroup);
+        this.currentRuleGroup = groupExists ? savedGroup : this.defaultRuleGroup;
+        
         RulesManager.renderGroupSelector(this.ruleGroups, this.currentRuleGroup, 'ruleGroupSelect');
     }
     
@@ -38,13 +43,10 @@ class SmartDocApp {
         }
         
         if (this.ruleGroups.length > 0) {
-            const group = this.ruleGroups.find(g => g.id === this.currentRuleGroup);
-            if (group) {
-                const rules = await ConfigLoader.loadRulesFromFile(group.file);
-                if (rules) {
-                    this.rules = rules;
-                    RulesManager.save(this.rules);
-                }
+            const rules = await ConfigLoader.loadRulesFromGroup(this.currentRuleGroup);
+            if (rules) {
+                this.rules = rules;
+                RulesManager.save(this.rules);
             }
         } else {
             const rules = await ConfigLoader.loadRulesLegacy();
@@ -61,32 +63,40 @@ class SmartDocApp {
         this.templateList = config.templates || [];
         this.defaultTemplateName = config.defaultTemplate || '';
         
-        if (this.templateList.length > 0) {
-            this.renderTemplateSelector();
-        }
-        
-        if (this.defaultTemplateName && !this.template) {
-            await this.loadPresetTemplate(this.defaultTemplateName);
-        }
+        this.renderTemplateListInModal();
     }
     
-    renderTemplateSelector() {
-        const container = document.getElementById('templateInput').parentElement;
-        if (document.getElementById('presetTemplateSelect')) return;
+    renderTemplateListInModal() {
+        const container = document.getElementById('templateList');
+        if (!container) return;
         
-        const selectHtml = `
-            <select id="presetTemplateSelect" onchange="app.onPresetTemplateSelect(this.value)" 
-                class="w-full px-3 py-2 mb-2 border border-gray-300 rounded-lg text-sm bg-white">
-                <option value="">-- 选择预设模板 --</option>
-                ${this.templateList.map(t => `<option value="${t.file}">${t.name}</option>`).join('')}
-            </select>
-        `;
+        if (this.templateList.length === 0) {
+            container.innerHTML = '<div class="text-center text-gray-400 text-sm py-4">暂无示例模板</div>';
+            return;
+        }
         
-        container.insertAdjacentHTML('afterbegin', selectHtml);
+        container.innerHTML = this.templateList.map(t => `
+            <button onclick="app.selectPresetTemplate('${t.file}')" 
+                class="w-full flex items-center gap-3 p-3 border border-gray-200 rounded-lg hover:bg-blue-50 hover:border-blue-300 transition-all text-left">
+                <i class="fas fa-file-alt text-blue-500"></i>
+                <div>
+                    <div class="font-medium text-sm text-gray-900">${t.name}</div>
+                    ${t.description ? `<div class="text-xs text-gray-500">${t.description}</div>` : ''}
+                </div>
+            </button>
+        `).join('');
     }
     
-    async onPresetTemplateSelect(fileName) {
-        if (!fileName) return;
+    showTemplateModal() {
+        UiHelpers.toggleModal('templateModal', true);
+    }
+    
+    closeTemplateModal() {
+        UiHelpers.toggleModal('templateModal', false);
+    }
+    
+    async selectPresetTemplate(fileName) {
+        this.closeTemplateModal();
         await this.loadPresetTemplate(fileName);
     }
     
@@ -97,6 +107,7 @@ class SmartDocApp {
             this.template = await DocumentParser.parse(file);
             TreeRenderer.render(this.template?.tree || [], 'structureTree');
             UiHelpers.setStatus(`模板已加载: ${fileName}`);
+            this.updateTemplateBtn(true, fileName);
             this.compareStructure();
         } else {
             UiHelpers.setStatus('模板加载失败');
@@ -107,16 +118,19 @@ class SmartDocApp {
         const file = input.files[0];
         if (!file) return;
         
+        this.closeTemplateModal();
         UiHelpers.setStatus('正在解析模板...', true);
         try {
             this.template = await DocumentParser.parse(file);
             TreeRenderer.render(this.template?.tree || [], 'structureTree');
             UiHelpers.setStatus(`模板已加载: ${file.name}`);
+            this.updateTemplateBtn(true, file.name);
             this.compareStructure();
         } catch (err) {
             alert('解析失败: ' + err.message);
             UiHelpers.setStatus('就绪');
         }
+        input.value = '';
     }
     
     async handleDocUpload(input) {
@@ -130,6 +144,7 @@ class SmartDocApp {
             TreeRenderer.render(this.document?.tree || [], 'structureTree');
             UiHelpers.updateWordCount(this.document.text?.length || 0);
             UiHelpers.setStatus(`文档已加载: ${file.name}`);
+            this.updateDocBtn(true, file.name);
             this.compareStructure();
         } catch (err) {
             alert('解析失败: ' + err.message);
@@ -149,6 +164,52 @@ class SmartDocApp {
             UiHelpers.setStatus(`Excel已加载: ${file.name}`);
         } catch (err) {
             alert('Excel解析失败: ' + err.message);
+        }
+    }
+    
+    updateTemplateBtn(loaded, fileName = '') {
+        const btn = document.getElementById('templateBtn');
+        const icon = document.getElementById('templateBtnIcon');
+        const title = document.getElementById('templateBtnTitle');
+        const desc = document.getElementById('templateBtnDesc');
+        
+        if (loaded) {
+            btn.className = 'w-full flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg cursor-pointer hover:bg-blue-100 transition-colors';
+            icon.className = 'fas fa-file-import text-blue-600';
+            title.className = 'font-medium text-blue-900';
+            title.textContent = '模板已加载';
+            desc.className = 'text-xs text-blue-600';
+            desc.textContent = fileName.length > 20 ? fileName.substring(0, 20) + '...' : fileName;
+        } else {
+            btn.className = 'w-full flex items-center gap-2 p-3 bg-gray-50 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors';
+            icon.className = 'fas fa-file-import text-gray-400';
+            title.className = 'font-medium text-gray-700';
+            title.textContent = '选择模板';
+            desc.className = 'text-xs text-gray-500';
+            desc.textContent = '示例模板或上传文件';
+        }
+    }
+    
+    updateDocBtn(loaded, fileName = '') {
+        const btn = document.getElementById('docBtn');
+        const icon = document.getElementById('docBtnIcon');
+        const title = document.getElementById('docBtnTitle');
+        const desc = document.getElementById('docBtnDesc');
+        
+        if (loaded) {
+            btn.className = 'flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg cursor-pointer hover:bg-blue-100 transition-colors';
+            icon.className = 'fas fa-file-alt text-blue-600';
+            title.className = 'font-medium text-blue-900';
+            title.textContent = '文档已加载';
+            desc.className = 'text-xs text-blue-600';
+            desc.textContent = fileName.length > 20 ? fileName.substring(0, 20) + '...' : fileName;
+        } else {
+            btn.className = 'flex items-center gap-2 p-3 bg-gray-50 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors';
+            icon.className = 'fas fa-file-alt text-gray-400';
+            title.className = 'font-medium text-gray-700';
+            title.textContent = '上传待审文档';
+            desc.className = 'text-xs text-gray-500';
+            desc.textContent = '需要检查的文件';
         }
     }
     
@@ -175,12 +236,14 @@ class SmartDocApp {
         const group = this.ruleGroups.find(g => g.id === groupId);
         if (group) {
             UiHelpers.setStatus('正在加载规则组...', true);
-            const rules = await ConfigLoader.loadRulesFromFile(group.file);
+            const rules = await ConfigLoader.loadRulesFromGroup(groupId);
             if (rules) {
                 this.rules = rules;
                 RulesManager.save(this.rules);
                 this.renderRules();
                 UiHelpers.setStatus(`已加载规则组: ${group.name}`);
+            } else {
+                UiHelpers.setStatus(`规则组加载失败`);
             }
         }
     }

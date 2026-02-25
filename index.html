@@ -55,24 +55,21 @@
             
             <!-- 上传区 -->
             <div class="space-y-2">
-                <div class="relative group">
-                    <input type="file" id="templateInput" accept=".docx,.pdf,.txt,.md" class="hidden" onchange="app.handleTemplateUpload(this)">
-                    <label for="templateInput" class="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg cursor-pointer hover:bg-blue-100 transition-colors">
-                        <i class="fas fa-file-import text-blue-600"></i>
-                        <div class="text-sm">
-                            <div class="font-medium text-blue-900">上传模板</div>
-                            <div class="text-xs text-blue-600">作为标准结构</div>
-                        </div>
-                    </label>
-                </div>
+                <button id="templateBtn" onclick="app.showTemplateModal()" class="w-full flex items-center gap-2 p-3 bg-gray-50 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors">
+                    <i class="fas fa-file-import text-gray-400" id="templateBtnIcon"></i>
+                    <div class="text-sm text-left">
+                        <div class="font-medium text-gray-700" id="templateBtnTitle">选择模板</div>
+                        <div class="text-xs text-gray-500" id="templateBtnDesc">示例模板或上传文件</div>
+                    </div>
+                </button>
                 
                 <div class="relative group">
                     <input type="file" id="docInput" accept=".docx,.pdf,.txt,.md" class="hidden" onchange="app.handleDocUpload(this)">
-                    <label for="docInput" class="flex items-center gap-2 p-3 bg-gray-50 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors">
-                        <i class="fas fa-file-alt text-gray-600"></i>
+                    <label for="docInput" id="docBtn" class="flex items-center gap-2 p-3 bg-gray-50 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors">
+                        <i class="fas fa-file-alt text-gray-400" id="docBtnIcon"></i>
                         <div class="text-sm">
-                            <div class="font-medium text-gray-900">上传待审文档</div>
-                            <div class="text-xs text-gray-500">需要检查的文件</div>
+                            <div class="font-medium text-gray-700" id="docBtnTitle">上传待审文档</div>
+                            <div class="text-xs text-gray-500" id="docBtnDesc">需要检查的文件</div>
                         </div>
                     </label>
                 </div>
@@ -171,24 +168,20 @@
     <!-- 右侧面板：规则配置 -->
     <aside class="w-96 bg-white border-l border-gray-200 flex flex-col">
         <div class="p-4 border-b border-gray-100">
-            <h2 class="font-semibold text-gray-900 mb-3">审核规则</h2>
-            
-            <!-- 规则组选择器 -->
-            <div class="mb-4">
-                <label class="text-xs text-gray-500 mb-1 block">规则组</label>
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="font-semibold text-gray-900">审核规则</h2>
                 <select id="ruleGroupSelect" onchange="app.switchRuleGroup(this.value)" 
-                    class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    class="px-2 py-1 border border-gray-300 rounded text-xs bg-white focus:ring-1 focus:ring-blue-500">
                     <option value="default">默认规则</option>
                 </select>
             </div>
             
             <!-- Excel上传 -->
-            <div class="mb-4">
+            <div class="mb-3">
                 <input type="file" id="excelInput" accept=".xlsx,.xls,.csv" class="hidden" onchange="app.handleExcelUpload(this)">
-                <label for="excelInput" class="block p-3 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition-all cursor-pointer text-center">
-                    <i class="fas fa-table text-gray-400 mb-1"></i>
-                    <div class="text-xs text-gray-600 font-medium" id="excelLabel">上传Excel数据源</div>
-                    <div class="text-[10px] text-gray-400 mt-0.5">支持在规则中引用列数据</div>
+                <label for="excelInput" class="flex items-center gap-2 p-2 border border-dashed border-gray-300 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition-all cursor-pointer">
+                    <i class="fas fa-table text-gray-400 text-sm"></i>
+                    <span class="text-xs text-gray-600" id="excelLabel">上传Excel数据源</span>
                 </label>
             </div>
 
@@ -215,7 +208,7 @@
                 <i class="fas fa-play"></i> 运行AI审核
             </button>
             <div class="text-[10px] text-gray-500 text-center mt-2">
-                支持 {{excel.sheet.列名}} 语法引用Excel数据
+                当前版本暂不支持保存规则，请将调试好的规则保存导出后，联系负责人修改
             </div>
         </div>
     </aside>
@@ -469,6 +462,54 @@
             <button onclick="app.closeHelp()" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">
                 我知道了
             </button>
+        </div>
+    </div>
+</div>
+
+<!-- 模板选择模态框 -->
+<div id="templateModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col">
+        <div class="p-6 border-b border-gray-100 flex justify-between items-center">
+            <h2 class="text-lg font-bold text-gray-900">
+                <i class="fas fa-file-import text-blue-600 mr-2"></i>选择模板
+            </h2>
+            <button onclick="app.closeTemplateModal()" class="text-gray-400 hover:text-gray-600">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+        
+        <div class="p-6 space-y-4">
+            <!-- 示例模板 -->
+            <div>
+                <label class="text-sm font-medium text-gray-700 mb-2 block">示例模板</label>
+                <div id="templateList" class="space-y-2 max-h-40 overflow-y-auto">
+                    <div class="text-center text-gray-400 text-sm py-4">加载中...</div>
+                </div>
+            </div>
+            
+            <div class="relative">
+                <div class="absolute inset-0 flex items-center">
+                    <div class="w-full border-t border-gray-200"></div>
+                </div>
+                <div class="relative flex justify-center">
+                    <span class="bg-white px-3 text-xs text-gray-500">或者</span>
+                </div>
+            </div>
+            
+            <!-- 上传自定义模板 -->
+            <div>
+                <label class="text-sm font-medium text-gray-700 mb-2 block">上传自定义模板</label>
+                <input type="file" id="templateFileInput" accept=".docx,.pdf,.txt,.md" class="hidden" onchange="app.handleTemplateUpload(this)">
+                <label for="templateFileInput" class="flex items-center justify-center gap-2 p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition-all cursor-pointer">
+                    <i class="fas fa-cloud-upload-alt text-gray-400 text-xl"></i>
+                    <span class="text-sm text-gray-600">点击上传文件</span>
+                </label>
+                <p class="text-xs text-gray-400 mt-1 text-center">支持 docx、pdf、txt、md 格式</p>
+            </div>
+        </div>
+        
+        <div class="p-4 border-t border-gray-100 flex justify-end">
+            <button onclick="app.closeTemplateModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm">取消</button>
         </div>
     </div>
 </div>

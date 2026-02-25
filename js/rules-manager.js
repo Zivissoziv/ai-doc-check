@@ -51,9 +51,7 @@ const RulesManager = {
         if (!select) return;
         
         select.innerHTML = groups.map(g => 
-            `<option value="${g.id}" ${g.id === currentGroup ? 'selected' : ''}>
-                ${g.name}${g.description ? ' - ' + g.description : ''}
-            </option>`
+            `<option value="${g.id}" ${g.id === currentGroup ? 'selected' : ''}>${g.name}</option>`
         ).join('');
     },
 

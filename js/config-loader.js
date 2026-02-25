@@ -37,7 +37,8 @@ const ConfigLoader = {
         return null;
     },
 
-    async loadRulesFromFile(fileName) {
+    async loadRulesFromGroup(groupId) {
+        const fileName = `${groupId}.json`;
         try {
             const response = await fetch(`./config/rules/${fileName}`, { cache: 'no-store' });
             if (response.ok) {

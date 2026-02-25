@@ -1,17 +1,13 @@
 {
-    "defaultGroup": "default",
+    "defaultGroup": "znywz",
     "groups": [
         {
-            "id": "default",
-            "name": "默认规则",
-            "file": "default.json",
-            "description": "基础文档审核规则"
+            "id": "znywz",
+            "name": "智能运维组"
         },
         {
-            "id": "strict",
-            "name": "严格审核",
-            "file": "strict.json",
-            "description": "更严格的审核标准"
+            "id": "yyxzz",
+            "name": "应用X组"
         }
     ]
 }
