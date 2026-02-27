@@ -35,19 +35,22 @@ const AiAudit = {
         const { endpoint, apiKey, model, auditRole } = settings;
         
         try {
-            const response = await fetch(endpoint || 'https://api.openai.com/v1/chat/completions', {
+            const response = await fetch('/api/proxy', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': 'Bearer ' + apiKey
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    model: model || 'deepseek-chat',
-                    messages: [
-                        { role: 'system', content: `${auditRole || '专业文档审核专家'}，你擅长发现文档中的结构、逻辑和合规问题。请严格按照要求的JSON格式返回结果，不要添加任何额外说明。` },
-                        { role: 'user', content: prompt }
-                    ],
-                    temperature: 0.1
+                    endpoint: endpoint || 'https://api.openai.com/v1/chat/completions',
+                    apiKey: apiKey,
+                    body: {
+                        model: model || 'deepseek-chat',
+                        messages: [
+                            { role: 'system', content: `${auditRole || '专业文档审核专家'}，你擅长发现文档中的结构、逻辑和合规问题。请严格按照要求的JSON格式返回结果，不要添加任何额外说明。` },
+                            { role: 'user', content: prompt }
+                        ],
+                        temperature: 0.1
+                    }
                 })
             });
             
@@ -182,17 +185,20 @@ const AiAudit = {
     async testConnection(settings) {
         const { endpoint, apiKey, model } = settings;
         
-        const response = await fetch(endpoint, {
+        const response = await fetch('/api/proxy', {
             method: 'POST',
             headers: { 
-                'Authorization': 'Bearer ' + apiKey,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                model: model || 'deepseek-chat',
-                messages: [{ role: 'user', content: '你好' }],
-                temperature: 0.7,
-                max_tokens: 10
+                endpoint: endpoint,
+                apiKey: apiKey,
+                body: {
+                    model: model || 'deepseek-chat',
+                    messages: [{ role: 'user', content: '你好' }],
+                    temperature: 0.7,
+                    max_tokens: 10
+                }
             })
         });
         

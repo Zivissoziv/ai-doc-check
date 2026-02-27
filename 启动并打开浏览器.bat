@@ -17,6 +17,6 @@ echo.
 start "" cmd /c "timeout /t 2 /nobreak >nul && start http://localhost:8000"
 
 :: 启动HTTP服务器
-python -m http.server 8000
+python server.py
 
 pause

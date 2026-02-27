@@ -373,16 +373,30 @@ class SmartDocApp {
         resultsContainer.innerHTML = '<div class="space-y-4" id="auditList"></div>';
         
         try {
-            for (let i = 0; i < activeRules.length; i++) {
-                const rule = activeRules[i];
-                UiHelpers.updateProgress(((i + 1) / activeRules.length) * 100);
-                
+            let completed = 0;
+            const auditList = document.getElementById('auditList');
+
+            // 先按规则顺序创建占位容器
+            const placeholders = activeRules.map((rule, i) => {
+                const div = document.createElement('div');
+                div.id = 'audit-rule-' + i;
+                auditList.appendChild(div);
+                return div;
+            });
+
+            const promises = activeRules.map((rule, i) => {
                 const prompt = AiAudit.buildPrompt(rule, this.document.text, this.excelData);
-                const result = await AiAudit.callLLM(prompt, rule, this.settings);
-                this.auditResults.push(result);
-                AiAudit.renderResult(result, document.getElementById('auditList'));
-            }
-            
+                return AiAudit.callLLM(prompt, rule, this.settings).then(result => {
+                    completed++;
+                    UiHelpers.updateProgress((completed / activeRules.length) * 100);
+                    this.auditResults[i] = result;
+                    AiAudit.renderResult(result, placeholders[i]);
+                    return result;
+                });
+            });
+
+            await Promise.all(promises);
+
             UiHelpers.hideProgress();
             UiHelpers.setStatus('审核完成');
             document.getElementById('auditBadge').classList.remove('hidden');
