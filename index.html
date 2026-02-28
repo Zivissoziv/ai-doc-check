@@ -10,6 +10,7 @@
     <script src="./libs/mammoth.browser.min.js"></script>
     <script src="./libs/pdf.min.js"></script>
     <script src="./libs/xlsx.full.min.js"></script>
+    <script src="./js/config-api.js"></script>
     <script src="./js/config-loader.js"></script>
     <script src="./js/document-parser.js"></script>
     <script src="./js/rules-manager.js"></script>
@@ -168,12 +169,23 @@
     <!-- 右侧面板：规则配置 -->
     <aside class="w-96 bg-white border-l border-gray-200 flex flex-col">
         <div class="p-4 border-b border-gray-100">
-            <div class="flex items-center justify-between mb-3">
-                <h2 class="font-semibold text-gray-900">审核规则</h2>
+            <!-- 规则组选择器 -->
+            <div class="flex items-center gap-2 mb-3">
                 <select id="ruleGroupSelect" onchange="app.switchRuleGroup(this.value)" 
-                    class="px-2 py-1 border border-gray-300 rounded text-xs bg-white focus:ring-1 focus:ring-blue-500">
+                    class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                     <option value="default">默认规则</option>
                 </select>
+                <div class="flex gap-1">
+                    <button onclick="app.showEditGroupModal()" class="p-2 text-gray-500 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors" title="编辑规则组名称">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button onclick="app.showCreateGroupModal()" class="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="新建规则组">
+                        <i class="fas fa-plus"></i>
+                    </button>
+                    <button onclick="app.deleteCurrentGroup()" class="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="删除当前规则组">
+                        <i class="fas fa-trash-alt"></i>
+                    </button>
+                </div>
             </div>
             
             <!-- Excel上传 -->
@@ -185,12 +197,10 @@
                 </label>
             </div>
 
-            <div class="flex gap-2">
-                <button onclick="app.addRule()" class="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2">
+            <!-- 操作按钮 -->
+            <div>
+                <button onclick="app.addRule()" class="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2">
                     <i class="fas fa-plus"></i> 添加规则
-                </button>
-                <button onclick="app.exportRulesToFile()" class="py-2 px-3 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-sm font-medium transition-colors" title="保存规则到文件">
-                    <i class="fas fa-save"></i>
                 </button>
             </div>
         </div>
@@ -207,9 +217,6 @@
             <button onclick="app.runAudit()" id="runAuditBtn" class="w-full py-3 bg-gray-900 hover:bg-gray-800 text-white rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
                 <i class="fas fa-play"></i> 运行AI审核
             </button>
-            <div class="text-[10px] text-gray-500 text-center mt-2">
-                当前版本暂不支持保存规则，请将调试好的规则保存导出后，联系负责人修改
-            </div>
         </div>
     </aside>
 </div>
@@ -510,6 +517,39 @@
         
         <div class="p-4 border-t border-gray-100 flex justify-end">
             <button onclick="app.closeTemplateModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm">取消</button>
+        </div>
+    </div>
+</div>
+
+<!-- 规则组模态框（新建/编辑） -->
+<div id="groupModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col">
+        <div class="p-6 border-b border-gray-100 flex justify-between items-center">
+            <h2 id="groupModalTitle" class="text-lg font-bold text-gray-900">新建规则组</h2>
+            <button onclick="app.closeGroupModal()" class="text-gray-400 hover:text-gray-600">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+        
+        <div class="p-6 space-y-4">
+            <div id="groupIdField">
+                <label class="block text-sm font-medium text-gray-700 mb-1">规则组ID</label>
+                <input type="text" id="groupId" placeholder="例如：my-rules" 
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                    pattern="[a-zA-Z0-9_-]+" title="只能包含字母、数字、下划线和横线">
+                <p class="text-xs text-gray-500 mt-1">用于文件名，只能包含字母、数字、下划线和横线</p>
+            </div>
+            
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">规则组名称</label>
+                <input type="text" id="groupName" placeholder="例如：我的规则组" 
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm">
+            </div>
+        </div>
+        
+        <div class="p-6 border-t border-gray-100 flex justify-end gap-3">
+            <button onclick="app.closeGroupModal()" class="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg text-sm">取消</button>
+            <button onclick="app.saveGroupModal()" id="groupModalBtn" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">创建</button>
         </div>
     </div>
 </div>

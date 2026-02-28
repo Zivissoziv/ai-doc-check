@@ -2,24 +2,57 @@
 """SmartDoc AI - 带 API 代理的 HTTP 服务器（纯标准库实现）"""
 
 import json
+import os
 import ssl
 import urllib.request
 import urllib.error
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
+CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config')
+
 
 class ProxyHandler(SimpleHTTPRequestHandler):
-    """继承静态文件服务，增加 /api/proxy 代理端点"""
+    """继承静态文件服务，增加 /api/proxy 代理端点和配置管理API"""
+
+    def end_headers(self):
+        self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
+        self.send_header('Pragma', 'no-cache')
+        self.send_header('Expires', '0')
+        super().end_headers()
+
+    def do_GET(self):
+        if self.path == '/api/config/rules':
+            self._get_rules_index()
+        elif self.path.startswith('/api/config/rules/'):
+            group_id = self.path[len('/api/config/rules/'):].split('?')[0]
+            self._get_rule_group(group_id)
+        else:
+            super().do_GET()
 
     def do_POST(self):
         if self.path == '/api/proxy':
             self._handle_proxy()
+        elif self.path == '/api/config/rules':
+            self._create_rule_group()
+        else:
+            self.send_error(404, 'Not Found')
+
+    def do_PUT(self):
+        if self.path.startswith('/api/config/rules/'):
+            group_id = self.path[len('/api/config/rules/'):].split('?')[0]
+            self._update_rule_group(group_id)
+        else:
+            self.send_error(404, 'Not Found')
+
+    def do_DELETE(self):
+        if self.path.startswith('/api/config/rules/'):
+            group_id = self.path[len('/api/config/rules/'):].split('?')[0]
+            self._delete_rule_group(group_id)
         else:
             self.send_error(404, 'Not Found')
 
     def _handle_proxy(self):
         try:
-            # 读取前端请求体
             length = int(self.headers.get('Content-Length', 0))
             raw = self.rfile.read(length)
             data = json.loads(raw.decode('utf-8'))
@@ -32,7 +65,6 @@ class ProxyHandler(SimpleHTTPRequestHandler):
                 self._send_json(400, {'error': '缺少 endpoint 参数'})
                 return
 
-            # 构建转发请求
             req_body = json.dumps(body, ensure_ascii=False).encode('utf-8')
             req = urllib.request.Request(
                 endpoint,
@@ -43,11 +75,9 @@ class ProxyHandler(SimpleHTTPRequestHandler):
             if api_key:
                 req.add_header('Authorization', 'Bearer ' + api_key)
 
-            # 发送请求（支持 HTTPS）
             ctx = ssl.create_default_context()
             resp = urllib.request.urlopen(req, timeout=120, context=ctx)
 
-            # 原样转发 AI API 响应
             resp_body = resp.read()
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
@@ -56,7 +86,6 @@ class ProxyHandler(SimpleHTTPRequestHandler):
             self.wfile.write(resp_body)
 
         except urllib.error.HTTPError as e:
-            # AI API 返回了 HTTP 错误（如 401、429 等），透传状态码和响应体
             err_body = e.read()
             self.send_response(e.code)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
@@ -76,16 +105,166 @@ class ProxyHandler(SimpleHTTPRequestHandler):
         except Exception as e:
             self._send_json(500, {'error': str(e)})
 
+    def _get_rules_index(self):
+        try:
+            index_path = os.path.join(CONFIG_DIR, 'rules', 'index.json')
+            with open(index_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            self._send_json(200, data)
+        except FileNotFoundError:
+            self._send_json(404, {'error': '规则索引文件不存在'})
+        except Exception as e:
+            self._send_json(500, {'error': str(e)})
+
+    def _get_rule_group(self, group_id):
+        try:
+            if not self._is_safe_id(group_id):
+                self._send_json(400, {'error': '无效的规则组ID'})
+                return
+
+            group_path = os.path.join(CONFIG_DIR, 'rules', f'{group_id}.json')
+            with open(group_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            self._send_json(200, data)
+        except FileNotFoundError:
+            self._send_json(404, {'error': f'规则组 {group_id} 不存在'})
+        except Exception as e:
+            self._send_json(500, {'error': str(e)})
+
+    def _create_rule_group(self):
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            raw = self.rfile.read(length)
+            data = json.loads(raw.decode('utf-8'))
+
+            group_id = data.get('id', '')
+            group_name = data.get('name', group_id)
+            rules = data.get('rules', [])
+
+            if not group_id:
+                self._send_json(400, {'error': '缺少规则组ID'})
+                return
+
+            if not self._is_safe_id(group_id):
+                self._send_json(400, {'error': '无效的规则组ID，只能包含字母、数字、下划线和横线'})
+                return
+
+            group_path = os.path.join(CONFIG_DIR, 'rules', f'{group_id}.json')
+            if os.path.exists(group_path):
+                self._send_json(409, {'error': f'规则组 {group_id} 已存在'})
+                return
+
+            with open(group_path, 'w', encoding='utf-8') as f:
+                json.dump(rules, f, ensure_ascii=False, indent=4)
+
+            index_path = os.path.join(CONFIG_DIR, 'rules', 'index.json')
+            with open(index_path, 'r', encoding='utf-8') as f:
+                index_data = json.load(f)
+
+            index_data['groups'].append({'id': group_id, 'name': group_name})
+
+            with open(index_path, 'w', encoding='utf-8') as f:
+                json.dump(index_data, f, ensure_ascii=False, indent=4)
+
+            self._send_json(200, {'success': True, 'id': group_id, 'path': f'config/rules/{group_id}.json'})
+        except json.JSONDecodeError:
+            self._send_json(400, {'error': '请求体 JSON 格式错误'})
+        except Exception as e:
+            self._send_json(500, {'error': str(e)})
+
+    def _update_rule_group(self, group_id):
+        try:
+            if not self._is_safe_id(group_id):
+                self._send_json(400, {'error': '无效的规则组ID'})
+                return
+
+            length = int(self.headers.get('Content-Length', 0))
+            raw = self.rfile.read(length)
+            data = json.loads(raw.decode('utf-8'))
+
+            rules = data.get('rules', [])
+            group_name = data.get('name')
+
+            group_path = os.path.join(CONFIG_DIR, 'rules', f'{group_id}.json')
+            if not os.path.exists(group_path):
+                self._send_json(404, {'error': f'规则组 {group_id} 不存在'})
+                return
+
+            with open(group_path, 'w', encoding='utf-8') as f:
+                json.dump(rules, f, ensure_ascii=False, indent=4)
+
+            if group_name:
+                index_path = os.path.join(CONFIG_DIR, 'rules', 'index.json')
+                with open(index_path, 'r', encoding='utf-8') as f:
+                    index_data = json.load(f)
+
+                for group in index_data['groups']:
+                    if group['id'] == group_id:
+                        group['name'] = group_name
+                        break
+
+                with open(index_path, 'w', encoding='utf-8') as f:
+                    json.dump(index_data, f, ensure_ascii=False, indent=4)
+
+            self._send_json(200, {'success': True})
+        except json.JSONDecodeError:
+            self._send_json(400, {'error': '请求体 JSON 格式错误'})
+        except Exception as e:
+            self._send_json(500, {'error': str(e)})
+
+    def _delete_rule_group(self, group_id):
+        try:
+            if not self._is_safe_id(group_id):
+                self._send_json(400, {'error': '无效的规则组ID'})
+                return
+
+            if group_id == 'index':
+                self._send_json(403, {'error': '不能删除索引文件'})
+                return
+
+            group_path = os.path.join(CONFIG_DIR, 'rules', f'{group_id}.json')
+            if not os.path.exists(group_path):
+                self._send_json(404, {'error': f'规则组 {group_id} 不存在'})
+                return
+
+            index_path = os.path.join(CONFIG_DIR, 'rules', 'index.json')
+            with open(index_path, 'r', encoding='utf-8') as f:
+                index_data = json.load(f)
+
+            original_count = len(index_data['groups'])
+            index_data['groups'] = [g for g in index_data['groups'] if g['id'] != group_id]
+
+            if len(index_data['groups']) == original_count:
+                self._send_json(404, {'error': f'规则组 {group_id} 不在索引中'})
+                return
+
+            if index_data['defaultGroup'] == group_id and index_data['groups']:
+                index_data['defaultGroup'] = index_data['groups'][0]['id']
+
+            os.remove(group_path)
+
+            with open(index_path, 'w', encoding='utf-8') as f:
+                json.dump(index_data, f, ensure_ascii=False, indent=4)
+
+            self._send_json(200, {'success': True})
+        except Exception as e:
+            self._send_json(500, {'error': str(e)})
+
+    def _is_safe_id(self, id_str):
+        if not id_str or len(id_str) > 50:
+            return False
+        return all(c.isalnum() or c in '_-' for c in id_str)
+
     def _send_json(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False).encode('utf-8')
         self.send_response(code)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Content-Length', str(len(body)))
+        self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
         self.wfile.write(body)
 
     def log_message(self, format, *args):
-        # 在默认日志前加上标识，方便区分代理请求
         print(f'[Server] {self.address_string()} - {format % args}')
 
 
@@ -94,6 +273,7 @@ if __name__ == '__main__':
     server = ThreadingHTTPServer((host, port), ProxyHandler)
     print(f'SmartDoc AI 服务已启动: http://localhost:{port}')
     print(f'API 代理端点: http://localhost:{port}/api/proxy')
+    print(f'配置管理端点: http://localhost:{port}/api/config/rules')
     print('按 Ctrl+C 停止服务器')
     try:
         server.serve_forever()

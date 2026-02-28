@@ -33,5 +33,12 @@
         "prompt": "请检查文档中的专业术语使用是否准确、规范，是否与行业标准一致，首次出现的术语是否有明确的定义或解释。",
         "severity": "warning",
         "enabled": true
+    },
+    {
+        "name": "测试修改",
+        "prompt": "测试修改",
+        "severity": "warning",
+        "id": 1772261675860,
+        "enabled": true
     }
 ]

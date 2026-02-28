@@ -7,10 +7,10 @@
         "enabled": true
     },
     {
-        "id": 2,
-        "name": "内容完整性检查111",
+        "name": "内容完整性检查测试",
         "prompt": "请检查文档内容是否完整，是否存在明显的逻辑断层或缺失的章节。",
         "severity": "error",
+        "id": 1772262292710,
         "enabled": true
     },
     {
@@ -18,6 +18,6 @@
         "name": "错别字检查",
         "prompt": "请仔细检查文档中是否存在错别字、语法错误或标点符号使用不当的情况。",
         "severity": "warning",
-        "enabled": true
+        "enabled": false
     }
 ]

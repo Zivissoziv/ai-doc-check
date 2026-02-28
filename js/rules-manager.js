@@ -55,17 +55,23 @@ const RulesManager = {
         ).join('');
     },
 
-    exportToFile(rules) {
-        if (rules.length === 0) {
-            alert('暂无规则可导出');
-            return;
-        }
-        
-        const blob = new Blob([JSON.stringify(rules, null, 4)], { type: 'application/json' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'rules.json';
-        a.click();
-        alert('规则已导出！请将下载的 rules.json 文件复制到 config/rules 目录下。');
+    async saveToServer(groupId, rules, name = null) {
+        return await ConfigAPI.saveRuleGroup(groupId, rules, name);
+    },
+
+    async loadFromServer(groupId) {
+        return await ConfigAPI.getRuleGroup(groupId);
+    },
+
+    async createGroup(groupId, name, rules = []) {
+        return await ConfigAPI.createRuleGroup(groupId, name, rules);
+    },
+
+    async deleteGroup(groupId) {
+        return await ConfigAPI.deleteRuleGroup(groupId);
+    },
+
+    async getGroupsFromServer() {
+        return await ConfigAPI.getRuleGroups();
     }
 };

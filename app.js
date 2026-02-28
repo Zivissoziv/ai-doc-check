@@ -5,7 +5,7 @@ class SmartDocApp {
         this.template = null;
         this.document = null;
         this.excelData = null;
-        this.rules = RulesManager.load();
+        this.rules = [];
         this.settings = JSON.parse(localStorage.getItem('smartdoc_settings') || '{"auditRole": "专业文档审核专家"}');
         this.currentEditingRule = null;
         this.auditResults = [];
@@ -20,39 +20,37 @@ class SmartDocApp {
         await this.loadRuleGroups();
         await this.loadPresetConfig();
         this.loadSettings();
-        this.renderRules();
         this.updateApiStatus();
     }
     
     async loadRuleGroups() {
-        const config = await ConfigLoader.loadRuleGroups();
-        this.ruleGroups = config.groups;
-        this.defaultRuleGroup = config.defaultGroup;
-        
-        const savedGroup = RulesManager.getCurrentGroup();
-        const groupExists = this.ruleGroups.some(g => g.id === savedGroup);
-        this.currentRuleGroup = groupExists ? savedGroup : this.defaultRuleGroup;
-        
-        RulesManager.renderGroupSelector(this.ruleGroups, this.currentRuleGroup, 'ruleGroupSelect');
+        try {
+            const config = await RulesManager.getGroupsFromServer();
+            this.ruleGroups = config.groups || [];
+            this.defaultRuleGroup = config.defaultGroup;
+            
+            const savedGroup = RulesManager.getCurrentGroup();
+            const groupExists = this.ruleGroups.some(g => g.id === savedGroup);
+            this.currentRuleGroup = groupExists ? savedGroup : this.defaultRuleGroup;
+            
+            RulesManager.renderGroupSelector(this.ruleGroups, this.currentRuleGroup, 'ruleGroupSelect');
+            
+            if (this.currentRuleGroup) {
+                const rules = await RulesManager.loadFromServer(this.currentRuleGroup);
+                this.rules = rules || [];
+                RulesManager.save(this.rules);
+                this.renderRules();
+            }
+        } catch (err) {
+            console.error('加载规则组失败:', err);
+            UiHelpers.setStatus('加载规则组失败: ' + err.message);
+        }
     }
     
     async loadPresetConfig() {
         const apiConfig = await ConfigLoader.loadApiConfig();
         if (apiConfig) {
             this.settings = apiConfig;
-        }
-        
-        if (this.ruleGroups.length > 0) {
-            const rules = await ConfigLoader.loadRulesFromGroup(this.currentRuleGroup);
-            if (rules) {
-                this.rules = rules;
-                RulesManager.save(this.rules);
-            }
-        } else {
-            const rules = await ConfigLoader.loadRulesLegacy();
-            if (rules.length > 0) {
-                this.rules = rules;
-            }
         }
         
         await this.loadTemplateList();
@@ -236,22 +234,22 @@ class SmartDocApp {
         const group = this.ruleGroups.find(g => g.id === groupId);
         if (group) {
             UiHelpers.setStatus('正在加载规则组...', true);
-            const rules = await ConfigLoader.loadRulesFromGroup(groupId);
-            if (rules) {
-                this.rules = rules;
+            try {
+                const rules = await RulesManager.loadFromServer(groupId);
+                this.rules = rules || [];
                 RulesManager.save(this.rules);
                 this.renderRules();
                 UiHelpers.setStatus(`已加载规则组: ${group.name}`);
-            } else {
-                UiHelpers.setStatus(`规则组加载失败`);
+            } catch (err) {
+                UiHelpers.setStatus(`规则组加载失败: ${err.message}`);
             }
         }
     }
     
-    toggleRuleStatus(idx) {
+    async toggleRuleStatus(idx) {
         this.rules[idx].enabled = this.rules[idx].enabled === false ? true : false;
-        RulesManager.save(this.rules);
         this.renderRules();
+        await this._autoSave();
     }
     
     addRule() {
@@ -275,7 +273,7 @@ class SmartDocApp {
         UiHelpers.toggleModal('ruleModal', false);
     }
     
-    saveRule() {
+    async saveRule() {
         const name = document.getElementById('ruleName').value.trim();
         const prompt = document.getElementById('rulePrompt').value.trim();
         const severity = document.getElementById('ruleSeverity').value;
@@ -299,13 +297,144 @@ class SmartDocApp {
             this.rules.push(rule);
         }
         
-        RulesManager.save(this.rules);
         this.renderRules();
         this.closeRuleModal();
+        await this._autoSave();
     }
     
-    exportRulesToFile() {
-        RulesManager.exportToFile(this.rules);
+    async _autoSave() {
+        if (!this.currentRuleGroup) return;
+        
+        try {
+            await RulesManager.saveToServer(this.currentRuleGroup, this.rules);
+            RulesManager.save(this.rules);
+            UiHelpers.setStatus('规则已自动保存');
+        } catch (err) {
+            UiHelpers.setStatus(`保存失败: ${err.message}`);
+        }
+    }
+    
+    showCreateGroupModal() {
+        this._groupModalMode = 'create';
+        document.getElementById('groupModalTitle').textContent = '新建规则组';
+        document.getElementById('groupModalBtn').textContent = '创建';
+        document.getElementById('groupIdField').style.display = 'block';
+        document.getElementById('groupId').value = '';
+        document.getElementById('groupId').disabled = false;
+        document.getElementById('groupName').value = '';
+        UiHelpers.toggleModal('groupModal', true);
+    }
+    
+    showEditGroupModal() {
+        if (!this.currentRuleGroup) {
+            alert('请先选择规则组');
+            return;
+        }
+        
+        const group = this.ruleGroups.find(g => g.id === this.currentRuleGroup);
+        if (!group) return;
+        
+        this._groupModalMode = 'edit';
+        document.getElementById('groupModalTitle').textContent = '编辑规则组';
+        document.getElementById('groupModalBtn').textContent = '保存';
+        document.getElementById('groupIdField').style.display = 'none';
+        document.getElementById('groupId').value = group.id;
+        document.getElementById('groupName').value = group.name;
+        UiHelpers.toggleModal('groupModal', true);
+    }
+    
+    closeGroupModal() {
+        UiHelpers.toggleModal('groupModal', false);
+    }
+    
+    async saveGroupModal() {
+        const groupId = document.getElementById('groupId').value.trim();
+        const groupName = document.getElementById('groupName').value.trim();
+        
+        if (this._groupModalMode === 'create') {
+            if (!groupId || !groupName) {
+                alert('请填写完整信息');
+                return;
+            }
+            
+            if (!/^[a-zA-Z0-9_-]+$/.test(groupId)) {
+                alert('规则组ID只能包含字母、数字、下划线和横线');
+                return;
+            }
+            
+            try {
+                await RulesManager.createGroup(groupId, groupName, []);
+                
+                this.ruleGroups.push({ id: groupId, name: groupName });
+                RulesManager.renderGroupSelector(this.ruleGroups, groupId, 'ruleGroupSelect');
+                
+                this.currentRuleGroup = groupId;
+                RulesManager.setCurrentGroup(groupId);
+                this.rules = [];
+                this.renderRules();
+                
+                this.closeGroupModal();
+                UiHelpers.setStatus('规则组创建成功');
+            } catch (err) {
+                alert('创建失败: ' + err.message);
+            }
+        } else {
+            if (!groupName) {
+                alert('请填写规则组名称');
+                return;
+            }
+            
+            try {
+                await RulesManager.saveToServer(groupId, this.rules, groupName);
+                
+                const group = this.ruleGroups.find(g => g.id === groupId);
+                if (group) {
+                    group.name = groupName;
+                }
+                RulesManager.renderGroupSelector(this.ruleGroups, groupId, 'ruleGroupSelect');
+                
+                this.closeGroupModal();
+                UiHelpers.setStatus('规则组名称已更新');
+            } catch (err) {
+                alert('保存失败: ' + err.message);
+            }
+        }
+    }
+    
+    async deleteCurrentGroup() {
+        if (!this.currentRuleGroup) {
+            alert('请先选择规则组');
+            return;
+        }
+        
+        if (this.ruleGroups.length <= 1) {
+            alert('至少保留一个规则组');
+            return;
+        }
+        
+        const group = this.ruleGroups.find(g => g.id === this.currentRuleGroup);
+        if (!confirm(`确定要删除规则组"${group?.name || this.currentRuleGroup}"吗？此操作不可恢复！`)) {
+            return;
+        }
+        
+        try {
+            await RulesManager.deleteGroup(this.currentRuleGroup);
+            
+            this.ruleGroups = this.ruleGroups.filter(g => g.id !== this.currentRuleGroup);
+            
+            this.currentRuleGroup = this.ruleGroups[0]?.id;
+            RulesManager.setCurrentGroup(this.currentRuleGroup);
+            RulesManager.renderGroupSelector(this.ruleGroups, this.currentRuleGroup, 'ruleGroupSelect');
+            
+            const rules = await RulesManager.loadFromServer(this.currentRuleGroup);
+            this.rules = rules || [];
+            RulesManager.save(this.rules);
+            this.renderRules();
+            
+            UiHelpers.setStatus('规则组已删除');
+        } catch (err) {
+            alert('删除失败: ' + err.message);
+        }
     }
     
     insertExcelVar() {
