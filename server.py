@@ -3,12 +3,174 @@
 
 import json
 import os
+import re
 import ssl
 import urllib.request
 import urllib.error
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config')
+
+
+class JSONRepair:
+    """轻量级 JSON 修复器，处理 LLM 返回的畸形 JSON"""
+
+    @staticmethod
+    def repair(json_str):
+        """修复 JSON 字符串，返回修复后的字符串或 None"""
+        if not json_str or not isinstance(json_str, str):
+            return None
+
+        # 先尝试直接解析
+        try:
+            json.loads(json_str)
+            return json_str
+        except json.JSONDecodeError:
+            pass
+
+        # 修复常见错误
+        repaired = json_str
+
+        # 1. 提取 ```json ... ``` 或 ``` ... ``` 中的内容
+        code_block_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', repaired)
+        if code_block_match:
+            repaired = code_block_match.group(1)
+
+        # 2. 去除 BOM 和零宽字符
+        repaired = repaired.lstrip('\ufeff\u200b\u200c\u200d')
+
+        # 3. 修复 trailing commas (逗号在 } 或 ] 前)
+        repaired = re.sub(r',(\s*[}\]])', r'\1', repaired)
+
+        # 4. 修复单引号为双引号（简单处理）
+        # 先标记字符串内的单引号，然后替换
+        repaired = JSONRepair._fix_quotes(repaired)
+
+        # 5. 修复缺失的引号键
+        repaired = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', repaired)
+
+        # 6. 修复 undefined、NaN、Infinity
+        repaired = repaired.replace('undefined', 'null')
+        repaired = re.sub(r'\bNaN\b', 'null', repaired)
+        repaired = re.sub(r'\bInfinity\b', 'null', repaired)
+        repaired = re.sub(r'\b-Infinity\b', 'null', repaired)
+
+        # 7. 修复缺失的逗号（简单场景）
+        repaired = re.sub(r'("[^"]*"|\d+|true|false|null)\s*("[^"]*")', r'\1,\2', repaired)
+        repaired = re.sub(r'(}\s*{)', '},{', repaired)
+        repaired = re.sub(r'(]\s*\[)', '],[', repaired)
+        repaired = re.sub(r'(}\s*\[)', '},[', repaired)
+        repaired = re.sub(r'(]\s*{)', '],{', repaired)
+
+        # 8. 尝试解析
+        try:
+            json.loads(repaired)
+            return repaired
+        except json.JSONDecodeError:
+            pass
+
+        # 9. 更激进的修复：尝试补全不完整的 JSON
+        repaired = JSONRepair._complete_json(repaired)
+
+        try:
+            json.loads(repaired)
+            return repaired
+        except json.JSONDecodeError:
+            # 修复失败，返回原始内容让前端处理
+            return json_str
+
+    @staticmethod
+    def _fix_quotes(s):
+        """修复引号问题"""
+        result = []
+        i = 0
+        in_string = False
+        string_char = None
+
+        while i < len(s):
+            char = s[i]
+
+            if not in_string:
+                if char in '"\'':
+                    in_string = True
+                    string_char = char
+                    result.append('"')
+                else:
+                    result.append(char)
+            else:
+                if char == string_char:
+                    # 检查是否是转义的
+                    backslash_count = 0
+                    j = i - 1
+                    while j >= 0 and s[j] == '\\':
+                        backslash_count += 1
+                        j -= 1
+
+                    if backslash_count % 2 == 0:
+                        # 未转义，结束字符串
+                        in_string = False
+                        string_char = None
+                        result.append('"')
+                    else:
+                        # 转义的，保留
+                        result.append(char)
+                elif char == '"' and string_char == '\'':
+                    # 单引号字符串内的双引号，保留
+                    result.append(char)
+                elif char == '\'' and string_char == '"':
+                    # 双引号字符串内的单引号，保留
+                    result.append(char)
+                else:
+                    result.append(char)
+
+            i += 1
+
+        # 如果字符串未闭合，补全
+        if in_string:
+            result.append('"')
+
+        return ''.join(result)
+
+    @staticmethod
+    def _complete_json(s):
+        """尝试补全不完整的 JSON"""
+        s = s.strip()
+
+        # 统计括号
+        open_braces = s.count('{') - s.count('}')
+        open_brackets = s.count('[') - s.count(']')
+
+        # 补全缺失的闭合括号
+        if open_braces > 0:
+            s += '}' * open_braces
+        if open_brackets > 0:
+            s += ']' * open_brackets
+
+        return s
+
+    @staticmethod
+    def repair_response(resp_body):
+        """修复 API 响应体中的 JSON 内容"""
+        try:
+            # 解析响应
+            data = json.loads(resp_body.decode('utf-8'))
+
+            # 检查是否有 choices 字段（OpenAI 格式）
+            if 'choices' in data and isinstance(data['choices'], list):
+                for choice in data['choices']:
+                    if 'message' in choice and 'content' in choice['message']:
+                        content = choice['message']['content']
+                        if isinstance(content, str):
+                            # 尝试修复 content 中的 JSON
+                            repaired = JSONRepair.repair(content)
+                            if repaired and repaired != content:
+                                choice['message']['content'] = repaired
+
+            return json.dumps(data, ensure_ascii=False).encode('utf-8')
+
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            # 解析失败，返回原始内容
+            return resp_body
 
 
 class ProxyHandler(SimpleHTTPRequestHandler):
@@ -79,6 +241,10 @@ class ProxyHandler(SimpleHTTPRequestHandler):
             resp = urllib.request.urlopen(req, timeout=120, context=ctx)
 
             resp_body = resp.read()
+
+            # 修复模型返回的畸形 JSON
+            resp_body = JSONRepair.repair_response(resp_body)
+
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Content-Length', str(len(resp_body)))

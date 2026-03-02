@@ -251,6 +251,18 @@ class SmartDocApp {
         this.renderRules();
         await this._autoSave();
     }
+
+    async deleteRule(idx) {
+        const rule = this.rules[idx];
+        if (!confirm(`确定要删除规则"${rule.name}"吗？此操作不可恢复！`)) {
+            return;
+        }
+
+        this.rules.splice(idx, 1);
+        this.renderRules();
+        await this._autoSave();
+        UiHelpers.setStatus('规则已删除');
+    }
     
     addRule() {
         this.currentEditingRule = null;
@@ -496,13 +508,12 @@ class SmartDocApp {
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 审核中...';
         
-        UiHelpers.setStatus('正在运行AI审核...', true);
+        UiHelpers.setStatus('正在运行AI批量审核...', true);
         this.auditResults = [];
         const resultsContainer = document.getElementById('auditResults');
         resultsContainer.innerHTML = '<div class="space-y-4" id="auditList"></div>';
         
         try {
-            let completed = 0;
             const auditList = document.getElementById('auditList');
 
             // 先按规则顺序创建占位容器
@@ -513,23 +524,23 @@ class SmartDocApp {
                 return div;
             });
 
-            const promises = activeRules.map((rule, i) => {
-                const prompt = AiAudit.buildPrompt(rule, this.document.text, this.excelData);
-                return AiAudit.callLLM(prompt, rule, this.settings).then(result => {
-                    completed++;
-                    UiHelpers.updateProgress((completed / activeRules.length) * 100);
-                    this.auditResults[i] = result;
-                    AiAudit.renderResult(result, placeholders[i]);
-                    return result;
-                });
+            // 使用批量审核模式：只调用一次模型
+            const batchPrompt = AiAudit.buildBatchPrompt(activeRules, this.document.text, this.excelData);
+            const batchResults = await AiAudit.callBatchLLM(batchPrompt, activeRules, this.settings);
+            
+            // 渲染所有结果
+            batchResults.forEach((result, i) => {
+                this.auditResults[i] = result;
+                AiAudit.renderResult(result, placeholders[i]);
             });
 
-            await Promise.all(promises);
-
             UiHelpers.hideProgress();
-            UiHelpers.setStatus('审核完成');
+            UiHelpers.setStatus(`审核完成，共检查 ${activeRules.length} 条规则`);
             document.getElementById('auditBadge').classList.remove('hidden');
             UiHelpers.switchTab('audit');
+        } catch (err) {
+            UiHelpers.setStatus('审核失败: ' + err.message);
+            console.error('批量审核失败:', err);
         } finally {
             this.isAuditing = false;
             btn.disabled = false;

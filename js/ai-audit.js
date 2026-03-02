@@ -17,17 +17,129 @@ const AiAudit = {
             });
         }
         
-        const context = "文档内容：\n" + 
-            documentText.substring(0, 10000) +  
-            "\n\n审核规则：" + prompt + 
-            "\n\n请严格按以下JSON格式返回，不要包含其他内容，不要添加任何解释说明：\n" +
-            "{\n" +
-            '  "pass": boolean,\n' +
-            '  "confidence": 0-100,\n' +
-            '  "issues": [{"location": "位置描述", "problem": "问题描述", "suggestion": "修改建议"}],\n' +
-            '  "summary": "总体评价"\n' +
-            "}";
-        
+        const context = `文档内容：
+${documentText.substring(0, 10000)}
+
+审核规则：${prompt}
+
+=== 输出格式要求 ===
+你必须返回一个合法的JSON对象，格式如下：
+{
+  "pass": true,
+  "confidence": 95,
+  "issues": [],
+  "summary": "文档格式规范，符合要求"
+}
+
+或发现问题时：
+{
+  "pass": false,
+  "confidence": 85,
+  "issues": [
+    {
+      "location": "第3章第2节",
+      "problem": "缺少必要的参数说明",
+      "suggestion": "建议补充参数列表和类型定义"
+    }
+  ],
+  "summary": "发现1处问题，建议修改"
+}
+
+=== 字段说明 ===
+- pass: 是否通过，true或false
+- confidence: 置信度，0-100的整数
+- issues: 问题列表，通过时为[]，不通过时包含具体对象
+- summary: 总体评价，简短描述
+
+=== 重要约束 ===
+1. 必须返回合法JSON，不要添加markdown代码块标记
+2. issues数组为空时写成 [] 而不是 null
+3. 字符串使用双引号，不要使用单引号
+4. 最后一个元素后面不要加逗号
+5. 不要包含任何解释说明文字，只返回JSON`;
+
+        return context;
+    },
+
+    buildBatchPrompt(rules, documentText, excelData) {
+        // 处理Excel变量替换
+        const processPrompt = (prompt) => {
+            if (!excelData) return prompt;
+            return prompt.replace(/\{\{excel\.([^}]+)\}\}/g, (match, path) => {
+                const parts = path.split('.');
+                if (parts.length >= 2) {
+                    const [sheetName, colName] = parts;
+                    const sheet = excelData.sheets.find(s => s.name === sheetName);
+                    if (sheet) {
+                        const values = sheet.rows.map(row => row[sheet.headers.indexOf(colName)]).filter(Boolean);
+                        return values.join('、');
+                    }
+                }
+                return match;
+            });
+        };
+
+        // 构建规则列表
+        const rulesList = rules.map((rule, index) => ({
+            id: index,
+            name: rule.name,
+            severity: rule.severity,
+            prompt: processPrompt(rule.prompt)
+        }));
+
+        const context = `你需要对以下文档进行批量审核，按照给定的规则逐一检查。
+
+文档内容：
+${documentText.substring(0, 10000)}
+
+审核规则列表：
+${rulesList.map(r => `
+[规则${r.id}] ${r.name} (级别: ${r.severity})
+${r.prompt}`).join('\n')}
+
+=== 输出格式要求 ===
+你必须返回一个合法的JSON对象，格式如下：
+{
+  "results": [
+    {
+      "ruleId": 0,
+      "pass": true,
+      "confidence": 95,
+      "issues": [],
+      "summary": "文档格式规范，符合要求"
+    },
+    {
+      "ruleId": 1,
+      "pass": false,
+      "confidence": 85,
+      "issues": [
+        {
+          "location": "第3章第2节",
+          "problem": "缺少必要的参数说明",
+          "suggestion": "建议补充参数列表和类型定义"
+        }
+      ],
+      "summary": "发现1处问题，建议修改"
+    }
+  ]
+}
+
+=== 字段说明 ===
+- ruleId: 规则序号，对应规则列表中的序号(0-${rules.length - 1})
+- pass: 是否通过，true或false
+- confidence: 置信度，0-100的整数
+- issues: 问题列表，通过时为[]，不通过时包含具体对象
+- summary: 总体评价，简短描述
+
+=== 重要约束 ===
+1. 必须返回合法JSON，不要添加markdown代码块标记
+2. results数组长度必须等于${rules.length}
+3. 每个规则都要有对应的result对象
+4. issues数组为空时写成 [] 而不是 null
+5. 字符串使用双引号，不要使用单引号
+6. 最后一个元素后面不要加逗号
+7. 不要包含任何解释说明文字，只返回JSON`;
+
         return context;
     },
 
@@ -75,6 +187,120 @@ const AiAudit = {
                 issues: [{ location: 'API调用', problem: err.message, suggestion: '请检查网络或API配置' }],
                 summary: '调用失败'
             };
+        }
+    },
+
+    async callBatchLLM(prompt, rules, settings) {
+        const { endpoint, apiKey, model, auditRole } = settings;
+        
+        try {
+            const response = await fetch('/api/proxy', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    endpoint: endpoint || 'https://api.openai.com/v1/chat/completions',
+                    apiKey: apiKey,
+                    body: {
+                        model: model || 'deepseek-chat',
+                        messages: [
+                            { role: 'system', content: `${auditRole || '专业文档审核专家'}，你擅长发现文档中的结构、逻辑和合规问题。请严格按照要求的JSON格式返回结果，不要添加任何额外说明。` },
+                            { role: 'user', content: prompt }
+                        ],
+                        temperature: 0.1
+                    }
+                })
+            });
+            
+            if (!response.ok) throw new Error('API错误: ' + response.status);
+            
+            const data = await response.json();
+            const content = data.choices[0].message.content;
+            
+            // 解析批量结果
+            const batchResult = this.parseBatchResult(content, rules);
+            return batchResult;
+            
+        } catch (err) {
+            // 批量调用失败时，返回所有规则的错误结果
+            return rules.map(rule => ({
+                ruleName: rule.name,
+                severity: rule.severity,
+                pass: false,
+                confidence: 0,
+                issues: [{ location: 'API调用', problem: err.message, suggestion: '请检查网络或API配置' }],
+                summary: '批量调用失败'
+            }));
+        }
+    },
+
+    parseBatchResult(content, rules) {
+        let result;
+        try {
+            // 尝试直接解析JSON
+            try {
+                result = JSON.parse(content);
+            } catch {
+                // 尝试从代码块中提取
+                let jsonData = null;
+                
+                let match = content.match(/```json\s*([\s\S]*?)\s*```/);
+                if (match) jsonData = match[1];
+                
+                if (!jsonData) {
+                    match = content.match(/```\s*([\s\S]*?)\s*```/);
+                    if (match) jsonData = match[1];
+                }
+                
+                if (!jsonData) {
+                    match = content.match(/\{[\s\S]*\}/);
+                    if (match) jsonData = match[0];
+                }
+                
+                if (jsonData) {
+                    const cleanJsonData = jsonData
+                        .trim()
+                        .replace(/^[\u200B-\u200D\uFEFF]/, '')
+                        .replace(/,\s*}/g, '}')
+                        .replace(/,\s*]/g, ']');
+                    result = JSON.parse(cleanJsonData);
+                } else {
+                    throw new Error('未找到JSON数据');
+                }
+            }
+            
+            // 提取results数组
+            const results = result.results || [];
+            
+            // 将批量结果映射到每条规则
+            return rules.map((rule, index) => {
+                const ruleResult = results.find(r => r.ruleId === index) || results[index] || {};
+                
+                return {
+                    ruleName: rule.name,
+                    severity: rule.severity,
+                    pass: ruleResult.pass ?? false,
+                    confidence: ruleResult.confidence ?? 50,
+                    issues: ruleResult.issues ?? [],
+                    summary: ruleResult.summary ?? '审核完成'
+                };
+            });
+            
+        } catch (err) {
+            // 解析失败，返回降级结果
+            return rules.map(rule => ({
+                ruleName: rule.name,
+                severity: rule.severity,
+                pass: false,
+                confidence: 30,
+                issues: [{ 
+                    location: '批量解析', 
+                    problem: '返回格式解析失败: ' + err.message, 
+                    suggestion: '请检查模型输出格式' 
+                }],
+                summary: '解析失败，请重试'
+            }));
         }
     },
 

@@ -12,12 +12,5 @@
         "severity": "error",
         "id": 1772262292710,
         "enabled": true
-    },
-    {
-        "id": 3,
-        "name": "错别字检查",
-        "prompt": "请仔细检查文档中是否存在错别字、语法错误或标点符号使用不当的情况。",
-        "severity": "warning",
-        "enabled": false
     }
 ]

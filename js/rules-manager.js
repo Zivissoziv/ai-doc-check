@@ -34,10 +34,17 @@ const RulesManager = {
                             <span class="font-medium text-sm truncate ${isEnabled ? 'text-gray-900 group-hover:text-blue-600' : 'text-gray-400'} transition-colors">${rule.name}</span>
                             <i class="fas fa-edit text-xs text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity"></i>
                         </div>
-                        <div onclick="app.toggleRuleStatus(${idx})" 
-                            class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${isEnabled ? 'bg-blue-600' : 'bg-gray-200'}"
-                            title="${isEnabled ? '点击禁用' : '点击启用'}">
-                            <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${isEnabled ? 'translate-x-4' : 'translate-x-0'}"></span>
+                        <div class="flex items-center gap-2 flex-shrink-0">
+                            <div onclick="app.toggleRuleStatus(${idx})" 
+                                class="relative inline-flex h-5 w-9 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${isEnabled ? 'bg-blue-600' : 'bg-gray-200'}"
+                                title="${isEnabled ? '点击禁用' : '点击启用'}">
+                                <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${isEnabled ? 'translate-x-4' : 'translate-x-0'}"></span>
+                            </div>
+                            <button onclick="app.deleteRule(${idx})" 
+                                class="w-5 h-5 flex items-center justify-center text-gray-300 hover:text-red-500 transition-colors"
+                                title="删除规则">
+                                <i class="fas fa-trash-alt text-xs"></i>
+                            </button>
                         </div>
                     </div>
                     <p onclick="app.editRule(${idx})" class="text-xs ${isEnabled ? 'text-gray-500' : 'text-gray-400'} line-clamp-2 leading-relaxed cursor-pointer">${rule.prompt}</p>
