@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
 """SmartDoc AI - 带 API 代理的 HTTP 服务器（纯标准库实现）"""
 
+import base64
 import json
 import os
 import re
 import ssl
 import urllib.request
 import urllib.error
+import zipfile
+import xml.etree.ElementTree as ET
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config')
+
+MAX_FILE_SIZE = 50 * 1024 * 1024
+DOWNLOAD_TIMEOUT = 60
+REPETITION_SEPARATOR = '\n\n--- 重复提示（请仔细阅读以上内容）---\n\n'
 
 
 class JSONRepair:
@@ -173,6 +180,215 @@ class JSONRepair:
             return resp_body
 
 
+class DocumentParser:
+    """文档解析器，支持DOCX和TXT格式"""
+
+    @staticmethod
+    def parse_docx(file_bytes):
+        """解析DOCX文件，提取文本内容"""
+        try:
+            text_parts = []
+            with zipfile.ZipFile(file_bytes, 'r') as zf:
+                if 'word/document.xml' not in zf.namelist():
+                    return None
+                
+                xml_content = zf.read('word/document.xml')
+                root = ET.fromstring(xml_content)
+                
+                ns = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+                
+                for para in root.iter('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p'):
+                    para_text = []
+                    for text_elem in para.iter('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t'):
+                        if text_elem.text:
+                            para_text.append(text_elem.text)
+                    if para_text:
+                        text_parts.append(''.join(para_text))
+                
+                return '\n'.join(text_parts)
+        except Exception as e:
+            print(f"解析DOCX失败: {e}")
+            return None
+
+    @staticmethod
+    def parse_txt(file_bytes):
+        """解析TXT文件"""
+        try:
+            return file_bytes.decode('utf-8')
+        except UnicodeDecodeError:
+            try:
+                return file_bytes.decode('gbk')
+            except:
+                return None
+
+    @staticmethod
+    def parse_excel(file_bytes):
+        """解析XLSX文件，返回数据字典"""
+        try:
+            result = {'sheets': []}
+            with zipfile.ZipFile(file_bytes, 'r') as zf:
+                shared_strings = []
+                if 'xl/sharedStrings.xml' in zf.namelist():
+                    ss_xml = zf.read('xl/sharedStrings.xml')
+                    ss_root = ET.fromstring(ss_xml)
+                    for si in ss_root.iter('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}t'):
+                        shared_strings.append(si.text if si.text else '')
+                
+                sheet_files = [f for f in zf.namelist() if f.startswith('xl/worksheets/sheet') and f.endswith('.xml')]
+                
+                for sheet_file in sorted(sheet_files):
+                    sheet_xml = zf.read(sheet_file)
+                    sheet_root = ET.fromstring(sheet_xml)
+                    
+                    rows_data = []
+                    for row in sheet_root.iter('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}row'):
+                        row_data = []
+                        for cell in row.iter('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}c'):
+                            cell_type = cell.get('t')
+                            value_elem = cell.find('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}v')
+                            
+                            if value_elem is not None and value_elem.text:
+                                if cell_type == 's':
+                                    idx = int(value_elem.text)
+                                    if idx < len(shared_strings):
+                                        row_data.append(shared_strings[idx])
+                                    else:
+                                        row_data.append('')
+                                else:
+                                    row_data.append(value_elem.text)
+                            else:
+                                row_data.append('')
+                        
+                        if any(cell for cell in row_data):
+                            rows_data.append(row_data)
+                    
+                    if rows_data:
+                        sheet_name = sheet_file.split('/')[-1].replace('.xml', '')
+                        result['sheets'].append({
+                            'name': sheet_name,
+                            'headers': rows_data[0] if rows_data else [],
+                            'rows': rows_data[1:] if len(rows_data) > 1 else []
+                        })
+            
+            return result
+        except Exception as e:
+            print(f"解析Excel失败: {e}")
+            return None
+
+    @staticmethod
+    def detect_type(file_bytes, content_type=None):
+        """检测文件类型"""
+        if file_bytes[:4] == b'PK\x03\x04':
+            if content_type and 'spreadsheet' in content_type:
+                return 'xlsx'
+            if content_type and 'wordprocessing' in content_type:
+                return 'docx'
+            return 'docx'
+        elif file_bytes[:4] == b'%PDF':
+            return 'pdf'
+        else:
+            try:
+                file_bytes.decode('utf-8')
+                return 'txt'
+            except:
+                return None
+
+
+class PromptBuilder:
+    """提示词构建器"""
+
+    @staticmethod
+    def build_batch_prompt(rules, document_text, excel_data=None):
+        """构建批量审核提示词（默认使用完整重复策略）"""
+        
+        rules_list = []
+        for idx, rule in enumerate(rules):
+            prompt = rule.get('prompt', '')
+            if excel_data:
+                prompt = PromptBuilder._replace_excel_vars(prompt, excel_data)
+            rules_list.append({
+                'id': idx,
+                'name': rule.get('name', f'规则{idx}'),
+                'severity': rule.get('severity', 'warning'),
+                'prompt': prompt
+            })
+
+        base_prompt = f"""你需要对以下文档进行批量审核，按照给定的规则逐一检查。
+
+文档内容：
+{document_text[:10000]}
+
+审核规则列表：
+{chr(10).join([f"[规则{r['id']}] {r['name']} (级别: {r['severity']}){chr(10)}{r['prompt']}" for r in rules_list])}
+
+=== 输出格式要求 ===
+你必须返回一个合法的JSON对象，格式如下：
+{{
+  "results": [
+    {{
+      "ruleId": 0,
+      "pass": true,
+      "confidence": 95,
+      "issues": [],
+      "summary": "文档格式规范，符合要求"
+    }},
+    {{
+      "ruleId": 1,
+      "pass": false,
+      "confidence": 85,
+      "issues": [
+        {{
+          "location": "第3章第2节",
+          "problem": "缺少必要的参数说明",
+          "suggestion": "建议补充参数列表和类型定义"
+        }}
+      ],
+      "summary": "发现1处问题，建议修改"
+    }}
+  ]
+}}
+
+=== 字段说明 ===
+- ruleId: 规则序号，对应规则列表中的序号(0-{len(rules) - 1})
+- pass: 是否通过，true或false
+- confidence: 置信度，0-100的整数
+- issues: 问题列表，通过时为[]，不通过时包含具体对象
+- summary: 总体评价，简短描述
+
+=== 重要约束 ===
+1. 必须返回合法JSON，不要添加markdown代码块标记
+2. results数组长度必须等于{len(rules)}
+3. 每个规则都要有对应的result对象
+4. issues数组为空时写成 [] 而不是 null
+5. 字符串使用双引号，不要使用单引号
+6. 最后一个元素后面不要加逗号
+7. 不要包含任何解释说明文字，只返回JSON"""
+
+        return base_prompt + REPETITION_SEPARATOR + base_prompt
+
+    @staticmethod
+    def _replace_excel_vars(prompt, excel_data):
+        """替换Excel变量"""
+        pattern = r'\{\{excel\.([^}]+)\}\}'
+        
+        def replace_match(match):
+            path = match.group(1)
+            parts = path.split('.')
+            if len(parts) >= 2:
+                sheet_name, col_name = parts[0], parts[1]
+                for sheet in excel_data.get('sheets', []):
+                    if sheet['name'] == sheet_name:
+                        try:
+                            col_idx = sheet['headers'].index(col_name)
+                            values = [row[col_idx] for row in sheet['rows'] if col_idx < len(row) and row[col_idx]]
+                            return '、'.join(values)
+                        except (ValueError, IndexError):
+                            pass
+            return match.group(0)
+        
+        return re.sub(pattern, replace_match, prompt)
+
+
 class ProxyHandler(SimpleHTTPRequestHandler):
     """继承静态文件服务，增加 /api/proxy 代理端点和配置管理API"""
 
@@ -185,6 +401,8 @@ class ProxyHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/api/config/rules':
             self._get_rules_index()
+        elif self.path == '/api/rules':
+            self._api_get_rules()
         elif self.path.startswith('/api/config/rules/'):
             group_id = self.path[len('/api/config/rules/'):].split('?')[0]
             self._get_rule_group(group_id)
@@ -196,6 +414,8 @@ class ProxyHandler(SimpleHTTPRequestHandler):
             self._handle_proxy()
         elif self.path == '/api/config/rules':
             self._create_rule_group()
+        elif self.path == '/api/audit':
+            self._api_audit()
         else:
             self.send_error(404, 'Not Found')
 
@@ -421,6 +641,241 @@ class ProxyHandler(SimpleHTTPRequestHandler):
             return False
         return all(c.isalnum() or c in '_-' for c in id_str)
 
+    def _api_get_rules(self):
+        """获取规则组列表（第三方API）"""
+        try:
+            index_path = os.path.join(CONFIG_DIR, 'rules', 'index.json')
+            with open(index_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            self._send_json(200, data)
+        except FileNotFoundError:
+            self._send_json(404, {'error': '规则索引文件不存在'})
+        except Exception as e:
+            self._send_json(500, {'error': str(e)})
+
+    def _api_audit(self):
+        """文档审核接口（第三方API）"""
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            raw = self.rfile.read(length)
+            data = json.loads(raw.decode('utf-8'))
+
+            rule_group_id = data.get('ruleGroupId', '')
+            if not rule_group_id:
+                self._send_json(400, {'error': '缺少 ruleGroupId 参数'})
+                return
+
+            if not self._is_safe_id(rule_group_id):
+                self._send_json(400, {'error': '无效的规则组ID'})
+                return
+
+            group_path = os.path.join(CONFIG_DIR, 'rules', f'{rule_group_id}.json')
+            if not os.path.exists(group_path):
+                self._send_json(404, {'error': f'规则组 {rule_group_id} 不存在'})
+                return
+
+            with open(group_path, 'r', encoding='utf-8') as f:
+                rules = json.load(f)
+
+            if not rules:
+                self._send_json(400, {'error': '规则组为空'})
+                return
+
+            document_url = data.get('documentUrl')
+            document_base64 = data.get('documentBase64')
+            document_type = data.get('documentType', 'docx')
+
+            if not document_url and not document_base64:
+                self._send_json(400, {'error': '缺少 documentUrl 或 documentBase64 参数'})
+                return
+
+            document_bytes = None
+            content_type = None
+
+            if document_url:
+                try:
+                    ctx = ssl.create_default_context()
+                    req = urllib.request.Request(document_url)
+                    with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT, context=ctx) as resp:
+                        content_type = resp.headers.get('Content-Type', '')
+                        document_bytes = resp.read(MAX_FILE_SIZE + 1)
+                        
+                        if len(document_bytes) > MAX_FILE_SIZE:
+                            self._send_json(413, {'error': '文件大小超过限制（50MB）'})
+                            return
+                except urllib.error.URLError as e:
+                    self._send_json(502, {'error': f'无法下载文档: {e.reason}'})
+                    return
+                except TimeoutError:
+                    self._send_json(504, {'error': '下载文档超时'})
+                    return
+            else:
+                try:
+                    document_bytes = base64.b64decode(document_base64)
+                except Exception:
+                    self._send_json(400, {'error': 'documentBase64 格式错误'})
+                    return
+
+            if not document_type or document_type == 'auto':
+                document_type = DocumentParser.detect_type(document_bytes, content_type)
+                if not document_type:
+                    self._send_json(422, {'error': '无法识别文件类型'})
+                    return
+
+            if document_type == 'docx':
+                document_text = DocumentParser.parse_docx(document_bytes)
+            elif document_type == 'txt':
+                document_text = DocumentParser.parse_txt(document_bytes)
+            else:
+                self._send_json(422, {'error': f'不支持的文件类型: {document_type}，目前支持 docx 和 txt'})
+                return
+
+            if not document_text:
+                self._send_json(422, {'error': '无法解析文档内容'})
+                return
+
+            excel_data = None
+            excel_url = data.get('excelUrl')
+            excel_base64 = data.get('excelBase64')
+
+            if excel_url or excel_base64:
+                excel_bytes = None
+                if excel_url:
+                    try:
+                        ctx = ssl.create_default_context()
+                        req = urllib.request.Request(excel_url)
+                        with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT, context=ctx) as resp:
+                            excel_bytes = resp.read(MAX_FILE_SIZE + 1)
+                            if len(excel_bytes) > MAX_FILE_SIZE:
+                                self._send_json(413, {'error': 'Excel文件大小超过限制（50MB）'})
+                                return
+                    except Exception as e:
+                        self._send_json(502, {'error': f'无法下载Excel: {str(e)}'})
+                        return
+                else:
+                    try:
+                        excel_bytes = base64.b64decode(excel_base64)
+                    except Exception:
+                        self._send_json(400, {'error': 'excelBase64 格式错误'})
+                        return
+
+                excel_data = DocumentParser.parse_excel(excel_bytes)
+                if not excel_data:
+                    self._send_json(422, {'error': '无法解析Excel文件'})
+                    return
+
+            settings = data.get('settings', {})
+            endpoint = settings.get('endpoint', 'https://api.deepseek.com/v1/chat/completions')
+            api_key = settings.get('apiKey', '')
+            model = settings.get('model', 'deepseek-chat')
+            audit_role = settings.get('auditRole', '专业文档审核专家')
+
+            prompt = PromptBuilder.build_batch_prompt(rules, document_text, excel_data)
+
+            llm_body = {
+                'model': model,
+                'messages': [
+                    {'role': 'system', 'content': f'{audit_role}，你擅长发现文档中的结构、逻辑和合规问题。请严格按照要求的JSON格式返回结果，不要添加任何额外说明。'},
+                    {'role': 'user', 'content': prompt}
+                ],
+                'temperature': 0.1
+            }
+
+            req_body = json.dumps(llm_body, ensure_ascii=False).encode('utf-8')
+            req = urllib.request.Request(endpoint, data=req_body, method='POST')
+            req.add_header('Content-Type', 'application/json')
+            if api_key:
+                req.add_header('Authorization', 'Bearer ' + api_key)
+
+            ctx = ssl.create_default_context()
+            with urllib.request.urlopen(req, timeout=120, context=ctx) as resp:
+                resp_body = resp.read()
+                resp_body = JSONRepair.repair_response(resp_body)
+                llm_result = json.loads(resp_body.decode('utf-8'))
+
+            content = llm_result.get('choices', [{}])[0].get('message', {}).get('content', '')
+            
+            results = self._parse_audit_results(content, rules)
+
+            self._send_json(200, {'success': True, 'results': results})
+
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode('utf-8', errors='ignore')
+            self._send_json(502, {'error': f'LLM API错误: {e.code}', 'detail': err_body})
+        except urllib.error.URLError as e:
+            self._send_json(502, {'error': f'无法连接到LLM服务: {e.reason}'})
+        except TimeoutError:
+            self._send_json(504, {'error': 'LLM服务响应超时'})
+        except json.JSONDecodeError:
+            self._send_json(400, {'error': '请求体 JSON 格式错误'})
+        except Exception as e:
+            self._send_json(500, {'error': str(e)})
+
+    def _parse_audit_results(self, content, rules):
+        """解析审核结果"""
+        try:
+            try:
+                result = json.loads(content)
+            except json.JSONDecodeError:
+                match = re.search(r'```json\s*([\s\S]*?)\s*```', content)
+                if match:
+                    content = match.group(1)
+                else:
+                    match = re.search(r'\{[\s\S]*\}', content)
+                    if match:
+                        content = match.group(0)
+                
+                content = content.strip()
+                content = re.sub(r',(\s*[}\]])', r'\1', content)
+                result = json.loads(content)
+
+            results_list = result.get('results', [])
+
+            final_results = []
+            for idx, rule in enumerate(rules):
+                rule_result = None
+                for r in results_list:
+                    if r.get('ruleId') == idx:
+                        rule_result = r
+                        break
+                
+                if not rule_result and idx < len(results_list):
+                    rule_result = results_list[idx]
+
+                if rule_result:
+                    final_results.append({
+                        'ruleId': idx,
+                        'ruleName': rule.get('name', f'规则{idx}'),
+                        'severity': rule.get('severity', 'warning'),
+                        'pass': rule_result.get('pass', False),
+                        'confidence': rule_result.get('confidence', 50),
+                        'issues': rule_result.get('issues', []),
+                        'summary': rule_result.get('summary', '审核完成')
+                    })
+                else:
+                    final_results.append({
+                        'ruleId': idx,
+                        'ruleName': rule.get('name', f'规则{idx}'),
+                        'severity': rule.get('severity', 'warning'),
+                        'pass': False,
+                        'confidence': 30,
+                        'issues': [{'location': '解析', 'problem': '未找到审核结果', 'suggestion': '请重试'}],
+                        'summary': '解析失败'
+                    })
+
+            return final_results
+
+        except Exception as e:
+            return [{
+                'ruleId': idx,
+                'ruleName': rule.get('name', f'规则{idx}'),
+                'severity': rule.get('severity', 'warning'),
+                'pass': False,
+                'confidence': 30,
+                'issues': [{'location': '解析', 'problem': f'结果解析失败: {str(e)}', 'suggestion': '请重试'}],
+                'summary': '解析失败'
+            } for idx, rule in enumerate(rules)]
+
     def _send_json(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False).encode('utf-8')
         self.send_response(code)
@@ -440,6 +895,9 @@ if __name__ == '__main__':
     print(f'SmartDoc AI 服务已启动: http://localhost:{port}')
     print(f'API 代理端点: http://localhost:{port}/api/proxy')
     print(f'配置管理端点: http://localhost:{port}/api/config/rules')
+    print(f'第三方API端点:')
+    print(f'  - GET  /api/rules   获取规则组列表')
+    print(f'  - POST /api/audit   文档审核')
     print('按 Ctrl+C 停止服务器')
     try:
         server.serve_forever()

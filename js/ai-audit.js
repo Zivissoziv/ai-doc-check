@@ -1,4 +1,6 @@
 const AiAudit = {
+    REPETITION_SEPARATOR: '\n\n--- 重复提示（请仔细阅读以上内容）---\n\n',
+    
     buildPrompt(rule, documentText, excelData) {
         let prompt = rule.prompt;
         
@@ -17,7 +19,7 @@ const AiAudit = {
             });
         }
         
-        const context = `文档内容：
+        const basePrompt = `文档内容：
 ${documentText.substring(0, 10000)}
 
 审核规则：${prompt}
@@ -58,11 +60,10 @@ ${documentText.substring(0, 10000)}
 4. 最后一个元素后面不要加逗号
 5. 不要包含任何解释说明文字，只返回JSON`;
 
-        return context;
+        return basePrompt + this.REPETITION_SEPARATOR + basePrompt;
     },
 
     buildBatchPrompt(rules, documentText, excelData) {
-        // 处理Excel变量替换
         const processPrompt = (prompt) => {
             if (!excelData) return prompt;
             return prompt.replace(/\{\{excel\.([^}]+)\}\}/g, (match, path) => {
@@ -79,7 +80,6 @@ ${documentText.substring(0, 10000)}
             });
         };
 
-        // 构建规则列表
         const rulesList = rules.map((rule, index) => ({
             id: index,
             name: rule.name,
@@ -87,7 +87,7 @@ ${documentText.substring(0, 10000)}
             prompt: processPrompt(rule.prompt)
         }));
 
-        const context = `你需要对以下文档进行批量审核，按照给定的规则逐一检查。
+        const basePrompt = `你需要对以下文档进行批量审核，按照给定的规则逐一检查。
 
 文档内容：
 ${documentText.substring(0, 10000)}
@@ -140,7 +140,7 @@ ${r.prompt}`).join('\n')}
 6. 最后一个元素后面不要加逗号
 7. 不要包含任何解释说明文字，只返回JSON`;
 
-        return context;
+        return basePrompt + this.REPETITION_SEPARATOR + basePrompt;
     },
 
     async callLLM(prompt, rule, settings) {
