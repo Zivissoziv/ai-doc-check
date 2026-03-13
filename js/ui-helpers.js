@@ -55,6 +55,183 @@ const UiHelpers = {
                 modal.classList.add('hidden');
             }
         }
+    },
+
+    highlightAndScroll(textSnippet, location) {
+        const docContent = document.getElementById('docContent');
+        if (!docContent) {
+            alert('请先上传文档');
+            return;
+        }
+
+        UiHelpers.clearHighlights();
+
+        let searchText = (textSnippet || '').trim();
+        let locationText = (location || '').trim();
+        let found = false;
+
+        console.log('跳转搜索:', { textSnippet: searchText, location: locationText });
+
+        if (searchText && searchText.length >= 2) {
+            found = UiHelpers._findAndHighlight(docContent, searchText);
+        }
+
+        if (!found && locationText) {
+            const searchPatterns = UiHelpers._generateSearchPatterns(locationText);
+            console.log('搜索模式:', searchPatterns);
+            
+            for (const pattern of searchPatterns) {
+                if (pattern && pattern.length >= 2) {
+                    found = UiHelpers._findAndHighlight(docContent, pattern);
+                    if (found) {
+                        console.log('使用模式找到:', pattern);
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!found) {
+            const previewContent = docContent.querySelector('.preview-content');
+            if (previewContent) {
+                if (searchText && searchText.length >= 2) {
+                    found = UiHelpers._findAndHighlight(previewContent, searchText);
+                }
+                if (!found && locationText) {
+                    const searchPatterns = UiHelpers._generateSearchPatterns(locationText);
+                    for (const pattern of searchPatterns) {
+                        if (pattern && pattern.length >= 2) {
+                            found = UiHelpers._findAndHighlight(previewContent, pattern);
+                            if (found) break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!found) {
+            const allText = docContent.textContent;
+            console.log('文档内容片段:', allText.substring(0, 500));
+            console.log('搜索文本:', searchText || locationText);
+            
+            const message = `未找到文本：${searchText || locationText}\n\n提示：该位置可能在表格、图片中，或文本已被修改。\n请手动在文档预览中查找。`;
+            alert(message);
+        }
+    },
+
+    _generateSearchPatterns(locationText) {
+        const patterns = [];
+        
+        patterns.push(locationText);
+        
+        const chapterMatch = locationText.match(/第(\d+)章/);
+        const sectionMatch = locationText.match(/第(\d+)节/);
+        const chineseNumMatch = locationText.match(/第([一二三四五六七八九十]+)章/);
+        const chineseSectionMatch = locationText.match(/第([一二三四五六七八九十]+)节/);
+        
+        const chineseToNum = { '一': '1', '二': '2', '三': '3', '四': '4', '五': '5', '六': '6', '七': '7', '八': '8', '九': '9', '十': '10', '十一': '11', '十二': '12', '十三': '13', '十四': '14', '十五': '15' };
+        
+        if (chapterMatch && sectionMatch) {
+            const chapter = chapterMatch[1];
+            const section = sectionMatch[1];
+            patterns.push(`${chapter}.${section}`);
+            patterns.push(`${chapter}.${section} `);
+            patterns.push(`${chapter}.${section}.`);
+            patterns.unshift(`${chapter}.${section}`);
+        }
+        
+        if (chapterMatch) {
+            const chapter = chapterMatch[1];
+            patterns.unshift(`${chapter}. `);
+            patterns.unshift(`${chapter}.`);
+            patterns.push(`第${chapter}章`);
+        }
+        
+        if (chineseNumMatch) {
+            const chineseNum = chineseNumMatch[1];
+            const num = chineseToNum[chineseNum] || chineseNum;
+            patterns.unshift(`${num}. `);
+            patterns.unshift(`${num}.`);
+            patterns.push(`第${num}章`);
+        }
+        
+        if (chineseSectionMatch) {
+            const chineseNum = chineseSectionMatch[1];
+            const num = chineseToNum[chineseNum] || chineseNum;
+            patterns.unshift(`.${num} `);
+            patterns.unshift(`.${num}`);
+        }
+        
+        if (chineseNumMatch && chineseSectionMatch) {
+            const chapterNum = chineseToNum[chineseNumMatch[1]] || chineseNumMatch[1];
+            const sectionNum = chineseToNum[chineseSectionMatch[1]] || chineseSectionMatch[1];
+            patterns.unshift(`${chapterNum}.${sectionNum}`);
+            patterns.unshift(`${chapterNum}.${sectionNum} `);
+        }
+        
+        const parts = locationText.split(/[，,、\s第章节段]+/).filter(p => p.length >= 2);
+        for (const part of parts) {
+            if (!patterns.includes(part)) {
+                patterns.push(part);
+            }
+        }
+        
+        return [...new Set(patterns)];
+    },
+
+    _findAndHighlight(container, searchText) {
+        if (!searchText || searchText.length < 2) return false;
+
+        const walker = document.createTreeWalker(
+            container,
+            NodeFilter.SHOW_TEXT,
+            null,
+            false
+        );
+
+        let textNode;
+        const search = searchText.trim();
+
+        while ((textNode = walker.nextNode())) {
+            const text = textNode.textContent;
+            const index = text.indexOf(search);
+
+            if (index !== -1) {
+                try {
+                    const range = document.createRange();
+                    range.setStart(textNode, index);
+                    range.setEnd(textNode, index + search.length);
+
+                    const span = document.createElement('span');
+                    span.className = 'jump-highlight';
+                    range.surroundContents(span);
+
+                    span.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+                    setTimeout(() => {
+                        span.classList.add('fade-out');
+                    }, 2000);
+
+                    console.log('找到并高亮:', search);
+                    return true;
+                } catch (e) {
+                    console.warn('高亮失败:', e, '文本:', text.substring(0, 50));
+                }
+            }
+        }
+
+        return false;
+    },
+
+    clearHighlights() {
+        const highlights = document.querySelectorAll('.jump-highlight');
+        highlights.forEach(span => {
+            const parent = span.parentNode;
+            while (span.firstChild) {
+                parent.insertBefore(span.firstChild, span);
+            }
+            parent.removeChild(span);
+        });
     }
 };
 

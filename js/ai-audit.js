@@ -40,6 +40,7 @@ ${documentText.substring(0, 10000)}
   "issues": [
     {
       "location": "第3章第2节",
+      "textSnippet": "参数说明",
       "problem": "缺少必要的参数说明",
       "suggestion": "建议补充参数列表和类型定义"
     }
@@ -52,6 +53,10 @@ ${documentText.substring(0, 10000)}
 - confidence: 置信度，0-100的整数
 - issues: 问题列表，通过时为[]，不通过时包含具体对象
 - summary: 总体评价，简短描述
+- location: 问题所在的位置描述（如"第3章第2节"、"摘要部分"）
+- textSnippet: 问题所在位置的文档原文片段（用于定位，10-30个字符）
+- problem: 问题描述
+- suggestion: 修改建议
 
 === 重要约束 ===
 1. 必须返回合法JSON，不要添加markdown代码块标记
@@ -115,6 +120,7 @@ ${r.prompt}`).join('\n')}
       "issues": [
         {
           "location": "第3章第2节",
+          "textSnippet": "参数说明",
           "problem": "缺少必要的参数说明",
           "suggestion": "建议补充参数列表和类型定义"
         }
@@ -130,6 +136,10 @@ ${r.prompt}`).join('\n')}
 - confidence: 置信度，0-100的整数
 - issues: 问题列表，通过时为[]，不通过时包含具体对象
 - summary: 总体评价，简短描述
+- location: 问题所在的位置描述（如"第3章第2节"、"摘要部分"）
+- textSnippet: 问题所在位置的文档原文片段（用于定位，10-30个字符）
+- problem: 问题描述
+- suggestion: 修改建议
 
 === 重要约束 ===
 1. 必须返回合法JSON，不要添加markdown代码块标记
@@ -372,12 +382,15 @@ ${r.prompt}`).join('\n')}
         const severityClass = result.severity === 'error' ? 'red' : result.severity === 'warning' ? 'yellow' : 'blue';
         
         const issuesHtml = result.issues?.length > 0 
-            ? `<div class="space-y-3 mb-4">${result.issues.map(issue => `
+            ? `<div class="space-y-3 mb-4">${result.issues.map((issue, idx) => `
                 <div class="p-3 bg-gray-50 rounded-lg border-l-4 border-${severityClass}-400">
                     <div class="flex items-start gap-2">
                         <i class="fas fa-map-marker-alt text-gray-400 mt-0.5 text-xs"></i>
                         <div class="flex-1">
-                            <div class="text-xs text-gray-500 mb-1">${issue.location}</div>
+                            <div class="text-xs text-gray-500 mb-1 group relative">
+                                <span>${issue.location || '未知位置'}</span>
+                                <button onclick="AiAudit.jumpToLocation('${(issue.textSnippet || issue.location || '').replace(/'/g, "\\'")}', '${(issue.location || '').replace(/'/g, "\\'")}')" class="ml-2 opacity-0 group-hover:opacity-100 text-blue-500 hover:text-blue-700 transition-opacity" title="跳转到文档位置"><i class="fas fa-location-arrow text-xs"></i></button>
+                            </div>
                             <div class="text-sm text-gray-900 mb-1">${issue.problem}</div>
                             ${issue.suggestion ? `<div class="text-xs text-blue-600 bg-blue-50 p-2 rounded mt-1"><i class="fas fa-lightbulb mr-1"></i> ${issue.suggestion}</div>` : ''}
                         </div>
@@ -406,6 +419,14 @@ ${r.prompt}`).join('\n')}
             </div>`;
         
         container.appendChild(div);
+    },
+
+    jumpToLocation(textSnippet, location) {
+        UiHelpers.switchTab('preview');
+        
+        setTimeout(() => {
+            UiHelpers.highlightAndScroll(textSnippet, location);
+        }, 100);
     },
 
     async testConnection(settings) {

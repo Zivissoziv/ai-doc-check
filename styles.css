@@ -1161,3 +1161,20 @@ body {
 ::-webkit-scrollbar-thumb:hover {
     background: #a8a8a8;
 }
+
+.jump-highlight {
+    background-color: #fef08a;
+    border-radius: 2px;
+    padding: 0 2px;
+    transition: background-color 0.5s ease-out;
+}
+
+.jump-highlight.fade-out {
+    background-color: transparent;
+}
+
+@keyframes pulse-highlight {
+    0% { background-color: #facc15; box-shadow: 0 0 0 0 rgba(250, 204, 21, 0.7); }
+    50% { background-color: #fef08a; box-shadow: 0 0 0 4px rgba(250, 204, 21, 0); }
+    100% { background-color: transparent; box-shadow: 0 0 0 0 rgba(250, 204, 21, 0); }
+}
