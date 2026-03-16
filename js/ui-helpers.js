@@ -182,6 +182,9 @@ const UiHelpers = {
     _findAndHighlight(container, searchText) {
         if (!searchText || searchText.length < 2) return false;
 
+        const search = searchText.trim();
+        console.log('_findAndHighlight 搜索:', search);
+
         const walker = document.createTreeWalker(
             container,
             NodeFilter.SHOW_TEXT,
@@ -189,10 +192,13 @@ const UiHelpers = {
             false
         );
 
-        let textNode;
-        const search = searchText.trim();
+        const textNodes = [];
+        let node;
+        while ((node = walker.nextNode())) {
+            textNodes.push(node);
+        }
 
-        while ((textNode = walker.nextNode())) {
+        for (const textNode of textNodes) {
             const text = textNode.textContent;
             const index = text.indexOf(search);
 
@@ -220,6 +226,50 @@ const UiHelpers = {
             }
         }
 
+        const fullText = textNodes.map(n => n.textContent).join('');
+        const globalIndex = fullText.indexOf(search);
+        
+        if (globalIndex !== -1) {
+            console.log('在合并文本中找到，位置:', globalIndex);
+            
+            let currentPos = 0;
+            for (const textNode of textNodes) {
+                const nodeLength = textNode.textContent.length;
+                const nodeStart = currentPos;
+                const nodeEnd = currentPos + nodeLength;
+
+                if (globalIndex >= nodeStart && globalIndex < nodeEnd) {
+                    const localIndex = globalIndex - nodeStart;
+                    const availableLength = nodeLength - localIndex;
+                    const matchLength = Math.min(search.length, availableLength);
+
+                    try {
+                        const range = document.createRange();
+                        range.setStart(textNode, localIndex);
+                        range.setEnd(textNode, localIndex + matchLength);
+
+                        const span = document.createElement('span');
+                        span.className = 'jump-highlight';
+                        range.surroundContents(span);
+
+                        span.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+                        setTimeout(() => {
+                            span.classList.add('fade-out');
+                        }, 2000);
+
+                        console.log('找到并高亮(部分匹配):', search.substring(0, matchLength));
+                        return true;
+                    } catch (e) {
+                        console.warn('高亮失败:', e);
+                    }
+                }
+
+                currentPos += nodeLength;
+            }
+        }
+
+        console.log('未找到:', search);
         return false;
     },
 
