@@ -6,13 +6,17 @@ class SmartDocApp {
         this.document = null;
         this.excelData = null;
         this.rules = [];
-        this.settings = JSON.parse(localStorage.getItem('smartdoc_settings') || '{"auditRole": "专业文档审核专家"}');
+        this.settings = {
+            auditRole: '专业文档审核专家',
+            batchSize: 10,
+            repeatPrompt: true
+        };
         this.currentEditingRule = null;
         this.auditResults = [];
         this.ruleGroups = [];
         this.currentRuleGroup = null;
         this.isAuditing = false;
-        
+
         this.init();
     }
     
@@ -48,11 +52,22 @@ class SmartDocApp {
     }
     
     async loadPresetConfig() {
-        const apiConfig = await ConfigLoader.loadApiConfig();
-        if (apiConfig) {
-            this.settings = apiConfig;
+        try {
+            const apiConfig = await ConfigAPI.getApiConfig();
+            if (apiConfig) {
+                this.settings.endpoint = apiConfig.endpoint || 'https://api.deepseek.com/v1/chat/completions';
+                this.settings.model = apiConfig.model || 'deepseek-chat';
+                this.settings.auditRole = apiConfig.auditRole || '专业文档审核专家';
+                this.settings.hasApiKey = apiConfig.hasApiKey || false;
+            }
+        } catch (err) {
+            console.error('加载API配置失败:', err);
         }
-        
+
+        const localSettings = JSON.parse(localStorage.getItem('smartdoc_settings') || '{}');
+        this.settings.batchSize = localSettings.batchSize || 10;
+        this.settings.repeatPrompt = localSettings.repeatPrompt !== false;
+
         await this.loadTemplateList();
     }
     
@@ -497,7 +512,7 @@ class SmartDocApp {
             alert('请至少开启一条审核规则');
             return;
         }
-        if (!this.settings.apiKey) {
+        if (!this.settings.hasApiKey) {
             alert('请先配置API密钥');
             this.toggleSettings();
             return;
@@ -508,7 +523,10 @@ class SmartDocApp {
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 审核中...';
         
-        UiHelpers.setStatus('正在运行AI批量审核...', true);
+        const batchSize = this.settings.batchSize || 10;
+        const totalBatches = batchSize > 0 ? Math.ceil(activeRules.length / batchSize) : 1;
+        
+        UiHelpers.setStatus(`正在运行AI批量审核（将分${totalBatches}批处理）...`, true);
         this.auditResults = [];
         const resultsContainer = document.getElementById('auditResults');
         resultsContainer.innerHTML = '<div class="space-y-4" id="auditList"></div>';
@@ -524,15 +542,42 @@ class SmartDocApp {
                 return div;
             });
 
-            // 使用批量审核模式：只调用一次模型
-            const batchPrompt = AiAudit.buildBatchPrompt(activeRules, this.document.text, this.excelData);
-            const batchResults = await AiAudit.callBatchLLM(batchPrompt, activeRules, this.settings);
-            
-            // 渲染所有结果
-            batchResults.forEach((result, i) => {
-                this.auditResults[i] = result;
-                AiAudit.renderResult(result, placeholders[i]);
-            });
+            // 分批处理
+            if (batchSize === 0) {
+                // 不分组模式：一次性处理所有规则
+                const batchPrompt = AiAudit.buildBatchPrompt(activeRules, this.document.text, this.excelData, this.settings.repeatPrompt);
+                const batchResults = await AiAudit.callBatchLLM(batchPrompt, activeRules, this.settings);
+                
+                batchResults.forEach((result, i) => {
+                    this.auditResults[i] = result;
+                    AiAudit.renderResult(result, placeholders[i]);
+                });
+            } else {
+                // 分批处理模式
+                for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+                    const startIdx = batchIndex * batchSize;
+                    const endIdx = Math.min(startIdx + batchSize, activeRules.length);
+                    const batchRules = activeRules.slice(startIdx, endIdx);
+                    
+                    UiHelpers.setStatus(`正在审核第 ${batchIndex + 1}/${totalBatches} 批（规则 ${startIdx + 1}-${endIdx}）...`, true);
+                    UiHelpers.updateProgress(Math.round((batchIndex / totalBatches) * 100));
+                    
+                    const batchPrompt = AiAudit.buildBatchPrompt(batchRules, this.document.text, this.excelData, this.settings.repeatPrompt);
+                    const batchResults = await AiAudit.callBatchLLM(batchPrompt, batchRules, this.settings);
+                    
+                    // 渲染当前批次结果
+                    batchResults.forEach((result, i) => {
+                        const globalIndex = startIdx + i;
+                        this.auditResults[globalIndex] = result;
+                        AiAudit.renderResult(result, placeholders[globalIndex]);
+                    });
+                    
+                    // 添加批次间隔（避免请求过快）
+                    if (batchIndex < totalBatches - 1) {
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                    }
+                }
+            }
 
             UiHelpers.hideProgress();
             UiHelpers.setStatus(`审核完成，共检查 ${activeRules.length} 条规则`);
@@ -548,36 +593,96 @@ class SmartDocApp {
         }
     }
     
-    toggleSettings() {
+    async toggleSettings() {
         const modal = document.getElementById('settingsModal');
-        modal.classList.toggle('hidden');
+        if (!modal.classList.contains('hidden')) {
+            modal.classList.add('hidden');
+        } else {
+            await this._loadApiConfig();
+            this.loadSettings();
+            modal.classList.remove('hidden');
+        }
+    }
+
+    async _loadApiConfig() {
+        try {
+            const apiConfig = await ConfigAPI.getApiConfig();
+            if (apiConfig) {
+                this.settings.endpoint = apiConfig.endpoint || 'https://api.deepseek.com/v1/chat/completions';
+                this.settings.model = apiConfig.model || 'deepseek-chat';
+                this.settings.auditRole = apiConfig.auditRole || '专业文档审核专家';
+                this.settings.hasApiKey = apiConfig.hasApiKey || false;
+            }
+
+            const localSettings = JSON.parse(localStorage.getItem('smartdoc_settings') || '{}');
+            this.settings.batchSize = localSettings.batchSize || 10;
+            this.settings.repeatPrompt = localSettings.repeatPrompt !== false;
+        } catch (err) {
+            console.error('加载API配置失败:', err);
+        }
     }
     
-    saveSettings() {
-        this.settings = {
-            provider: 'custom',
+    async saveSettings() {
+        const apiKey = document.getElementById('apiKey').value;
+        const config = {
             endpoint: document.getElementById('apiEndpoint').value,
-            apiKey: document.getElementById('apiKey').value,
             model: document.getElementById('apiModel').value,
             auditRole: document.getElementById('auditRole').value || '专业文档审核专家'
         };
-        localStorage.setItem('smartdoc_settings', JSON.stringify(this.settings));
-        UiHelpers.toggleModal('settingsModal', false);
-        this.updateApiStatus();
-        alert('设置已保存');
+
+        if (apiKey) {
+            config.apiKey = apiKey;
+        }
+
+        try {
+            await ConfigAPI.updateApiConfig(config);
+
+            this.settings.endpoint = config.endpoint;
+            this.settings.model = config.model;
+            this.settings.auditRole = config.auditRole;
+            if (apiKey) {
+                this.settings.hasApiKey = true;
+            }
+
+            const batchSize = parseInt(document.getElementById('batchSize').value) || 10;
+            const repeatPrompt = document.getElementById('repeatPrompt').checked;
+            this.settings.batchSize = batchSize;
+            this.settings.repeatPrompt = repeatPrompt;
+
+            const localSettings = {
+                batchSize: batchSize,
+                repeatPrompt: repeatPrompt
+            };
+            localStorage.setItem('smartdoc_settings', JSON.stringify(localSettings));
+
+            UiHelpers.toggleModal('settingsModal', false);
+            this.updateApiStatus();
+            alert('设置已保存到服务器');
+        } catch (err) {
+            alert('保存失败: ' + err.message);
+        }
     }
     
     loadSettings() {
-        if (this.settings.apiKey) {
-            document.getElementById('apiEndpoint').value = this.settings.endpoint || '';
-            document.getElementById('apiKey').value = this.settings.apiKey || '';
-            document.getElementById('apiModel').value = this.settings.model || 'deepseek-chat';
-            document.getElementById('auditRole').value = this.settings.auditRole || '专业文档审核专家';
+        document.getElementById('apiEndpoint').value = this.settings.endpoint || 'https://api.deepseek.com/v1/chat/completions';
+        document.getElementById('apiModel').value = this.settings.model || 'deepseek-chat';
+        document.getElementById('auditRole').value = this.settings.auditRole || '专业文档审核专家';
+        document.getElementById('batchSize').value = this.settings.batchSize || 10;
+        document.getElementById('repeatPrompt').checked = this.settings.repeatPrompt !== false;
+        document.getElementById('apiKey').value = '';
+
+        const apiKeyStatus = document.getElementById('apiKeyStatus');
+        if (this.settings.hasApiKey) {
+            apiKeyStatus.textContent = 'API密钥已设置（填入新值可更新）';
+            apiKeyStatus.className = 'text-xs text-green-600 mt-1';
+        } else {
+            apiKeyStatus.textContent = 'API密钥未设置';
+            apiKeyStatus.className = 'text-xs text-gray-500 mt-1';
         }
     }
     
     updateApiStatus() {
-        UiHelpers.updateApiStatus(!!this.settings.apiKey);
+        UiHelpers.updateApiStatus(!!this.settings.hasApiKey);
     }
     
     async testConnection() {
@@ -585,16 +690,25 @@ class SmartDocApp {
         const originalText = btn.textContent;
         btn.textContent = '测试中...';
         btn.disabled = true;
-        
+
         try {
-            const settings = {
-                endpoint: document.getElementById('apiEndpoint').value,
-                apiKey: document.getElementById('apiKey').value,
-                model: document.getElementById('apiModel').value
-            };
-            
-            const response = await AiAudit.testConnection(settings);
-            
+            const endpoint = document.getElementById('apiEndpoint').value;
+            const model = document.getElementById('apiModel').value;
+
+            const response = await fetch('/api/proxy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    endpoint: endpoint,
+                    body: {
+                        model: model || 'deepseek-chat',
+                        messages: [{ role: 'user', content: '你好' }],
+                        temperature: 0.7,
+                        max_tokens: 10
+                    }
+                })
+            });
+
             if (response.ok) {
                 alert('连接成功！');
             } else {

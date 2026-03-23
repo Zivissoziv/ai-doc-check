@@ -230,47 +230,69 @@
                 <i class="fas fa-times text-xl"></i>
             </button>
         </div>
-        
+
         <div class="p-6 overflow-y-auto space-y-4">
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">API 提供商</label>
-                <select id="apiProvider" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    <option value="custom">自定义兼容OpenAI API</option>
-                </select>
+            <div class="bg-green-50 border border-green-200 rounded-lg p-4 text-sm text-green-800">
+                <i class="fas fa-shield-alt mr-1"></i>
+                <strong>安全提示：</strong>敏感配置存储在服务器端，不会在浏览器中暴露API密钥
             </div>
-            
-            <div id="apiEndpointGroup">
+
+            <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">API Endpoint</label>
-                <input type="text" id="apiEndpoint" placeholder="https://api.openai.com/v1/chat/completions" 
+                <input type="text" id="apiEndpoint" placeholder="https://api.deepseek.com/v1/chat/completions"
                     class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-mono text-sm">
             </div>
-            
+
             <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">API Key</label>
-                <input type="password" id="apiKey" placeholder="sk-..." 
+                <label class="block text-sm font-medium text-gray-700 mb-1">API Key <span class="text-xs text-gray-500 font-normal">(留空则保持不变)</span></label>
+                <input type="password" id="apiKey"
                     class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-mono text-sm">
-                <p class="text-xs text-gray-500 mt-1">密钥仅保存在本地浏览器中</p>
+                <p class="text-xs text-gray-500 mt-1" id="apiKeyStatus">API密钥未设置</p>
             </div>
-            
+
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">模型</label>
-                <input type="text" id="apiModel" placeholder="gpt-4" value="gpt-4"
+                <input type="text" id="apiModel" placeholder="deepseek-chat" value="deepseek-chat"
                     class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-mono text-sm">
             </div>
-            
+
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">审核角色</label>
-                <input type="text" id="auditRole" value="专业文档审核专家" 
-                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-mono text-sm">
+                <input type="text" id="auditRole" value="专业文档审核专家"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm">
                 <p class="text-xs text-gray-500 mt-1">设置AI审核员的角色身份</p>
             </div>
-            
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">每批规则条数 <span class="text-xs text-gray-400 font-normal">（本地保存）</span></label>
+                <select id="batchSize" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    <option value="1">1条（最稳定，适合大文档）</option>
+                    <option value="3">3条</option>
+                    <option value="5">5条</option>
+                    <option value="10" selected>10条（默认）</option>
+                    <option value="20">20条</option>
+                    <option value="0">全部（不分组）</option>
+                </select>
+                <p class="text-xs text-gray-500 mt-1">大文档建议选择1-5条，避免超时</p>
+            </div>
+
+            <div>
+                <label class="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" id="repeatPrompt" checked
+                        class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                    <div>
+                        <span class="text-sm font-medium text-gray-700">重复提示词 <span class="text-xs text-gray-400 font-normal">（本地保存）</span></span>
+                        <p class="text-xs text-gray-500">开启后可提高审核准确性，但会增加token消耗</p>
+                    </div>
+                </label>
+            </div>
+
             <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">
                 <i class="fas fa-info-circle mr-1"></i>
                 使用提示：支持所有兼容OpenAI API格式的服务，包括国产大模型转接
             </div>
         </div>
-        
+
         <div class="p-6 border-t border-gray-100 flex justify-end gap-3">
             <button onclick="app.testConnection()" class="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium">
                 测试连接

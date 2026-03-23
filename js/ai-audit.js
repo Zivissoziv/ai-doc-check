@@ -1,7 +1,7 @@
 const AiAudit = {
     REPETITION_SEPARATOR: '\n\n--- 重复提示（请仔细阅读以上内容）---\n\n',
     
-    buildPrompt(rule, documentText, excelData) {
+    buildPrompt(rule, documentText, excelData, repeatPrompt = true) {
         let prompt = rule.prompt;
         
         if (excelData) {
@@ -65,10 +65,14 @@ ${documentText.substring(0, 10000)}
 4. 最后一个元素后面不要加逗号
 5. 不要包含任何解释说明文字，只返回JSON`;
 
-        return basePrompt + this.REPETITION_SEPARATOR + basePrompt;
+        if (repeatPrompt) {
+            return basePrompt + this.REPETITION_SEPARATOR + basePrompt;
+        } else {
+            return basePrompt;
+        }
     },
 
-    buildBatchPrompt(rules, documentText, excelData) {
+    buildBatchPrompt(rules, documentText, excelData, repeatPrompt = true) {
         const processPrompt = (prompt) => {
             if (!excelData) return prompt;
             return prompt.replace(/\{\{excel\.([^}]+)\}\}/g, (match, path) => {
@@ -150,12 +154,16 @@ ${r.prompt}`).join('\n')}
 6. 最后一个元素后面不要加逗号
 7. 不要包含任何解释说明文字，只返回JSON`;
 
-        return basePrompt + this.REPETITION_SEPARATOR + basePrompt;
+        if (repeatPrompt) {
+            return basePrompt + this.REPETITION_SEPARATOR + basePrompt;
+        } else {
+            return basePrompt;
+        }
     },
 
     async callLLM(prompt, rule, settings) {
-        const { endpoint, apiKey, model, auditRole } = settings;
-        
+        const { endpoint, model, auditRole } = settings;
+
         try {
             const response = await fetch('/api/proxy', {
                 method: 'POST',
@@ -164,7 +172,6 @@ ${r.prompt}`).join('\n')}
                 },
                 body: JSON.stringify({
                     endpoint: endpoint || 'https://api.openai.com/v1/chat/completions',
-                    apiKey: apiKey,
                     body: {
                         model: model || 'deepseek-chat',
                         messages: [
@@ -175,14 +182,14 @@ ${r.prompt}`).join('\n')}
                     }
                 })
             });
-            
+
             if (!response.ok) throw new Error('API错误: ' + response.status);
-            
+
             const data = await response.json();
             const content = data.choices[0].message.content;
-            
+
             let result = this.parseResult(content);
-            
+
             return {
                 ruleName: rule.name,
                 severity: rule.severity,
@@ -201,8 +208,8 @@ ${r.prompt}`).join('\n')}
     },
 
     async callBatchLLM(prompt, rules, settings) {
-        const { endpoint, apiKey, model, auditRole } = settings;
-        
+        const { endpoint, model, auditRole } = settings;
+
         try {
             const response = await fetch('/api/proxy', {
                 method: 'POST',
@@ -211,7 +218,6 @@ ${r.prompt}`).join('\n')}
                 },
                 body: JSON.stringify({
                     endpoint: endpoint || 'https://api.openai.com/v1/chat/completions',
-                    apiKey: apiKey,
                     body: {
                         model: model || 'deepseek-chat',
                         messages: [
@@ -222,16 +228,16 @@ ${r.prompt}`).join('\n')}
                     }
                 })
             });
-            
+
             if (!response.ok) throw new Error('API错误: ' + response.status);
-            
+
             const data = await response.json();
             const content = data.choices[0].message.content;
-            
+
             // 解析批量结果
             const batchResult = this.parseBatchResult(content, rules);
             return batchResult;
-            
+
         } catch (err) {
             // 批量调用失败时，返回所有规则的错误结果
             return rules.map(rule => ({

@@ -298,8 +298,8 @@ class PromptBuilder:
     """提示词构建器"""
 
     @staticmethod
-    def build_batch_prompt(rules, document_text, excel_data=None):
-        """构建批量审核提示词（默认使用完整重复策略）"""
+    def build_batch_prompt(rules, document_text, excel_data=None, repeat_prompt=True):
+        """构建批量审核提示词"""
         
         rules_list = []
         for idx, rule in enumerate(rules):
@@ -364,7 +364,10 @@ class PromptBuilder:
 6. 最后一个元素后面不要加逗号
 7. 不要包含任何解释说明文字，只返回JSON"""
 
-        return base_prompt + REPETITION_SEPARATOR + base_prompt
+        if repeat_prompt:
+            return base_prompt + REPETITION_SEPARATOR + base_prompt
+        else:
+            return base_prompt
 
     @staticmethod
     def _replace_excel_vars(prompt, excel_data):
@@ -401,6 +404,8 @@ class ProxyHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/api/config/rules':
             self._get_rules_index()
+        elif self.path == '/api/config/api':
+            self._get_api_config()
         elif self.path == '/api/rules':
             self._api_get_rules()
         elif self.path.startswith('/api/config/rules/'):
@@ -423,6 +428,8 @@ class ProxyHandler(SimpleHTTPRequestHandler):
         if self.path.startswith('/api/config/rules/'):
             group_id = self.path[len('/api/config/rules/'):].split('?')[0]
             self._update_rule_group(group_id)
+        elif self.path == '/api/config/api':
+            self._update_api_config()
         else:
             self.send_error(404, 'Not Found')
 
@@ -439,9 +446,12 @@ class ProxyHandler(SimpleHTTPRequestHandler):
             raw = self.rfile.read(length)
             data = json.loads(raw.decode('utf-8'))
 
-            endpoint = data.get('endpoint', '')
-            api_key = data.get('apiKey', '')
             body = data.get('body', {})
+            
+            api_config = self._load_api_config_from_file()
+            
+            endpoint = data.get('endpoint') or api_config.get('endpoint', '')
+            api_key = data.get('apiKey') or api_config.get('apiKey', '')
 
             if not endpoint:
                 self._send_json(400, {'error': '缺少 endpoint 参数'})
@@ -499,6 +509,57 @@ class ProxyHandler(SimpleHTTPRequestHandler):
             self._send_json(200, data)
         except FileNotFoundError:
             self._send_json(404, {'error': '规则索引文件不存在'})
+        except Exception as e:
+            self._send_json(500, {'error': str(e)})
+
+    def _get_api_config(self):
+        """获取API配置（不返回API Key的实际值）"""
+        try:
+            api_config_path = os.path.join(CONFIG_DIR, 'api.json')
+            with open(api_config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+
+            result = {
+                'endpoint': config.get('endpoint', 'https://api.deepseek.com/v1/chat/completions'),
+                'model': config.get('model', 'deepseek-chat'),
+                'auditRole': config.get('auditRole', '专业文档审核专家'),
+                'hasApiKey': bool(config.get('apiKey', ''))
+            }
+
+            self._send_json(200, result)
+        except FileNotFoundError:
+            self._send_json(404, {'error': 'API配置文件不存在'})
+        except Exception as e:
+            self._send_json(500, {'error': str(e)})
+
+    def _update_api_config(self):
+        """更新API配置"""
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            raw = self.rfile.read(length)
+            data = json.loads(raw.decode('utf-8'))
+
+            api_config_path = os.path.join(CONFIG_DIR, 'api.json')
+
+            existing_config = {}
+            if os.path.exists(api_config_path):
+                with open(api_config_path, 'r', encoding='utf-8') as f:
+                    existing_config = json.load(f)
+
+            update_fields = ['endpoint', 'model', 'auditRole']
+            for field in update_fields:
+                if field in data:
+                    existing_config[field] = data[field]
+
+            if 'apiKey' in data and data['apiKey']:
+                existing_config['apiKey'] = data['apiKey']
+
+            with open(api_config_path, 'w', encoding='utf-8') as f:
+                json.dump(existing_config, f, ensure_ascii=False, indent=4)
+
+            self._send_json(200, {'success': True, 'message': 'API配置已更新'})
+        except json.JSONDecodeError:
+            self._send_json(400, {'error': '请求体 JSON 格式错误'})
         except Exception as e:
             self._send_json(500, {'error': str(e)})
 
@@ -641,6 +702,17 @@ class ProxyHandler(SimpleHTTPRequestHandler):
             return False
         return all(c.isalnum() or c in '_-' for c in id_str)
 
+    def _load_api_config_from_file(self):
+        """从api.json文件加载配置"""
+        try:
+            api_config_path = os.path.join(CONFIG_DIR, 'api.json')
+            if os.path.exists(api_config_path):
+                with open(api_config_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            return {}
+        except Exception:
+            return {}
+
     def _api_get_rules(self):
         """获取规则组列表（第三方API）"""
         try:
@@ -769,8 +841,33 @@ class ProxyHandler(SimpleHTTPRequestHandler):
             api_key = settings.get('apiKey', '')
             model = settings.get('model', 'deepseek-chat')
             audit_role = settings.get('auditRole', '专业文档审核专家')
+            repeat_prompt = settings.get('repeatPrompt', True)
+            batch_size = settings.get('batchSize', 0)
 
-            prompt = PromptBuilder.build_batch_prompt(rules, document_text, excel_data)
+            if batch_size > 0 and len(rules) > batch_size:
+                all_results = []
+                total_batches = (len(rules) + batch_size - 1) // batch_size
+
+                for batch_idx in range(total_batches):
+                    start_idx = batch_idx * batch_size
+                    end_idx = min(start_idx + batch_size, len(rules))
+                    batch_rules = rules[start_idx:end_idx]
+
+                    prompt = PromptBuilder.build_batch_prompt(batch_rules, document_text, excel_data, repeat_prompt)
+                    batch_result = self._call_llm(prompt, endpoint, api_key, model, audit_role)
+
+                    if 'error' in batch_result:
+                        return self._send_json(502, {'error': batch_result['error']})
+
+                    batch_results = self._parse_audit_results(batch_result.get('content', ''), batch_rules)
+
+                    for i, r in enumerate(batch_results):
+                        r['ruleId'] = start_idx + i
+                    all_results.extend(batch_results)
+
+                return self._send_json(200, {'success': True, 'results': all_results})
+            else:
+                prompt = PromptBuilder.build_batch_prompt(rules, document_text, excel_data, repeat_prompt)
 
             llm_body = {
                 'model': model,
@@ -875,6 +972,43 @@ class ProxyHandler(SimpleHTTPRequestHandler):
                 'issues': [{'location': '解析', 'problem': f'结果解析失败: {str(e)}', 'suggestion': '请重试'}],
                 'summary': '解析失败'
             } for idx, rule in enumerate(rules)]
+
+    def _call_llm(self, prompt, endpoint, api_key, model, audit_role):
+        """调用LLM API的辅助方法"""
+        try:
+            llm_body = {
+                'model': model,
+                'messages': [
+                    {'role': 'system', 'content': f'{audit_role}，你擅长发现文档中的结构、逻辑和合规问题。请严格按照要求的JSON格式返回结果，不要添加任何额外说明。'},
+                    {'role': 'user', 'content': prompt}
+                ],
+                'temperature': 0.1
+            }
+
+            req_body = json.dumps(llm_body, ensure_ascii=False).encode('utf-8')
+            req = urllib.request.Request(endpoint, data=req_body, method='POST')
+            req.add_header('Content-Type', 'application/json')
+            if api_key:
+                req.add_header('Authorization', 'Bearer ' + api_key)
+
+            ctx = ssl.create_default_context()
+            with urllib.request.urlopen(req, timeout=120, context=ctx) as resp:
+                resp_body = resp.read()
+                resp_body = JSONRepair.repair_response(resp_body)
+                llm_result = json.loads(resp_body.decode('utf-8'))
+
+            content = llm_result.get('choices', [{}])[0].get('message', {}).get('content', '')
+            return {'content': content}
+
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode('utf-8', errors='ignore')
+            return {'error': f'LLM API错误: {e.code}', 'detail': err_body}
+        except urllib.error.URLError as e:
+            return {'error': f'无法连接到LLM服务: {e.reason}'}
+        except TimeoutError:
+            return {'error': 'LLM服务响应超时'}
+        except Exception as e:
+            return {'error': str(e)}
 
     def _send_json(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False).encode('utf-8')
