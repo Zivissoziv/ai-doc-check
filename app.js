@@ -1,5 +1,16 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc = './libs/pdf.worker.min.js';
 
+const API_DEFAULTS = {
+    endpoint: 'https://api.deepseek.com/v1/chat/completions',
+    model: 'deepseek-chat',
+    auditRole: '专业文档审核专家'
+};
+
+const SETTINGS_DEFAULTS = {
+    batchSize: 5,
+    repeatPrompt: true
+};
+
 class SmartDocApp {
     constructor() {
         this.template = null;
@@ -7,9 +18,9 @@ class SmartDocApp {
         this.excelData = null;
         this.rules = [];
         this.settings = {
-            auditRole: '专业文档审核专家',
-            batchSize: 10,
-            repeatPrompt: true
+            auditRole: API_DEFAULTS.auditRole,
+            batchSize: SETTINGS_DEFAULTS.batchSize,
+            repeatPrompt: SETTINGS_DEFAULTS.repeatPrompt
         };
         this.currentEditingRule = null;
         this.auditResults = [];
@@ -40,10 +51,7 @@ class SmartDocApp {
             RulesManager.renderGroupSelector(this.ruleGroups, this.currentRuleGroup, 'ruleGroupSelect');
             
             if (this.currentRuleGroup) {
-                const rules = await RulesManager.loadFromServer(this.currentRuleGroup);
-                this.rules = rules || [];
-                RulesManager.save(this.rules);
-                this.renderRules();
+                await this.loadCurrentGroupRules();
             }
         } catch (err) {
             console.error('加载规则组失败:', err);
@@ -51,23 +59,39 @@ class SmartDocApp {
         }
     }
     
+    async loadCurrentGroupRules(groupName = '') {
+        const rules = await RulesManager.loadFromServer(this.currentRuleGroup);
+        this.rules = rules || [];
+        RulesManager.save(this.rules);
+        this.renderRules();
+        if (groupName) {
+            UiHelpers.setStatus(`已加载规则组: ${groupName}`);
+        }
+    }
+    
+    _loadLocalSettings() {
+        const localSettings = JSON.parse(localStorage.getItem('smartdoc_settings') || '{}');
+        this.settings.batchSize = localSettings.batchSize ?? SETTINGS_DEFAULTS.batchSize;
+        this.settings.repeatPrompt = localSettings.repeatPrompt ?? SETTINGS_DEFAULTS.repeatPrompt;
+    }
+    
+    _applyApiConfig(apiConfig) {
+        if (!apiConfig) return;
+        this.settings.endpoint = apiConfig.endpoint || API_DEFAULTS.endpoint;
+        this.settings.model = apiConfig.model || API_DEFAULTS.model;
+        this.settings.auditRole = apiConfig.auditRole || API_DEFAULTS.auditRole;
+        this.settings.hasApiKey = apiConfig.hasApiKey || false;
+    }
+    
     async loadPresetConfig() {
         try {
             const apiConfig = await ConfigAPI.getApiConfig();
-            if (apiConfig) {
-                this.settings.endpoint = apiConfig.endpoint || 'https://api.deepseek.com/v1/chat/completions';
-                this.settings.model = apiConfig.model || 'deepseek-chat';
-                this.settings.auditRole = apiConfig.auditRole || '专业文档审核专家';
-                this.settings.hasApiKey = apiConfig.hasApiKey || false;
-            }
+            this._applyApiConfig(apiConfig);
         } catch (err) {
             console.error('加载API配置失败:', err);
         }
 
-        const localSettings = JSON.parse(localStorage.getItem('smartdoc_settings') || '{}');
-        this.settings.batchSize = localSettings.batchSize || 10;
-        this.settings.repeatPrompt = localSettings.repeatPrompt !== false;
-
+        this._loadLocalSettings();
         await this.loadTemplateList();
     }
     
@@ -75,7 +99,6 @@ class SmartDocApp {
         const config = await ConfigLoader.loadTemplateList();
         this.templateList = config.templates || [];
         this.defaultTemplateName = config.defaultTemplate || '';
-        
         this.renderTemplateListInModal();
     }
     
@@ -100,13 +123,14 @@ class SmartDocApp {
         `).join('');
     }
     
-    showTemplateModal() {
-        UiHelpers.toggleModal('templateModal', true);
+    _handleModal(show, modalId) {
+        UiHelpers.toggleModal(modalId, show);
     }
     
-    closeTemplateModal() {
-        UiHelpers.toggleModal('templateModal', false);
-    }
+    showTemplateModal() { this._handleModal(true, 'templateModal'); }
+    closeTemplateModal() { this._handleModal(false, 'templateModal'); }
+    closeRuleModal() { this._handleModal(false, 'ruleModal'); }
+    closeGroupModal() { this._handleModal(false, 'groupModal'); }
     
     async selectPresetTemplate(fileName) {
         this.closeTemplateModal();
@@ -118,10 +142,7 @@ class SmartDocApp {
         const file = await ConfigLoader.loadPresetTemplate(fileName);
         if (file) {
             this.template = await DocumentParser.parse(file);
-            TreeRenderer.render(this.template?.tree || [], 'structureTree');
-            UiHelpers.setStatus(`模板已加载: ${fileName}`);
-            this.updateTemplateBtn(true, fileName);
-            this.compareStructure();
+            this._onTemplateLoaded(fileName);
         } else {
             UiHelpers.setStatus('模板加载失败');
         }
@@ -135,15 +156,19 @@ class SmartDocApp {
         UiHelpers.setStatus('正在解析模板...', true);
         try {
             this.template = await DocumentParser.parse(file);
-            TreeRenderer.render(this.template?.tree || [], 'structureTree');
-            UiHelpers.setStatus(`模板已加载: ${file.name}`);
-            this.updateTemplateBtn(true, file.name);
-            this.compareStructure();
+            this._onTemplateLoaded(file.name);
         } catch (err) {
             alert('解析失败: ' + err.message);
             UiHelpers.setStatus('就绪');
         }
         input.value = '';
+    }
+    
+    _onTemplateLoaded(fileName) {
+        TreeRenderer.render(this.template?.tree || [], 'structureTree');
+        UiHelpers.setStatus(`模板已加载: ${fileName}`);
+        this.updateTemplateBtn(true, fileName);
+        this.compareStructure();
     }
     
     async handleDocUpload(input) {
@@ -180,50 +205,35 @@ class SmartDocApp {
         }
     }
     
-    updateTemplateBtn(loaded, fileName = '') {
-        const btn = document.getElementById('templateBtn');
-        const icon = document.getElementById('templateBtnIcon');
-        const title = document.getElementById('templateBtnTitle');
-        const desc = document.getElementById('templateBtnDesc');
+    _updateFileBtn(btnId, iconId, titleId, descId, options) {
+        const btn = document.getElementById(btnId);
+        const icon = document.getElementById(iconId);
+        const title = document.getElementById(titleId);
+        const desc = document.getElementById(descId);
+        const color = options.loaded ? 'blue' : 'gray';
         
-        if (loaded) {
-            btn.className = 'w-full flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg cursor-pointer hover:bg-blue-100 transition-colors';
-            icon.className = 'fas fa-file-import text-blue-600';
-            title.className = 'font-medium text-blue-900';
-            title.textContent = '模板已加载';
-            desc.className = 'text-xs text-blue-600';
-            desc.textContent = fileName.length > 20 ? fileName.substring(0, 20) + '...' : fileName;
-        } else {
-            btn.className = 'w-full flex items-center gap-2 p-3 bg-gray-50 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors';
-            icon.className = 'fas fa-file-import text-gray-400';
-            title.className = 'font-medium text-gray-700';
-            title.textContent = '选择模板';
-            desc.className = 'text-xs text-gray-500';
-            desc.textContent = '示例模板或上传文件';
-        }
+        btn.className = `w-full flex items-center gap-2 p-3 bg-${color}-50 border border-${color}-200 rounded-lg cursor-pointer hover:bg-${color}-100 transition-colors`;
+        icon.className = `fas fa-${options.icon} text-${color}-600`;
+        title.className = `font-medium text-${color}-900`;
+        title.textContent = options.loadedTitle;
+        desc.className = `text-xs text-${color}-600`;
+        desc.textContent = options.fileName.length > 20 ? options.fileName.substring(0, 20) + '...' : options.fileName;
+    }
+    
+    updateTemplateBtn(loaded, fileName = '') {
+        this._updateFileBtn('templateBtn', 'templateBtnIcon', 'templateBtnTitle', 'templateBtnDesc', {
+            loaded, fileName: fileName || '示例模板或上传文件',
+            icon: 'file-import',
+            loadedTitle: '模板已加载'
+        });
     }
     
     updateDocBtn(loaded, fileName = '') {
-        const btn = document.getElementById('docBtn');
-        const icon = document.getElementById('docBtnIcon');
-        const title = document.getElementById('docBtnTitle');
-        const desc = document.getElementById('docBtnDesc');
-        
-        if (loaded) {
-            btn.className = 'flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg cursor-pointer hover:bg-blue-100 transition-colors';
-            icon.className = 'fas fa-file-alt text-blue-600';
-            title.className = 'font-medium text-blue-900';
-            title.textContent = '文档已加载';
-            desc.className = 'text-xs text-blue-600';
-            desc.textContent = fileName.length > 20 ? fileName.substring(0, 20) + '...' : fileName;
-        } else {
-            btn.className = 'flex items-center gap-2 p-3 bg-gray-50 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors';
-            icon.className = 'fas fa-file-alt text-gray-400';
-            title.className = 'font-medium text-gray-700';
-            title.textContent = '上传待审文档';
-            desc.className = 'text-xs text-gray-500';
-            desc.textContent = '需要检查的文件';
-        }
+        this._updateFileBtn('docBtn', 'docBtnIcon', 'docBtnTitle', 'docBtnDesc', {
+            loaded, fileName: fileName || '需要检查的文件',
+            icon: 'file-alt',
+            loadedTitle: '文档已加载'
+        });
     }
     
     compareStructure() {
@@ -250,11 +260,7 @@ class SmartDocApp {
         if (group) {
             UiHelpers.setStatus('正在加载规则组...', true);
             try {
-                const rules = await RulesManager.loadFromServer(groupId);
-                this.rules = rules || [];
-                RulesManager.save(this.rules);
-                this.renderRules();
-                UiHelpers.setStatus(`已加载规则组: ${group.name}`);
+                await this.loadCurrentGroupRules(group.name);
             } catch (err) {
                 UiHelpers.setStatus(`规则组加载失败: ${err.message}`);
             }
@@ -262,17 +268,14 @@ class SmartDocApp {
     }
     
     async toggleRuleStatus(idx) {
-        this.rules[idx].enabled = this.rules[idx].enabled === false ? true : false;
+        this.rules[idx].enabled = !this.rules[idx].enabled;
         this.renderRules();
         await this._autoSave();
     }
 
     async deleteRule(idx) {
         const rule = this.rules[idx];
-        if (!confirm(`确定要删除规则"${rule.name}"吗？此操作不可恢复！`)) {
-            return;
-        }
-
+        if (!confirm(`确定要删除规则"${rule.name}"吗？此操作不可恢复！`)) return;
         this.rules.splice(idx, 1);
         this.renderRules();
         await this._autoSave();
@@ -296,10 +299,6 @@ class SmartDocApp {
         UiHelpers.toggleModal('ruleModal', true);
     }
     
-    closeRuleModal() {
-        UiHelpers.toggleModal('ruleModal', false);
-    }
-    
     async saveRule() {
         const name = document.getElementById('ruleName').value.trim();
         const prompt = document.getElementById('rulePrompt').value.trim();
@@ -311,11 +310,9 @@ class SmartDocApp {
         }
         
         const rule = { 
-            name, 
-            prompt, 
-            severity, 
+            name, prompt, severity, 
             id: Date.now(),
-            enabled: this.currentEditingRule !== null ? (this.rules[this.currentEditingRule].enabled !== false) : true
+            enabled: this.currentEditingRule !== null ? this.rules[this.currentEditingRule].enabled !== false : true
         };
         
         if (this.currentEditingRule !== null) {
@@ -341,37 +338,33 @@ class SmartDocApp {
         }
     }
     
-    showCreateGroupModal() {
-        this._groupModalMode = 'create';
-        document.getElementById('groupModalTitle').textContent = '新建规则组';
-        document.getElementById('groupModalBtn').textContent = '创建';
-        document.getElementById('groupIdField').style.display = 'block';
-        document.getElementById('groupId').value = '';
-        document.getElementById('groupId').disabled = false;
-        document.getElementById('groupName').value = '';
+    _setupGroupModal(mode) {
+        this._groupModalMode = mode;
+        const isCreate = mode === 'create';
+        
+        document.getElementById('groupModalTitle').textContent = isCreate ? '新建规则组' : '编辑规则组';
+        document.getElementById('groupModalBtn').textContent = isCreate ? '创建' : '保存';
+        document.getElementById('groupIdField').style.display = isCreate ? 'block' : 'none';
+        
+        if (isCreate) {
+            document.getElementById('groupId').value = '';
+            document.getElementById('groupId').disabled = false;
+        } else {
+            const group = this.ruleGroups.find(g => g.id === this.currentRuleGroup);
+            document.getElementById('groupId').value = group?.id || '';
+        }
+        
+        document.getElementById('groupName').value = isCreate ? '' : (this.ruleGroups.find(g => g.id === this.currentRuleGroup)?.name || '');
         UiHelpers.toggleModal('groupModal', true);
     }
     
+    showCreateGroupModal() { this._setupGroupModal('create'); }
     showEditGroupModal() {
         if (!this.currentRuleGroup) {
             alert('请先选择规则组');
             return;
         }
-        
-        const group = this.ruleGroups.find(g => g.id === this.currentRuleGroup);
-        if (!group) return;
-        
-        this._groupModalMode = 'edit';
-        document.getElementById('groupModalTitle').textContent = '编辑规则组';
-        document.getElementById('groupModalBtn').textContent = '保存';
-        document.getElementById('groupIdField').style.display = 'none';
-        document.getElementById('groupId').value = group.id;
-        document.getElementById('groupName').value = group.name;
-        UiHelpers.toggleModal('groupModal', true);
-    }
-    
-    closeGroupModal() {
-        UiHelpers.toggleModal('groupModal', false);
+        this._setupGroupModal('edit');
     }
     
     async saveGroupModal() {
@@ -383,7 +376,6 @@ class SmartDocApp {
                 alert('请填写完整信息');
                 return;
             }
-            
             if (!/^[a-zA-Z0-9_-]+$/.test(groupId)) {
                 alert('规则组ID只能包含字母、数字、下划线和横线');
                 return;
@@ -391,15 +383,12 @@ class SmartDocApp {
             
             try {
                 await RulesManager.createGroup(groupId, groupName, []);
-                
                 this.ruleGroups.push({ id: groupId, name: groupName });
-                RulesManager.renderGroupSelector(this.ruleGroups, groupId, 'ruleGroupSelect');
-                
                 this.currentRuleGroup = groupId;
                 RulesManager.setCurrentGroup(groupId);
                 this.rules = [];
                 this.renderRules();
-                
+                RulesManager.renderGroupSelector(this.ruleGroups, groupId, 'ruleGroupSelect');
                 this.closeGroupModal();
                 UiHelpers.setStatus('规则组创建成功');
             } catch (err) {
@@ -413,13 +402,9 @@ class SmartDocApp {
             
             try {
                 await RulesManager.saveToServer(groupId, this.rules, groupName);
-                
                 const group = this.ruleGroups.find(g => g.id === groupId);
-                if (group) {
-                    group.name = groupName;
-                }
+                if (group) group.name = groupName;
                 RulesManager.renderGroupSelector(this.ruleGroups, groupId, 'ruleGroupSelect');
-                
                 this.closeGroupModal();
                 UiHelpers.setStatus('规则组名称已更新');
             } catch (err) {
@@ -446,18 +431,11 @@ class SmartDocApp {
         
         try {
             await RulesManager.deleteGroup(this.currentRuleGroup);
-            
             this.ruleGroups = this.ruleGroups.filter(g => g.id !== this.currentRuleGroup);
-            
             this.currentRuleGroup = this.ruleGroups[0]?.id;
             RulesManager.setCurrentGroup(this.currentRuleGroup);
             RulesManager.renderGroupSelector(this.ruleGroups, this.currentRuleGroup, 'ruleGroupSelect');
-            
-            const rules = await RulesManager.loadFromServer(this.currentRuleGroup);
-            this.rules = rules || [];
-            RulesManager.save(this.rules);
-            this.renderRules();
-            
+            await this.loadCurrentGroupRules();
             UiHelpers.setStatus('规则组已删除');
         } catch (err) {
             alert('删除失败: ' + err.message);
@@ -488,11 +466,16 @@ class SmartDocApp {
     insertVar(varStr) {
         const textarea = document.getElementById('rulePrompt');
         const start = textarea.selectionStart;
-        const end = textarea.selectionEnd;
-        const text = textarea.value;
-        textarea.value = text.substring(0, start) + varStr + text.substring(end);
+        textarea.value = textarea.value.substring(0, start) + varStr + textarea.value.substring(start);
         textarea.selectionStart = textarea.selectionEnd = start + varStr.length;
         UiHelpers.toggleModal('excelVarModal', false);
+    }
+    
+    _renderAuditResults(batchResults, placeholders, startIdx) {
+        batchResults.forEach((result, i) => {
+            this.auditResults[startIdx + i] = result;
+            AiAudit.renderResult(result, placeholders[startIdx + i]);
+        });
     }
     
     async runAudit() {
@@ -523,7 +506,7 @@ class SmartDocApp {
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 审核中...';
         
-        const batchSize = this.settings.batchSize || 10;
+        const batchSize = this.settings.batchSize || SETTINGS_DEFAULTS.batchSize;
         const totalBatches = batchSize > 0 ? Math.ceil(activeRules.length / batchSize) : 1;
         
         UiHelpers.setStatus(`正在运行AI批量审核（将分${totalBatches}批处理）...`, true);
@@ -533,27 +516,18 @@ class SmartDocApp {
         
         try {
             const auditList = document.getElementById('auditList');
-
-            // 先按规则顺序创建占位容器
-            const placeholders = activeRules.map((rule, i) => {
+            const placeholders = activeRules.map((_, i) => {
                 const div = document.createElement('div');
                 div.id = 'audit-rule-' + i;
                 auditList.appendChild(div);
                 return div;
             });
 
-            // 分批处理
             if (batchSize === 0) {
-                // 不分组模式：一次性处理所有规则
                 const batchPrompt = AiAudit.buildBatchPrompt(activeRules, this.document.text, this.excelData, this.settings.repeatPrompt);
                 const batchResults = await AiAudit.callBatchLLM(batchPrompt, activeRules, this.settings);
-                
-                batchResults.forEach((result, i) => {
-                    this.auditResults[i] = result;
-                    AiAudit.renderResult(result, placeholders[i]);
-                });
+                this._renderAuditResults(batchResults, placeholders, 0);
             } else {
-                // 分批处理模式
                 for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
                     const startIdx = batchIndex * batchSize;
                     const endIdx = Math.min(startIdx + batchSize, activeRules.length);
@@ -564,15 +538,8 @@ class SmartDocApp {
                     
                     const batchPrompt = AiAudit.buildBatchPrompt(batchRules, this.document.text, this.excelData, this.settings.repeatPrompt);
                     const batchResults = await AiAudit.callBatchLLM(batchPrompt, batchRules, this.settings);
+                    this._renderAuditResults(batchResults, placeholders, startIdx);
                     
-                    // 渲染当前批次结果
-                    batchResults.forEach((result, i) => {
-                        const globalIndex = startIdx + i;
-                        this.auditResults[globalIndex] = result;
-                        AiAudit.renderResult(result, placeholders[globalIndex]);
-                    });
-                    
-                    // 添加批次间隔（避免请求过快）
                     if (batchIndex < totalBatches - 1) {
                         await new Promise(resolve => setTimeout(resolve, 500));
                     }
@@ -595,28 +562,18 @@ class SmartDocApp {
     
     async toggleSettings() {
         const modal = document.getElementById('settingsModal');
+        modal.classList.toggle('hidden');
         if (!modal.classList.contains('hidden')) {
-            modal.classList.add('hidden');
-        } else {
             await this._loadApiConfig();
             this.loadSettings();
-            modal.classList.remove('hidden');
         }
     }
 
     async _loadApiConfig() {
         try {
             const apiConfig = await ConfigAPI.getApiConfig();
-            if (apiConfig) {
-                this.settings.endpoint = apiConfig.endpoint || 'https://api.deepseek.com/v1/chat/completions';
-                this.settings.model = apiConfig.model || 'deepseek-chat';
-                this.settings.auditRole = apiConfig.auditRole || '专业文档审核专家';
-                this.settings.hasApiKey = apiConfig.hasApiKey || false;
-            }
-
-            const localSettings = JSON.parse(localStorage.getItem('smartdoc_settings') || '{}');
-            this.settings.batchSize = localSettings.batchSize || 10;
-            this.settings.repeatPrompt = localSettings.repeatPrompt !== false;
+            this._applyApiConfig(apiConfig);
+            this._loadLocalSettings();
         } catch (err) {
             console.error('加载API配置失败:', err);
         }
@@ -627,12 +584,10 @@ class SmartDocApp {
         const config = {
             endpoint: document.getElementById('apiEndpoint').value,
             model: document.getElementById('apiModel').value,
-            auditRole: document.getElementById('auditRole').value || '专业文档审核专家'
+            auditRole: document.getElementById('auditRole').value || API_DEFAULTS.auditRole
         };
 
-        if (apiKey) {
-            config.apiKey = apiKey;
-        }
+        if (apiKey) config.apiKey = apiKey;
 
         try {
             await ConfigAPI.updateApiConfig(config);
@@ -640,20 +595,14 @@ class SmartDocApp {
             this.settings.endpoint = config.endpoint;
             this.settings.model = config.model;
             this.settings.auditRole = config.auditRole;
-            if (apiKey) {
-                this.settings.hasApiKey = true;
-            }
+            if (apiKey) this.settings.hasApiKey = true;
 
-            const batchSize = parseInt(document.getElementById('batchSize').value) || 10;
+            const batchSize = parseInt(document.getElementById('batchSize').value) || SETTINGS_DEFAULTS.batchSize;
             const repeatPrompt = document.getElementById('repeatPrompt').checked;
             this.settings.batchSize = batchSize;
             this.settings.repeatPrompt = repeatPrompt;
 
-            const localSettings = {
-                batchSize: batchSize,
-                repeatPrompt: repeatPrompt
-            };
-            localStorage.setItem('smartdoc_settings', JSON.stringify(localSettings));
+            localStorage.setItem('smartdoc_settings', JSON.stringify({ batchSize, repeatPrompt }));
 
             UiHelpers.toggleModal('settingsModal', false);
             this.updateApiStatus();
@@ -664,11 +613,11 @@ class SmartDocApp {
     }
     
     loadSettings() {
-        document.getElementById('apiEndpoint').value = this.settings.endpoint || 'https://api.deepseek.com/v1/chat/completions';
-        document.getElementById('apiModel').value = this.settings.model || 'deepseek-chat';
-        document.getElementById('auditRole').value = this.settings.auditRole || '专业文档审核专家';
-        document.getElementById('batchSize').value = this.settings.batchSize || 10;
-        document.getElementById('repeatPrompt').checked = this.settings.repeatPrompt !== false;
+        document.getElementById('apiEndpoint').value = this.settings.endpoint || API_DEFAULTS.endpoint;
+        document.getElementById('apiModel').value = this.settings.model || API_DEFAULTS.model;
+        document.getElementById('auditRole').value = this.settings.auditRole || API_DEFAULTS.auditRole;
+        document.getElementById('batchSize').value = this.settings.batchSize || SETTINGS_DEFAULTS.batchSize;
+        document.getElementById('repeatPrompt').checked = this.settings.repeatPrompt ?? SETTINGS_DEFAULTS.repeatPrompt;
         document.getElementById('apiKey').value = '';
 
         const apiKeyStatus = document.getElementById('apiKeyStatus');
@@ -701,7 +650,7 @@ class SmartDocApp {
                 body: JSON.stringify({
                     endpoint: endpoint,
                     body: {
-                        model: model || 'deepseek-chat',
+                        model: model || API_DEFAULTS.model,
                         messages: [{ role: 'user', content: '你好' }],
                         temperature: 0.7,
                         max_tokens: 10
@@ -712,8 +661,7 @@ class SmartDocApp {
             if (response.ok) {
                 alert('连接成功！');
             } else {
-                const errorData = await response.text();
-                alert(`连接失败: ${response.status} - ${response.statusText}\n${errorData}`);
+                alert(`连接失败: ${response.status} - ${response.statusText}\n${await response.text()}`);
             }
         } catch (err) {
             alert('连接错误: ' + err.message);
@@ -723,47 +671,12 @@ class SmartDocApp {
         }
     }
     
-    switchTab(tab) {
-        UiHelpers.switchTab(tab);
-    }
-    
-    scrollToNode(nodeId) {
-        UiHelpers.scrollToNode(nodeId);
-    }
-    
-    setStatus(text, loading = false) {
-        UiHelpers.setStatus(text, loading);
-    }
-    
-    exportReport() {
-        if (!this.document) {
-            alert('无审核数据可导出');
-            return;
-        }
-        
-        const report = {
-            timestamp: new Date().toISOString(),
-            document: this.document.name,
-            template: this.template?.name || '无',
-            structureScore: document.getElementById('structureScore')?.textContent || 'N/A',
-            auditResults: this.auditResults,
-            excelData: this.excelData?.fileName || '无'
-        };
-        
-        const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `审核报告_${Date.now()}.json`;
-        a.click();
-    }
-    
-    showHelp() {
-        UiHelpers.toggleModal('helpModal', true);
-    }
-    
-    closeHelp() {
-        UiHelpers.toggleModal('helpModal', false);
-    }
+    switchTab(tab) { UiHelpers.switchTab(tab); }
+    scrollToNode(nodeId) { UiHelpers.scrollToNode(nodeId); }
+    setStatus(text, loading = false) { UiHelpers.setStatus(text, loading); }
+    exportHtmlReport() { ReportExporter.exportHtml(this.document, this.template, this.excelData, this.auditResults); }
+    showHelp() { UiHelpers.toggleModal('helpModal', true); }
+    closeHelp() { UiHelpers.toggleModal('helpModal', false); }
 }
 
 const app = new SmartDocApp();

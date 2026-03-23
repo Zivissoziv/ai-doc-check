@@ -1,7 +1,7 @@
 {
     "provider": "custom",
-    "endpoint": "https://api.deepseek.com/v1/chat/completions",
+    "endpoint": "https://api.minimaxi.com/v1/chat/completions",
     "apiKey": "",
-    "model": "deepseek-chat",
+    "model": "MiniMax-M2.7",
     "auditRole": "专业文档审核专家"
 }
