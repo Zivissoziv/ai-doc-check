@@ -12,5 +12,12 @@
         "severity": "warning",
         "id": 1773371183360,
         "enabled": true
+    },
+    {
+        "name": "检测敏感词",
+        "prompt": "不能出现{{data.敏感词}}",
+        "severity": "warning",
+        "id": 1774330992172,
+        "enabled": true
     }
 ]

@@ -132,20 +132,37 @@ const DocumentParser = {
     },
 
     parseExcel: async function(file) {
-        const data = await file.arrayBuffer();
-        const workbook = XLSX.read(data, { type: 'array' });
-        
-        return {
-            fileName: file.name,
-            sheets: workbook.SheetNames.map(name => {
-                const sheet = workbook.Sheets[name];
-                const json = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-                return {
-                    name,
-                    headers: json[0] || [],
-                    rows: json.slice(1).filter(row => row.some(cell => cell != null))
-                };
-            })
-        };
-    }
-};
+            const data = await file.arrayBuffer();
+            const workbook = XLSX.read(data, { type: 'array' });
+            
+            const excelData = {
+                fileName: file.name,
+                sheets: workbook.SheetNames.map(name => {
+                    const sheet = workbook.Sheets[name];
+                    const json = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+                    return {
+                        name,
+                        headers: json[0] || [],
+                        rows: json.slice(1).filter(row => row.some(cell => cell != null))
+                    };
+                })
+            };
+            
+            const dataObj = {};
+            excelData.sheets.forEach(sheet => {
+                dataObj[sheet.name] = {};
+                sheet.headers.forEach((header, idx) => {
+                    if (header && header.trim()) {
+                        const values = sheet.rows.map(row => row[idx]).filter(v => v != null && v !== '');
+                        dataObj[sheet.name][header.trim()] = values.length === 1 ? values[0] : values;
+                    }
+                });
+            });
+            
+            return {
+                fileName: excelData.fileName,
+                sheets: excelData.sheets,
+                data: dataObj
+            };
+        }
+    };

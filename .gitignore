@@ -2,3 +2,8 @@
 .qoder/
 .arts/
 .__pycache__/
+package-lock.json
+package.json
+playwright.config.js
+test*/
+node_modules/

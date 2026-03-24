@@ -16,6 +16,7 @@ class SmartDocApp {
         this.template = null;
         this.document = null;
         this.excelData = null;
+        this.ticketData = null;
         this.rules = [];
         this.settings = {
             auditRole: API_DEFAULTS.auditRole,
@@ -31,11 +32,81 @@ class SmartDocApp {
         this.init();
     }
     
+    getUrlParams() {
+        const params = new URLSearchParams(window.location.search);
+        return Object.fromEntries(params.entries());
+    }
+    
     async init() {
         await this.loadRuleGroups();
         await this.loadPresetConfig();
         this.loadSettings();
         this.updateApiStatus();
+        
+        const params = this.getUrlParams();
+        if (params.ticketId) {
+            await this.loadFromTicket(params.ticketId);
+        }
+    }
+    
+    _base64ToBlob(base64) {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return new Blob([bytes]);
+    }
+    
+    async loadFromTicket(ticketId) {
+        UiHelpers.setStatus(`正在加载工单 ${ticketId}...`, true);
+        
+        try {
+            const ticketRes = await fetch(`/api/ticket/${ticketId}`);
+            if (!ticketRes.ok) {
+                const err = await ticketRes.json();
+                throw new Error(err.error || '加载工单失败');
+            }
+            const ticketInfo = await ticketRes.json();
+            
+            let docBlob = null;
+            if (ticketInfo.documentUrl) {
+                const downloadRes = await fetch('/api/ticket/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: ticketInfo.documentUrl })
+                });
+                if (!downloadRes.ok) {
+                    throw new Error('下载文档失败');
+                }
+                const arrayBuffer = await downloadRes.arrayBuffer();
+                docBlob = new Blob([arrayBuffer]);
+            } else if (ticketInfo.documentBase64) {
+                docBlob = this._base64ToBlob(ticketInfo.documentBase64);
+            }
+            
+            if (docBlob) {
+                const fileName = ticketInfo.documentName || `工单_${ticketId}.docx`;
+                const docFile = new File([docBlob], fileName, { type: docBlob.type || 'application/octet-stream' });
+                this.document = await DocumentParser.parse(docFile);
+                DocumentRenderer.render(this.document, 'docContent');
+                TreeRenderer.render(this.document?.tree || [], 'structureTree');
+                UiHelpers.updateWordCount(this.document.text?.length || 0);
+                this.updateDocBtn(true, this.document.name);
+                this.compareStructure();
+            }
+            
+            if (ticketInfo.data) {
+                this.ticketData = ticketInfo.data;
+                document.getElementById('excelLabel').textContent = '工单数据已加载';
+            }
+            
+            UiHelpers.setStatus(`工单 ${ticketId} 已加载`);
+        } catch (err) {
+            console.error('加载工单失败:', err);
+            UiHelpers.setStatus(`工单加载失败: ${err.message}`);
+            alert(`加载工单失败: ${err.message}`);
+        }
     }
     
     async loadRuleGroups() {
@@ -81,6 +152,7 @@ class SmartDocApp {
         this.settings.model = apiConfig.model || API_DEFAULTS.model;
         this.settings.auditRole = apiConfig.auditRole || API_DEFAULTS.auditRole;
         this.settings.hasApiKey = apiConfig.hasApiKey || false;
+        this.settings.ticketEndpoint = apiConfig.ticketEndpoint || '';
     }
     
     async loadPresetConfig() {
@@ -197,9 +269,10 @@ class SmartDocApp {
         UiHelpers.setStatus('正在解析Excel...', true);
         try {
             this.excelData = await DocumentParser.parseExcel(file);
+            if (!this.ticketData) this.ticketData = {};
+            Object.assign(this.ticketData, this.excelData.data);
             document.getElementById('excelLabel').textContent = file.name;
-            document.getElementById('insertVarBtn').style.display = 'inline';
-            UiHelpers.setStatus(`Excel已加载: ${file.name}`);
+            UiHelpers.setStatus(`Excel已加载: ${file.name}，数据已合并到 {{data}}`);
         } catch (err) {
             alert('Excel解析失败: ' + err.message);
         }
@@ -442,35 +515,6 @@ class SmartDocApp {
         }
     }
     
-    insertExcelVar() {
-        if (!this.excelData) return;
-        
-        const container = document.getElementById('excelSheets');
-        container.innerHTML = this.excelData.sheets.map(sheet => `
-            <div class="mb-3">
-                <div class="font-medium text-sm text-gray-700 mb-1">${sheet.name}</div>
-                <div class="grid grid-cols-2 gap-2">
-                    ${sheet.headers.map((h, i) => `
-                        <button onclick="app.insertVar('{{excel.${sheet.name}.${h}}}')" 
-                            class="text-xs p-2 text-left bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-300 truncate">
-                            ${h || `列${i+1}`}
-                        </button>
-                    `).join('')}
-                </div>
-            </div>
-        `).join('');
-        
-        UiHelpers.toggleModal('excelVarModal', true);
-    }
-    
-    insertVar(varStr) {
-        const textarea = document.getElementById('rulePrompt');
-        const start = textarea.selectionStart;
-        textarea.value = textarea.value.substring(0, start) + varStr + textarea.value.substring(start);
-        textarea.selectionStart = textarea.selectionEnd = start + varStr.length;
-        UiHelpers.toggleModal('excelVarModal', false);
-    }
-    
     _renderAuditResults(batchResults, placeholders, startIdx) {
         batchResults.forEach((result, i) => {
             this.auditResults[startIdx + i] = result;
@@ -524,7 +568,7 @@ class SmartDocApp {
             });
 
             if (batchSize === 0) {
-                const batchPrompt = AiAudit.buildBatchPrompt(activeRules, this.document.text, this.excelData, this.settings.repeatPrompt);
+                const batchPrompt = AiAudit.buildBatchPrompt(activeRules, this.document.text, this.ticketData, this.settings.repeatPrompt);
                 const batchResults = await AiAudit.callBatchLLM(batchPrompt, activeRules, this.settings);
                 this._renderAuditResults(batchResults, placeholders, 0);
             } else {
@@ -536,7 +580,7 @@ class SmartDocApp {
                     UiHelpers.setStatus(`正在审核第 ${batchIndex + 1}/${totalBatches} 批（规则 ${startIdx + 1}-${endIdx}）...`, true);
                     UiHelpers.updateProgress(Math.round((batchIndex / totalBatches) * 100));
                     
-                    const batchPrompt = AiAudit.buildBatchPrompt(batchRules, this.document.text, this.excelData, this.settings.repeatPrompt);
+                    const batchPrompt = AiAudit.buildBatchPrompt(batchRules, this.document.text, this.ticketData, this.settings.repeatPrompt);
                     const batchResults = await AiAudit.callBatchLLM(batchPrompt, batchRules, this.settings);
                     this._renderAuditResults(batchResults, placeholders, startIdx);
                     

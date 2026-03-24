@@ -411,6 +411,14 @@ class ProxyHandler(SimpleHTTPRequestHandler):
         elif self.path.startswith('/api/config/rules/'):
             group_id = self.path[len('/api/config/rules/'):].split('?')[0]
             self._get_rule_group(group_id)
+        elif self.path.startswith('/api/ticket/'):
+            parts = self.path.split('/')
+            if len(parts) >= 4:
+                ticket_id = parts[3].split('?')[0]
+                if ticket_id:
+                    self._get_ticket(ticket_id)
+                    return
+            self.send_error(404, 'Not Found')
         else:
             super().do_GET()
 
@@ -421,6 +429,8 @@ class ProxyHandler(SimpleHTTPRequestHandler):
             self._create_rule_group()
         elif self.path == '/api/audit':
             self._api_audit()
+        elif self.path == '/api/ticket/download':
+            self._ticket_download()
         else:
             self.send_error(404, 'Not Found')
 
@@ -723,6 +733,97 @@ class ProxyHandler(SimpleHTTPRequestHandler):
         except FileNotFoundError:
             self._send_json(404, {'error': '规则索引文件不存在'})
         except Exception as e:
+            self._send_json(500, {'error': str(e)})
+
+    def _get_ticket(self, ticket_id):
+        """获取工单信息"""
+        try:
+            api_config = self._load_api_config_from_file()
+            ticket_endpoint = api_config.get('ticketEndpoint', '')
+            
+            if not ticket_endpoint:
+                self._send_json(500, {'error': '工单平台地址未配置，请在设置中配置 ticketEndpoint'})
+                return
+            
+            url = ticket_endpoint.replace('{ticketId}', ticket_id)
+            if url == ticket_endpoint and not url.endswith(ticket_id):
+                url = url.rstrip('/') + '/' + ticket_id
+            
+            ctx = ssl.create_default_context()
+            req = urllib.request.Request(url)
+            ticket_token = api_config.get('ticketToken', '')
+            if ticket_token:
+                req.add_header('Authorization', f'Bearer {ticket_token}')
+            
+            with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT, context=ctx) as resp:
+                result = json.loads(resp.read().decode('utf-8'))
+            
+            self._send_json(200, result)
+            
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode('utf-8', errors='ignore')
+            self._send_json(e.code, {'error': f'工单平台返回错误: {e.code}', 'detail': err_body})
+        except urllib.error.URLError as e:
+            self._send_json(502, {'error': f'无法连接工单平台: {e.reason}'})
+        except TimeoutError:
+            self._send_json(504, {'error': '工单平台响应超时'})
+        except json.JSONDecodeError:
+            self._send_json(502, {'error': '工单平台返回的数据不是有效的JSON'})
+        except Exception as e:
+            self._send_json(500, {'error': str(e)})
+
+    def _ticket_download(self):
+        """代理下载工单文档"""
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            raw = self.rfile.read(length)
+            data = json.loads(raw.decode('utf-8'))
+            
+            url = data.get('url')
+            if not url:
+                self._send_json(400, {'error': '缺少 url 参数'})
+                return
+            
+            print(f"[Ticket Download] 请求下载: {url}")
+            
+            req = urllib.request.Request(url)
+            
+            if url.startswith('https://'):
+                ctx = ssl.create_default_context()
+                with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT, context=ctx) as resp:
+                    file_bytes = resp.read(MAX_FILE_SIZE + 1)
+            else:
+                with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT) as resp:
+                    file_bytes = resp.read(MAX_FILE_SIZE + 1)
+            
+            print(f"[Ticket Download] 下载成功, 大小: {len(file_bytes)} bytes")
+            
+            if len(file_bytes) > MAX_FILE_SIZE:
+                self._send_json(413, {'error': '文件大小超过限制（50MB）'})
+                return
+            
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/octet-stream')
+            self.send_header('Content-Length', str(len(file_bytes)))
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(file_bytes)
+            
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode('utf-8', errors='ignore')
+            print(f"[Ticket Download] HTTPError: {e.code} - {err_body}")
+            self._send_json(e.code, {'error': f'下载失败: {e.code}', 'detail': err_body})
+        except urllib.error.URLError as e:
+            print(f"[Ticket Download] URLError: {e.reason}")
+            self._send_json(502, {'error': f'无法下载文件: {e.reason}'})
+        except TimeoutError:
+            print(f"[Ticket Download] TimeoutError")
+            self._send_json(504, {'error': '下载超时'})
+        except json.JSONDecodeError:
+            print(f"[Ticket Download] JSONDecodeError")
+            self._send_json(400, {'error': '请求体 JSON 格式错误'})
+        except Exception as e:
+            print(f"[Ticket Download] Exception: {type(e).__name__}: {e}")
             self._send_json(500, {'error': str(e)})
 
     def _api_audit(self):

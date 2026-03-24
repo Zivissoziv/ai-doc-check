@@ -1,23 +1,19 @@
 const AiAudit = {
     REPETITION_SEPARATOR: '\n\n--- 重复提示（请仔细阅读以上内容）---\n\n',
     
-    buildPrompt(rule, documentText, excelData, repeatPrompt = true) {
+    _replaceDataVar(prompt, ticketData) {
+        if (!ticketData) return prompt;
+        return prompt.replace(/\{\{data\.([^}]+)\}\}/g, (match, path) => {
+            const value = path.split('.').reduce((obj, key) => obj?.[key], ticketData);
+            if (value === undefined || value === null) return match;
+            if (Array.isArray(value)) return value.join('、');
+            return String(value);
+        });
+    },
+    
+    buildPrompt(rule, documentText, ticketData, repeatPrompt = true) {
         let prompt = rule.prompt;
-        
-        if (excelData) {
-            prompt = prompt.replace(/\{\{excel\.([^}]+)\}\}/g, (match, path) => {
-                const parts = path.split('.');
-                if (parts.length >= 2) {
-                    const [sheetName, colName] = parts;
-                    const sheet = excelData.sheets.find(s => s.name === sheetName);
-                    if (sheet) {
-                        const values = sheet.rows.map(row => row[sheet.headers.indexOf(colName)]).filter(Boolean);
-                        return values.join('、');
-                    }
-                }
-                return match;
-            });
-        }
+        prompt = this._replaceDataVar(prompt, ticketData);
         
         const basePrompt = `文档内容：
 ${documentText.substring(0, 10000)}
@@ -72,21 +68,10 @@ ${documentText.substring(0, 10000)}
         }
     },
 
-    buildBatchPrompt(rules, documentText, excelData, repeatPrompt = true) {
+    buildBatchPrompt(rules, documentText, ticketData, repeatPrompt = true) {
         const processPrompt = (prompt) => {
-            if (!excelData) return prompt;
-            return prompt.replace(/\{\{excel\.([^}]+)\}\}/g, (match, path) => {
-                const parts = path.split('.');
-                if (parts.length >= 2) {
-                    const [sheetName, colName] = parts;
-                    const sheet = excelData.sheets.find(s => s.name === sheetName);
-                    if (sheet) {
-                        const values = sheet.rows.map(row => row[sheet.headers.indexOf(colName)]).filter(Boolean);
-                        return values.join('、');
-                    }
-                }
-                return match;
-            });
+            prompt = this._replaceDataVar(prompt, ticketData);
+            return prompt;
         };
 
         const rulesList = rules.map((rule, index) => ({

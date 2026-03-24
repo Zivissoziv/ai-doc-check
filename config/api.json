@@ -3,5 +3,7 @@
     "endpoint": "https://api.minimaxi.com/v1/chat/completions",
     "apiKey": "",
     "model": "MiniMax-M2.7",
-    "auditRole": "专业文档审核专家"
+    "auditRole": "专业文档审核专家",
+    "ticketEndpoint": "http://localhost:3001/api/tickets/{ticketId}",
+    "ticketToken": ""
 }
