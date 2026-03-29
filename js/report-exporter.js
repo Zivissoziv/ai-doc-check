@@ -1,13 +1,13 @@
 const ReportExporter = {
-    exportJson(document, template, excelData, auditResults) {
-        if (!document) {
+    exportJson(doc, template, excelData, auditResults) {
+        if (!doc) {
             alert('无审核数据可导出');
             return;
         }
         
         const report = {
             timestamp: new Date().toISOString(),
-            document: document.name,
+            document: doc.name,
             template: template?.name || '无',
             structureScore: document.getElementById('structureScore')?.textContent || 'N/A',
             auditResults: auditResults,
@@ -21,8 +21,8 @@ const ReportExporter = {
         a.click();
     },
     
-    exportHtml(document, template, excelData, auditResults) {
-        if (!document) {
+    exportHtml(doc, template, excelData, auditResults) {
+        if (!doc) {
             alert('无审核数据可导出');
             return;
         }
@@ -94,7 +94,7 @@ const ReportExporter = {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>文档审核报告 - ${document.name}</title>
+    <title>文档审核报告 - ${doc.name}</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: #F3F4F6; color: #1F2937; line-height: 1.6; padding: 24px; }
@@ -147,7 +147,7 @@ const ReportExporter = {
             <div class="info-grid">
                 <div class="info-item">
                     <div class="label">文档名称</div>
-                    <div class="value">${document.name || '未知'}</div>
+                    <div class="value">${doc.name || '未知'}</div>
                 </div>
                 <div class="info-item">
                     <div class="label">参考模板</div>
@@ -155,7 +155,7 @@ const ReportExporter = {
                 </div>
                 <div class="info-item">
                     <div class="label">文档字数</div>
-                    <div class="value">${document.text?.length || 0} 字符</div>
+                    <div class="value">${doc.text?.length || 0} 字符</div>
                 </div>
                 <div class="info-item">
                     <div class="label">Excel数据</div>
@@ -179,7 +179,7 @@ const ReportExporter = {
         const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        const fileName = (document.name || 'document').replace(/\.[^/.]+$/, '');
+        const fileName = (doc.name || 'document').replace(/\.[^/.]+$/, '');
         a.download = `审核报告_${fileName}_${Date.now()}.html`;
         a.click();
     }

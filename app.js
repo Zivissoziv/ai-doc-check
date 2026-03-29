@@ -99,6 +99,8 @@ class SmartDocApp {
             if (ticketInfo.data) {
                 this.ticketData = ticketInfo.data;
                 document.getElementById('excelLabel').textContent = '工单数据已加载';
+                document.getElementById('excelIcon').className = 'fas fa-database text-blue-500 text-sm';
+                this._updateDataPreviewButton();
             }
             
             UiHelpers.setStatus(`工单 ${ticketId} 已加载`);
@@ -272,6 +274,8 @@ class SmartDocApp {
             if (!this.ticketData) this.ticketData = {};
             Object.assign(this.ticketData, this.excelData.data);
             document.getElementById('excelLabel').textContent = file.name;
+            document.getElementById('excelIcon').className = 'fas fa-table text-green-500 text-sm';
+            this._updateDataPreviewButton();
             UiHelpers.setStatus(`Excel已加载: ${file.name}，数据已合并到 {{data}}`);
         } catch (err) {
             alert('Excel解析失败: ' + err.message);
@@ -721,6 +725,107 @@ class SmartDocApp {
     exportHtmlReport() { ReportExporter.exportHtml(this.document, this.template, this.excelData, this.auditResults); }
     showHelp() { UiHelpers.toggleModal('helpModal', true); }
     closeHelp() { UiHelpers.toggleModal('helpModal', false); }
+    
+    showDataPreview() {
+        if (!this.ticketData) {
+            alert('暂无数据可预览');
+            return;
+        }
+        
+        const content = document.getElementById('dataPreviewContent');
+        const formattedJson = this._formatDataForPreview(this.ticketData);
+        content.innerHTML = `<pre class="whitespace-pre-wrap break-words">${formattedJson}</pre>`;
+        UiHelpers.toggleModal('dataPreviewModal', true);
+    }
+    
+    closeDataPreview() {
+        UiHelpers.toggleModal('dataPreviewModal', false);
+    }
+    
+    _formatDataForPreview(data, pathPrefix = '') {
+        if (data === null || data === undefined) {
+            return `<span class="text-gray-400">${data}</span>`;
+        }
+        
+        if (typeof data !== 'object') {
+            return `<span class="text-green-600">${JSON.stringify(data)}</span>`;
+        }
+        
+        if (Array.isArray(data)) {
+            if (data.length === 0) {
+                return `<span class="text-gray-400">[]</span>`;
+            }
+            
+            const indent = '  '.repeat(pathPrefix.split('.').filter(p => p).length);
+            const items = data.map((item, idx) => {
+                const itemPath = pathPrefix ? `${pathPrefix}[${idx}]` : `[${idx}]`;
+                const itemStr = this._formatDataForPreview(item, itemPath);
+                return `<span class="text-gray-500">${indent}  </span><span class="text-blue-500">[${idx}]</span> ${itemStr}`;
+            }).join('\n');
+            return `<span class="text-gray-400">[</span>\n${items}\n<span class="text-gray-400">${indent}]</span>`;
+        }
+        
+        const entries = Object.entries(data);
+        if (entries.length === 0) {
+            return `<span class="text-gray-400">{}</span>`;
+        }
+        
+        const indent = '  '.repeat(pathPrefix.split('.').filter(p => p).length);
+        const lines = entries.map(([key, value]) => {
+            const fullPath = pathPrefix ? `${pathPrefix}.${key}` : key;
+            const valueStr = typeof value === 'object' && value !== null 
+                ? this._formatDataForPreview(value, fullPath)
+                : `<span class="text-green-600">${JSON.stringify(value)}</span>`;
+            
+            const copyBtn = typeof value !== 'object' || value === null
+                ? `<button onclick="app.copyDataPath('${fullPath}')" class="ml-2 text-xs text-blue-500 hover:text-blue-700" title="复制路径"><i class="fas fa-copy"></i></button>`
+                : '';
+            
+            return `<span class="text-gray-500">${indent}  </span><span class="text-purple-600 cursor-pointer hover:underline" onclick="app.copyDataPath('${fullPath}')" title="点击复制路径">${key}</span>${copyBtn}: ${valueStr}`;
+        }).join('\n');
+        
+        return `<span class="text-gray-400">{</span>\n${lines}\n<span class="text-gray-400">${indent}}</span>`;
+    }
+    
+    copyDataPath(path) {
+        const text = `{{data.${path}}}`;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(() => {
+                UiHelpers.setStatus(`已复制: ${text}`);
+            }).catch(err => {
+                console.error('复制失败:', err);
+                this._fallbackCopy(text);
+            });
+        } else {
+            this._fallbackCopy(text);
+        }
+    }
+    
+    _fallbackCopy(text) {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+            document.execCommand('copy');
+            UiHelpers.setStatus(`已复制: ${text}`);
+        } catch (err) {
+            console.error('复制失败:', err);
+            alert(`请手动复制: ${text}`);
+        }
+        document.body.removeChild(textarea);
+    }
+    
+    _updateDataPreviewButton() {
+        const btn = document.getElementById('dataPreviewBtn');
+        if (this.ticketData && Object.keys(this.ticketData).length > 0) {
+            btn.classList.remove('hidden');
+        } else {
+            btn.classList.add('hidden');
+        }
+    }
 }
 
 const app = new SmartDocApp();

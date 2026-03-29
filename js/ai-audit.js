@@ -4,11 +4,50 @@ const AiAudit = {
     _replaceDataVar(prompt, ticketData) {
         if (!ticketData) return prompt;
         return prompt.replace(/\{\{data\.([^}]+)\}\}/g, (match, path) => {
-            const value = path.split('.').reduce((obj, key) => obj?.[key], ticketData);
+            const value = this._resolvePath(ticketData, path);
             if (value === undefined || value === null) return match;
             if (Array.isArray(value)) return value.join('、');
             return String(value);
         });
+    },
+    
+    _getNestedValue(obj, path) {
+        const keys = path.split('.');
+        let current = obj;
+        
+        for (const key of keys) {
+            if (current === undefined || current === null) return undefined;
+            
+            if (Array.isArray(current)) {
+                const values = current
+                    .map(item => {
+                        if (typeof item === 'object' && item !== null) {
+                            return item[key];
+                        }
+                        return undefined;
+                    })
+                    .filter(v => v !== undefined);
+                
+                if (values.length === 0) return undefined;
+                current = values.length === 1 ? values[0] : values;
+            } else if (typeof current === 'object') {
+                current = current[key];
+            } else {
+                return undefined;
+            }
+        }
+        
+        return current;
+    },
+    
+    _resolvePath(obj, path) {
+        let result = this._getNestedValue(obj, path);
+        if (result !== undefined) return result;
+        
+        result = this._getNestedValue(obj, 'data.' + path);
+        if (result !== undefined) return result;
+        
+        return undefined;
     },
     
     buildPrompt(rule, documentText, ticketData, repeatPrompt = true) {

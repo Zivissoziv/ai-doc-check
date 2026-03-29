@@ -189,13 +189,18 @@
                 </div>
             </div>
             
-            <!-- Excel上传 -->
+            <!-- Excel/工单数据 -->
             <div class="mb-3">
                 <input type="file" id="excelInput" accept=".xlsx,.xls,.csv" class="hidden" onchange="app.handleExcelUpload(this)">
-                <label for="excelInput" class="flex items-center gap-2 p-2 border border-dashed border-gray-300 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition-all cursor-pointer">
-                    <i class="fas fa-table text-gray-400 text-sm"></i>
-                    <span class="text-xs text-gray-600" id="excelLabel">上传Excel数据源</span>
-                </label>
+                <div class="flex items-center gap-2">
+                    <label for="excelInput" class="flex-1 flex items-center gap-2 p-2 border border-dashed border-gray-300 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition-all cursor-pointer">
+                        <i class="fas fa-table text-gray-400 text-sm" id="excelIcon"></i>
+                        <span class="text-xs text-gray-600" id="excelLabel">上传Excel数据源</span>
+                    </label>
+                    <button id="dataPreviewBtn" onclick="app.showDataPreview()" class="hidden p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="预览数据">
+                        <i class="fas fa-eye"></i>
+                    </button>
+                </div>
             </div>
 
             <!-- 操作按钮 -->
@@ -680,6 +685,35 @@
         <div class="p-6 border-t border-gray-100 flex justify-end gap-3">
             <button onclick="app.closeGroupModal()" class="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg text-sm">取消</button>
             <button onclick="app.saveGroupModal()" id="groupModalBtn" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">创建</button>
+        </div>
+    </div>
+</div>
+
+<!-- 数据预览模态框 -->
+<div id="dataPreviewModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col">
+        <div class="p-6 border-b border-gray-100 flex justify-between items-center">
+            <h2 class="text-lg font-bold text-gray-900">
+                <i class="fas fa-database text-blue-600 mr-2"></i>数据预览
+            </h2>
+            <button onclick="app.closeDataPreview()" class="text-gray-400 hover:text-gray-600">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+        
+        <div class="p-6 overflow-y-auto flex-1">
+            <div class="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+                <i class="fas fa-info-circle mr-1"></i>
+                可在规则中使用 <code class="bg-blue-100 px-1 rounded">{{data.字段名}}</code> 引用以下数据
+            </div>
+            <div id="dataPreviewContent" class="bg-gray-50 rounded-lg p-4 font-mono text-sm overflow-x-auto">
+                <pre class="whitespace-pre-wrap break-words"></pre>
+            </div>
+        </div>
+        
+        <div class="p-4 border-t border-gray-100 flex justify-between items-center">
+            <span class="text-xs text-gray-500" id="dataPreviewHint">提示：点击字段路径可复制</span>
+            <button onclick="app.closeDataPreview()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm">关闭</button>
         </div>
     </div>
 </div>
