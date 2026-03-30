@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """SmartDoc AI - 带 API 代理的 HTTP 服务器（纯标准库实现）"""
+
+import sys
+import io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 import base64
 import json

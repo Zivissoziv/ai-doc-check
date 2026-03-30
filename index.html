@@ -269,28 +269,61 @@
                 <p class="text-xs text-gray-500 mt-1">设置AI审核员的角色身份</p>
             </div>
 
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">每批规则条数 <span class="text-xs text-gray-400 font-normal">（本地保存）</span></label>
-                <select id="batchSize" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    <option value="1">1条（最稳定，适合大文档）</option>
-                    <option value="3">3条</option>
-                    <option value="5" selected>5条（默认）</option>
-                    <option value="10">10条</option>
-                    <option value="20">20条</option>
-                    <option value="0">全部（不分组）</option>
-                </select>
-                <p class="text-xs text-gray-500 mt-1">大文档建议选择1-5条，避免超时</p>
-            </div>
-
-            <div>
-                <label class="flex items-center gap-3 cursor-pointer">
-                    <input type="checkbox" id="repeatPrompt" checked
-                        class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
-                    <div>
-                        <span class="text-sm font-medium text-gray-700">重复提示词 <span class="text-xs text-gray-400 font-normal">（本地保存）</span></span>
-                        <p class="text-xs text-gray-500">开启后可提高审核准确性，但会增加token消耗</p>
+            <div class="border border-gray-200 rounded-lg overflow-hidden">
+                <button type="button" onclick="app.toggleAdvancedSettings()" class="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors text-left">
+                    <div class="flex items-center gap-2">
+                        <i class="fas fa-sliders-h text-gray-500"></i>
+                        <span class="text-sm font-medium text-gray-700">高级设置</span>
+                        <span class="text-xs text-gray-400 font-normal">（本地保存）</span>
                     </div>
-                </label>
+                    <i class="fas fa-chevron-down text-gray-400 transition-transform" id="advancedSettingsIcon"></i>
+                </button>
+                
+                <div id="advancedSettingsPanel" class="hidden border-t border-gray-200 p-4 space-y-4 bg-white">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">每批规则条数</label>
+                        <select id="batchSize" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            <option value="1">1条（最稳定，适合大文档）</option>
+                            <option value="3">3条</option>
+                            <option value="5" selected>5条（默认）</option>
+                            <option value="10">10条</option>
+                            <option value="20">20条</option>
+                            <option value="0">全部（不分组）</option>
+                        </select>
+                        <p class="text-xs text-gray-500 mt-1">大文档建议选择1-5条，避免超时</p>
+                    </div>
+
+                    <div>
+                        <label class="flex items-center gap-3 cursor-pointer">
+                            <input type="checkbox" id="repeatPrompt" checked
+                                class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                            <div>
+                                <span class="text-sm font-medium text-gray-700">重复提示词</span>
+                                <p class="text-xs text-gray-500">开启后可提高审核准确性，但会增加token消耗</p>
+                            </div>
+                        </label>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Temperature <span class="text-xs text-gray-400 font-normal">(温度)</span>
+                            </label>
+                            <input type="number" id="temperature" value="0.1" min="0" max="2" step="0.1"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm">
+                            <p class="text-xs text-gray-500 mt-1">控制随机性，较低值更确定性</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Top P <span class="text-xs text-gray-400 font-normal">(核采样)</span>
+                            </label>
+                            <input type="number" id="topP" value="1.0" min="0" max="1" step="0.05"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm">
+                            <p class="text-xs text-gray-500 mt-1">控制候选词范围，较低值更集中</p>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">

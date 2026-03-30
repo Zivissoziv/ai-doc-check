@@ -186,7 +186,7 @@ ${r.prompt}`).join('\n')}
     },
 
     async callLLM(prompt, rule, settings) {
-        const { endpoint, model, auditRole } = settings;
+        const { endpoint, model, auditRole, temperature, topP } = settings;
 
         try {
             const response = await fetch('/api/proxy', {
@@ -202,7 +202,8 @@ ${r.prompt}`).join('\n')}
                             { role: 'system', content: `${auditRole || '专业文档审核专家'}，你擅长发现文档中的结构、逻辑和合规问题。请严格按照要求的JSON格式返回结果，不要添加任何额外说明。` },
                             { role: 'user', content: prompt }
                         ],
-                        temperature: 0.1
+                        temperature: temperature ?? 0.1,
+                        top_p: topP ?? 1.0
                     }
                 })
             });
@@ -232,7 +233,7 @@ ${r.prompt}`).join('\n')}
     },
 
     async callBatchLLM(prompt, rules, settings) {
-        const { endpoint, model, auditRole } = settings;
+        const { endpoint, model, auditRole, temperature, topP } = settings;
 
         try {
             const response = await fetch('/api/proxy', {
@@ -248,7 +249,8 @@ ${r.prompt}`).join('\n')}
                             { role: 'system', content: `${auditRole || '专业文档审核专家'}，你擅长发现文档中的结构、逻辑和合规问题。请严格按照要求的JSON格式返回结果，不要添加任何额外说明。` },
                             { role: 'user', content: prompt }
                         ],
-                        temperature: 0.1
+                        temperature: temperature ?? 0.1,
+                        top_p: topP ?? 1.0
                     }
                 })
             });

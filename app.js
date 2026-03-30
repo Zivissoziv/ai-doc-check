@@ -8,7 +8,9 @@ const API_DEFAULTS = {
 
 const SETTINGS_DEFAULTS = {
     batchSize: 5,
-    repeatPrompt: true
+    repeatPrompt: true,
+    temperature: 0.1,
+    topP: 1.0
 };
 
 class SmartDocApp {
@@ -21,7 +23,9 @@ class SmartDocApp {
         this.settings = {
             auditRole: API_DEFAULTS.auditRole,
             batchSize: SETTINGS_DEFAULTS.batchSize,
-            repeatPrompt: SETTINGS_DEFAULTS.repeatPrompt
+            repeatPrompt: SETTINGS_DEFAULTS.repeatPrompt,
+            temperature: SETTINGS_DEFAULTS.temperature,
+            topP: SETTINGS_DEFAULTS.topP
         };
         this.currentEditingRule = null;
         this.auditResults = [];
@@ -146,6 +150,8 @@ class SmartDocApp {
         const localSettings = JSON.parse(localStorage.getItem('smartdoc_settings') || '{}');
         this.settings.batchSize = localSettings.batchSize ?? SETTINGS_DEFAULTS.batchSize;
         this.settings.repeatPrompt = localSettings.repeatPrompt ?? SETTINGS_DEFAULTS.repeatPrompt;
+        this.settings.temperature = localSettings.temperature ?? SETTINGS_DEFAULTS.temperature;
+        this.settings.topP = localSettings.topP ?? SETTINGS_DEFAULTS.topP;
     }
     
     _applyApiConfig(apiConfig) {
@@ -647,10 +653,14 @@ class SmartDocApp {
 
             const batchSize = parseInt(document.getElementById('batchSize').value) || SETTINGS_DEFAULTS.batchSize;
             const repeatPrompt = document.getElementById('repeatPrompt').checked;
+            const temperature = parseFloat(document.getElementById('temperature').value) || SETTINGS_DEFAULTS.temperature;
+            const topP = parseFloat(document.getElementById('topP').value) || SETTINGS_DEFAULTS.topP;
             this.settings.batchSize = batchSize;
             this.settings.repeatPrompt = repeatPrompt;
+            this.settings.temperature = temperature;
+            this.settings.topP = topP;
 
-            localStorage.setItem('smartdoc_settings', JSON.stringify({ batchSize, repeatPrompt }));
+            localStorage.setItem('smartdoc_settings', JSON.stringify({ batchSize, repeatPrompt, temperature, topP }));
 
             UiHelpers.toggleModal('settingsModal', false);
             this.updateApiStatus();
@@ -666,6 +676,8 @@ class SmartDocApp {
         document.getElementById('auditRole').value = this.settings.auditRole || API_DEFAULTS.auditRole;
         document.getElementById('batchSize').value = this.settings.batchSize || SETTINGS_DEFAULTS.batchSize;
         document.getElementById('repeatPrompt').checked = this.settings.repeatPrompt ?? SETTINGS_DEFAULTS.repeatPrompt;
+        document.getElementById('temperature').value = this.settings.temperature ?? SETTINGS_DEFAULTS.temperature;
+        document.getElementById('topP').value = this.settings.topP ?? SETTINGS_DEFAULTS.topP;
         document.getElementById('apiKey').value = '';
 
         const apiKeyStatus = document.getElementById('apiKeyStatus');
@@ -725,6 +737,17 @@ class SmartDocApp {
     exportHtmlReport() { ReportExporter.exportHtml(this.document, this.template, this.excelData, this.auditResults); }
     showHelp() { UiHelpers.toggleModal('helpModal', true); }
     closeHelp() { UiHelpers.toggleModal('helpModal', false); }
+    
+    toggleAdvancedSettings() {
+        const panel = document.getElementById('advancedSettingsPanel');
+        const icon = document.getElementById('advancedSettingsIcon');
+        panel.classList.toggle('hidden');
+        if (panel.classList.contains('hidden')) {
+            icon.classList.remove('rotate-180');
+        } else {
+            icon.classList.add('rotate-180');
+        }
+    }
     
     showDataPreview() {
         if (!this.ticketData) {
