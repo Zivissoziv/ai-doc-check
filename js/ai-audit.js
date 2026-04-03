@@ -107,18 +107,51 @@ ${documentText.substring(0, 10000)}
         }
     },
 
+    _checkUnresolvedVars(prompt) {
+        const pattern = /\{\{data(\.[^}]+)?\}\}/g;
+        const matches = prompt.match(pattern);
+        return matches || [];
+    },
+    
     buildBatchPrompt(rules, documentText, ticketData, repeatPrompt = true) {
-        const processPrompt = (prompt) => {
+        const executableRules = [];
+        const skippedRules = [];
+        
+        rules.forEach((rule, index) => {
+            let prompt = rule.prompt;
             prompt = this._replaceDataVar(prompt, ticketData);
-            return prompt;
-        };
-
-        const rulesList = rules.map((rule, index) => ({
-            id: index,
-            name: rule.name,
-            severity: rule.severity,
-            prompt: processPrompt(rule.prompt)
-        }));
+            
+            const unresolvedVars = this._checkUnresolvedVars(prompt);
+            
+            if (unresolvedVars.length > 0) {
+                skippedRules.push({
+                    originalIndex: index,
+                    name: rule.name,
+                    reason: `缺少数据: 规则包含未解析的变量 ${unresolvedVars.join(', ')}`
+                });
+            } else {
+                executableRules.push({
+                    id: executableRules.length,
+                    originalIndex: index,
+                    name: rule.name,
+                    severity: rule.severity,
+                    prompt: prompt
+                });
+            }
+        });
+        
+        if (skippedRules.length > 0) {
+            console.log(`\n[规则过滤] 跳过 ${skippedRules.length} 条规则（缺少数据）:`);
+            skippedRules.forEach(r => {
+                console.log(`  - 规则${r.originalIndex} [${r.name}]: ${r.reason}`);
+            });
+            console.log('');
+        }
+        
+        if (executableRules.length === 0) {
+            console.warn('[规则过滤] 所有规则都被跳过，无可用规则执行审核');
+            return { prompt: null, skippedRules, executableRules: [] };
+        }
 
         const basePrompt = `你需要对以下文档进行批量审核，按照给定的规则逐一检查。
 
@@ -126,7 +159,7 @@ ${documentText.substring(0, 10000)}
 ${documentText.substring(0, 10000)}
 
 审核规则列表：
-${rulesList.map(r => `
+${executableRules.map(r => `
 [规则${r.id}] ${r.name} (级别: ${r.severity})
 ${r.prompt}`).join('\n')}
 
@@ -159,7 +192,7 @@ ${r.prompt}`).join('\n')}
 }
 
 === 字段说明 ===
-- ruleId: 规则序号，对应规则列表中的序号(0-${rules.length - 1})
+- ruleId: 规则序号，对应规则列表中的序号(0-${executableRules.length - 1})
 - pass: 是否通过，true或false
 - confidence: 置信度，0-100的整数
 - issues: 问题列表，通过时为[]，不通过时包含具体对象
@@ -171,7 +204,7 @@ ${r.prompt}`).join('\n')}
 
 === 重要约束 ===
 1. 必须返回合法JSON，不要添加markdown代码块标记
-2. results数组长度必须等于${rules.length}
+2. results数组长度必须等于${executableRules.length}
 3. 每个规则都要有对应的result对象
 4. issues数组为空时写成 [] 而不是 null
 5. 字符串使用双引号，不要使用单引号
@@ -179,9 +212,17 @@ ${r.prompt}`).join('\n')}
 7. 不要包含任何解释说明文字，只返回JSON`;
 
         if (repeatPrompt) {
-            return basePrompt + this.REPETITION_SEPARATOR + basePrompt;
+            return { 
+                prompt: basePrompt + this.REPETITION_SEPARATOR + basePrompt, 
+                skippedRules, 
+                executableRules 
+            };
         } else {
-            return basePrompt;
+            return { 
+                prompt: basePrompt, 
+                skippedRules, 
+                executableRules 
+            };
         }
     },
 
@@ -277,14 +318,54 @@ ${r.prompt}`).join('\n')}
         }
     },
 
+    _fixJsonString(jsonStr) {
+        let fixed = jsonStr
+            .trim()
+            .replace(/^[\u200B-\u200D\uFEFF]/, '')
+            .replace(/\/\*[\s\S]*?\*\//g, '')
+            .replace(/\/\/.*$/gm, '')
+            .replace(/,\s*}/g, '}')
+            .replace(/,\s*]/g, ']');
+        
+        try {
+            JSON.parse(fixed);
+            return fixed;
+        } catch (e) {
+            console.log('[JSON修复] 第一次尝试失败，尝试高级修复...');
+        }
+        
+        fixed = fixed
+            .replace(/(\w+)\s*:/g, (match, p1) => {
+                if (p1.match(/^["']/)) return match;
+                return `"${p1}":`;
+            })
+            .replace(/:\s*'([^']*)'/g, ': "$1"')
+            .replace(/:\s*"([^"]*?)"/g, (match, p1) => {
+                const escaped = p1
+                    .replace(/\\/g, '\\\\')
+                    .replace(/"/g, '\\"')
+                    .replace(/\n/g, '\\n')
+                    .replace(/\r/g, '\\r')
+                    .replace(/\t/g, '\\t');
+                return `: "${escaped}"`;
+            });
+        
+        try {
+            JSON.parse(fixed);
+            console.log('[JSON修复] 高级修复成功');
+            return fixed;
+        } catch (e) {
+            console.log('[JSON修复] 高级修复失败，返回原始字符串');
+            return jsonStr;
+        }
+    },
+
     parseBatchResult(content, rules) {
         let result;
         try {
-            // 尝试直接解析JSON
             try {
                 result = JSON.parse(content);
             } catch {
-                // 尝试从代码块中提取
                 let jsonData = null;
                 
                 let match = content.match(/```json\s*([\s\S]*?)\s*```/);
@@ -301,11 +382,8 @@ ${r.prompt}`).join('\n')}
                 }
                 
                 if (jsonData) {
-                    const cleanJsonData = jsonData
-                        .trim()
-                        .replace(/^[\u200B-\u200D\uFEFF]/, '')
-                        .replace(/,\s*}/g, '}')
-                        .replace(/,\s*]/g, ']');
+                    const cleanJsonData = this._fixJsonString(jsonData);
+                    console.log('[JSON修复] 尝试修复JSON:', cleanJsonData.substring(0, 200));
                     result = JSON.parse(cleanJsonData);
                 } else {
                     throw new Error('未找到JSON数据');
@@ -368,11 +446,8 @@ ${r.prompt}`).join('\n')}
                 }
                 
                 if (jsonData) {
-                    const cleanJsonData = jsonData
-                        .trim()
-                        .replace(/^[\u200B-\u200D\uFEFF]/, '')
-                        .replace(/,\s*}/g, '}')
-                        .replace(/,\s*]/g, ']');
+                    const cleanJsonData = this._fixJsonString(jsonData);
+                    console.log('[JSON修复] 尝试修复JSON:', cleanJsonData.substring(0, 200));
                     result = JSON.parse(cleanJsonData);
                 } else {
                     throw new Error('未找到JSON数据');
@@ -408,7 +483,41 @@ ${r.prompt}`).join('\n')}
     renderResult(result, container) {
         const div = document.createElement('div');
         div.className = 'bg-white rounded-xl border border-gray-200 p-6 fade-in';
-        
+
+        // 检测是否为跳过的规则（summary以"已跳过:"开头）
+        const isSkipped = result.summary && result.summary.startsWith('已跳过:');
+
+        // 跳过的规则使用特殊样式
+        if (isSkipped) {
+            div.className = 'bg-gray-50 rounded-xl border border-gray-300 p-6 fade-in opacity-75';
+
+            div.innerHTML = `
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-full flex items-center justify-center bg-gray-200 text-gray-500">
+                            <i class="fas fa-forward text-lg"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-semibold text-gray-600">${result.ruleName}</h3>
+                            <div class="flex items-center gap-2 text-xs text-gray-500">
+                                <span class="px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">已跳过</span>
+                                <span>置信度: ${result.confidence}%</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="text-sm text-gray-500 mb-4">
+                    <i class="fas fa-info-circle mr-1"></i> 此规则因缺少必要数据而被跳过，未进行实际审核
+                </div>
+                <div class="text-xs text-gray-400 pt-3 border-t border-gray-200">
+                    <i class="fas fa-quote-left mr-1 opacity-50"></i> ${result.summary}
+                </div>`;
+
+            container.appendChild(div);
+            return;
+        }
+
+        // 正常审核结果的显示逻辑
         const statusColor = result.pass ? 'green' : 'red';
         const statusIcon = result.pass ? 'check' : 'times';
         const severityClass = result.severity === 'error' ? 'red' : result.severity === 'warning' ? 'yellow' : 'blue';

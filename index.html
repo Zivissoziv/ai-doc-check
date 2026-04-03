@@ -186,6 +186,9 @@
                     <button onclick="app.deleteCurrentGroup()" class="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="删除当前规则组">
                         <i class="fas fa-trash-alt"></i>
                     </button>
+                    <button onclick="app.showImportExportModal()" class="p-2 text-gray-500 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors" title="导入/导出规则">
+                        <i class="fas fa-exchange-alt"></i>
+                    </button>
                 </div>
             </div>
             
@@ -224,7 +227,44 @@
                 <i class="fas fa-play"></i> 运行AI审核
             </button>
         </div>
-    </aside>
+    </aside></div>
+</div>
+
+<!-- 导入导出模态框 -->
+<div id="importExportModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-[400px] max-h-[80vh] flex flex-col">
+        <div class="p-6 border-b border-gray-100 flex justify-between items-center">
+            <h2 class="text-lg font-bold text-gray-900">导入/导出规则</h2>
+            <button onclick="app.closeImportExportModal()" class="text-gray-400 hover:text-gray-600">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+        
+        <div class="p-6 space-y-3">
+            <button onclick="app.exportRules(); app.closeImportExportModal();" class="w-full py-3 pl-4 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-lg font-medium transition-all flex items-center gap-2 shadow-md hover:shadow-lg">
+                <i class="fas fa-download text-lg w-5 text-center flex-shrink-0"></i>
+                <div class="text-left flex-1 min-w-0">
+                    <div class="font-semibold text-left text-sm">导出规则</div>
+                    <div class="text-xs opacity-90 text-left">将当前规则组导出为JSON文件</div>
+                </div>
+            </button>
+            
+            <button onclick="app.importRules(); app.closeImportExportModal();" class="w-full py-3 pl-4 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-lg font-medium transition-all flex items-center gap-2 shadow-md hover:shadow-lg">
+                <i class="fas fa-upload text-lg w-5 text-center flex-shrink-0"></i>
+                <div class="text-left flex-1 min-w-0">
+                    <div class="font-semibold text-left text-sm">导入规则</div>
+                    <div class="text-xs opacity-90 text-left">从JSON文件导入规则（将覆盖现有规则）</div>
+                </div>
+            </button>
+        </div>
+        
+        <div class="p-4 bg-gray-50 rounded-b-2xl">
+            <p class="text-xs text-gray-500 text-center">
+                <i class="fas fa-info-circle mr-1"></i>
+                导出的规则文件可用于备份或分享给其他用户
+            </p>
+        </div>
+    </div>
 </div>
 
 <!-- 设置模态框 -->

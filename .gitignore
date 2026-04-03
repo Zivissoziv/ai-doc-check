@@ -7,3 +7,4 @@ package.json
 playwright.config.js
 test*/
 node_modules/
+.claude/

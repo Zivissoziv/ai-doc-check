@@ -525,6 +525,67 @@ class SmartDocApp {
         }
     }
     
+    exportRules() {
+        const group = this.ruleGroups.find(g => g.id === this.currentRuleGroup);
+        if (!group) {
+            alert('未找到当前规则组');
+            return;
+        }
+        
+        const exportData = {
+            groupName: group.name,
+            groupId: group.id,
+            exportTime: new Date().toISOString(),
+            rules: this.rules
+        };
+        
+        const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${group.name}_规则_${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        UiHelpers.setStatus(`已导出 ${this.rules.length} 条规则`);
+    }
+    
+    importRules() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json';
+        input.onchange = async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            try {
+                const text = await file.text();
+                const importData = JSON.parse(text);
+                
+                if (!importData.rules || !Array.isArray(importData.rules)) {
+                    throw new Error('无效的规则文件格式');
+                }
+                
+                const confirmMsg = `即将导入 ${importData.rules.length} 条规则${importData.groupName ? `（来自规则组: ${importData.groupName}）` : ''}。\n\n这将覆盖当前规则组的所有现有规则，是否继续？`;
+                
+                if (!confirm(confirmMsg)) {
+                    return;
+                }
+                
+                this.rules = importData.rules;
+                await RulesManager.saveRules(this.currentRuleGroup, this.rules);
+                RulesManager.renderRules(this.rules, 'rulesList');
+                
+                UiHelpers.setStatus(`已导入 ${this.rules.length} 条规则`);
+            } catch (err) {
+                alert('导入失败: ' + err.message);
+            }
+        };
+        input.click();
+    }
+    
     _renderAuditResults(batchResults, placeholders, startIdx) {
         batchResults.forEach((result, i) => {
             this.auditResults[startIdx + i] = result;
@@ -578,10 +639,46 @@ class SmartDocApp {
             });
 
             if (batchSize === 0) {
-                const batchPrompt = AiAudit.buildBatchPrompt(activeRules, this.document.text, this.ticketData, this.settings.repeatPrompt);
-                const batchResults = await AiAudit.callBatchLLM(batchPrompt, activeRules, this.settings);
-                this._renderAuditResults(batchResults, placeholders, 0);
+                const { prompt, skippedRules, executableRules } = AiAudit.buildBatchPrompt(activeRules, this.document.text, this.ticketData, this.settings.repeatPrompt);
+                
+                if (prompt === null) {
+                    const allSkippedResults = activeRules.map((rule, idx) => {
+                        const skipInfo = skippedRules.find(s => s.originalIndex === idx);
+                        return {
+                            ruleName: rule.name,
+                            severity: rule.severity,
+                            pass: true,
+                            confidence: 100,
+                            issues: [],
+                            summary: `已跳过: ${skipInfo?.reason || '未知原因'}`
+                        };
+                    });
+                    this._renderAuditResults(allSkippedResults, placeholders, 0);
+                } else {
+                    const batchResults = await AiAudit.callBatchLLM(prompt, executableRules, this.settings);
+                    
+                    const allResults = activeRules.map((rule, idx) => {
+                        const skipInfo = skippedRules.find(s => s.originalIndex === idx);
+                        if (skipInfo) {
+                            return {
+                                ruleName: rule.name,
+                                severity: rule.severity,
+                                pass: true,
+                                confidence: 100,
+                                issues: [],
+                                summary: `已跳过: ${skipInfo.reason}`
+                            };
+                        }
+                        const executableIdx = executableRules.findIndex(r => r.originalIndex === idx);
+                        return batchResults[executableIdx];
+                    });
+                    
+                    this._renderAuditResults(allResults, placeholders, 0);
+                }
             } else {
+                let allBatchResults = [];
+                let allSkippedRules = [];
+                
                 for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
                     const startIdx = batchIndex * batchSize;
                     const endIdx = Math.min(startIdx + batchSize, activeRules.length);
@@ -590,14 +687,49 @@ class SmartDocApp {
                     UiHelpers.setStatus(`正在审核第 ${batchIndex + 1}/${totalBatches} 批（规则 ${startIdx + 1}-${endIdx}）...`, true);
                     UiHelpers.updateProgress(Math.round((batchIndex / totalBatches) * 100));
                     
-                    const batchPrompt = AiAudit.buildBatchPrompt(batchRules, this.document.text, this.ticketData, this.settings.repeatPrompt);
-                    const batchResults = await AiAudit.callBatchLLM(batchPrompt, batchRules, this.settings);
-                    this._renderAuditResults(batchResults, placeholders, startIdx);
+                    const { prompt, skippedRules, executableRules } = AiAudit.buildBatchPrompt(batchRules, this.document.text, this.ticketData, this.settings.repeatPrompt);
+                    
+                    if (prompt === null) {
+                        const skippedResults = batchRules.map((rule, idx) => {
+                            const skipInfo = skippedRules.find(s => s.originalIndex === idx);
+                            return {
+                                ruleName: rule.name,
+                                severity: rule.severity,
+                                pass: true,
+                                confidence: 100,
+                                issues: [],
+                                summary: `已跳过: ${skipInfo?.reason || '未知原因'}`
+                            };
+                        });
+                        allBatchResults.push(...skippedResults);
+                    } else {
+                        const batchResults = await AiAudit.callBatchLLM(prompt, executableRules, this.settings);
+                        
+                        const batchAllResults = batchRules.map((rule, idx) => {
+                            const skipInfo = skippedRules.find(s => s.originalIndex === idx);
+                            if (skipInfo) {
+                                return {
+                                    ruleName: rule.name,
+                                    severity: rule.severity,
+                                    pass: true,
+                                    confidence: 100,
+                                    issues: [],
+                                    summary: `已跳过: ${skipInfo.reason}`
+                                };
+                            }
+                            const executableIdx = executableRules.findIndex(r => r.originalIndex === idx);
+                            return batchResults[executableIdx];
+                        });
+                        
+                        allBatchResults.push(...batchAllResults);
+                    }
                     
                     if (batchIndex < totalBatches - 1) {
                         await new Promise(resolve => setTimeout(resolve, 500));
                     }
                 }
+                
+                this._renderAuditResults(allBatchResults, placeholders, 0);
             }
 
             UiHelpers.hideProgress();
@@ -737,6 +869,9 @@ class SmartDocApp {
     exportHtmlReport() { ReportExporter.exportHtml(this.document, this.template, this.excelData, this.auditResults); }
     showHelp() { UiHelpers.toggleModal('helpModal', true); }
     closeHelp() { UiHelpers.toggleModal('helpModal', false); }
+    
+    showImportExportModal() { UiHelpers.toggleModal('importExportModal', true); }
+    closeImportExportModal() { UiHelpers.toggleModal('importExportModal', false); }
     
     toggleAdvancedSettings() {
         const panel = document.getElementById('advancedSettingsPanel');

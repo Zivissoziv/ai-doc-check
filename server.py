@@ -9,6 +9,7 @@ sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 import base64
 import json
+import logging
 import os
 import re
 import ssl
@@ -17,12 +18,26 @@ import urllib.error
 import zipfile
 import xml.etree.ElementTree as ET
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from typing import Dict, List, Optional, Any
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config')
 
 MAX_FILE_SIZE = 50 * 1024 * 1024
 DOWNLOAD_TIMEOUT = 60
 REPETITION_SEPARATOR = '\n\n--- 重复提示（请仔细阅读以上内容）---\n\n'
+
+# LLM调用相关常量
+LLM_TIMEOUT_SECONDS = 120
+LLM_TEMPERATURE = 0.1
+RETRY_TEMPERATURE = 0.05
+PARSE_FAILURE_CONFIDENCE = 30
 
 
 class JSONRepair:
@@ -304,14 +319,15 @@ class PromptBuilder:
     """提示词构建器"""
 
     @staticmethod
-    def build_batch_prompt(rules, document_text, excel_data=None, repeat_prompt=True):
+    def build_batch_prompt(rules, document_text, user_data=None, repeat_prompt=True):
         """构建批量审核提示词"""
-        
+
         rules_list = []
         for idx, rule in enumerate(rules):
             prompt = rule.get('prompt', '')
-            if excel_data:
-                prompt = PromptBuilder._replace_excel_vars(prompt, excel_data)
+            # 统一使用 {{data.xxx}} 格式替换变量
+            if user_data:
+                prompt = PromptBuilder._replace_data_vars(prompt, user_data)
             rules_list.append({
                 'id': idx,
                 'name': rule.get('name', f'规则{idx}'),
@@ -376,26 +392,101 @@ class PromptBuilder:
             return base_prompt
 
     @staticmethod
-    def _replace_excel_vars(prompt, excel_data):
-        """替换Excel变量"""
-        pattern = r'\{\{excel\.([^}]+)\}\}'
-        
-        def replace_match(match):
-            path = match.group(1)
-            parts = path.split('.')
-            if len(parts) >= 2:
-                sheet_name, col_name = parts[0], parts[1]
-                for sheet in excel_data.get('sheets', []):
-                    if sheet['name'] == sheet_name:
-                        try:
-                            col_idx = sheet['headers'].index(col_name)
-                            values = [row[col_idx] for row in sheet['rows'] if col_idx < len(row) and row[col_idx]]
-                            return '、'.join(values)
-                        except (ValueError, IndexError):
-                            pass
-            return match.group(0)
-        
-        return re.sub(pattern, replace_match, prompt)
+    def _check_unresolved_vars(prompt: str) -> List[str]:
+        """检查prompt中未解析的变量
+
+        Args:
+            prompt: 规则提示词
+
+        Returns:
+            未解析变量列表，如 ['{{data}}', '{{data.xxx}}']
+        """
+        # 统一使用 {{data.xxx}} 格式
+        pattern = r'\{\{data(\.[^}]+)?\}\}'  # {{data}} 或 {{data.xxx}}
+
+        unresolved = []
+        matches = re.findall(pattern, prompt)
+        if matches:
+            # 将匹配结果还原为完整变量格式
+            unresolved = [f'{{{{data{match}}}}}' for match in matches]
+
+        return unresolved
+
+    @staticmethod
+    def filter_rules_by_data_availability(rules: List[Dict], user_data: Optional[Dict] = None) -> tuple:
+        """根据数据可用性过滤规则
+
+        Args:
+            rules: 原始规则列表
+            user_data: 用户传入的数据对象（可选，包含所有数据包括Excel）
+
+        Returns:
+            (executable_rules, skipped_rules) 元组
+            - executable_rules: 可执行的规则列表
+            - skipped_rules: 被跳过的规则信息列表 [{idx, name, reason}, ...]
+        """
+        executable_rules = []
+        skipped_rules = []
+
+        for idx, rule in enumerate(rules):
+            prompt = rule.get('prompt', '')
+
+            # 如果有user_data，替换data变量（统一格式）
+            if user_data:
+                prompt = PromptBuilder._replace_data_vars(prompt, user_data)
+
+            # 检查是否还有未解析的变量
+            unresolved_vars = PromptBuilder._check_unresolved_vars(prompt)
+
+            if unresolved_vars:
+                # 规则包含未解析变量，跳过
+                skipped_rules.append({
+                    'idx': idx,
+                    'name': rule.get('name', f'规则{idx}'),
+                    'reason': f'缺少数据: 规则包含未解析的变量 {", ".join(unresolved_vars)}'
+                })
+            else:
+                # 规则可执行，使用替换后的prompt
+                executable_rule = rule.copy()
+                executable_rule['prompt'] = prompt
+                executable_rules.append(executable_rule)
+
+        return executable_rules, skipped_rules
+
+    @staticmethod
+    def _replace_data_vars(prompt: str, data: Dict) -> str:
+        """替换data变量
+
+        Args:
+            prompt: 规则提示词
+            data: 用户传入的数据对象
+
+        Returns:
+            替换后的提示词
+        """
+        def replace_data_var(match):
+            var_path = match.group(1)  # 例如: "dxInfos.cchrservername"
+            parts = var_path.split('.')
+
+            # 从data对象中按路径查找值
+            value = data
+            try:
+                for part in parts:
+                    if isinstance(value, dict):
+                        value = value.get(part)
+                    else:
+                        return match.group(0)  # 无法解析，返回原变量
+
+                if value is None:
+                    return match.group(0)  # 值为None，返回原变量
+
+                return str(value)
+            except Exception:
+                return match.group(0)  # 解析失败，返回原变量
+
+        # 匹配 {{data.xxx}} 或 {{data.xxx.yyy}} 等格式
+        pattern = r'\{\{data\.([^}]+)\}\}'
+        return re.sub(pattern, replace_data_var, prompt)
 
 
 class ProxyHandler(SimpleHTTPRequestHandler):
@@ -943,6 +1034,17 @@ class ProxyHandler(SimpleHTTPRequestHandler):
                     self._send_json(422, {'error': '无法解析Excel文件'})
                     return
 
+            # 获取用户传入的data参数（统一数据格式）
+            user_data = data.get('data', {})  # 支持用户传入的数据对象
+
+            # 如果有Excel数据，合并到user_data中（统一使用{{data.xxx}}格式）
+            if excel_data:
+                # 将Excel的sheets数据合并到user_data
+                if 'sheets' not in user_data:
+                    user_data['sheets'] = excel_data.get('sheets', [])
+                # 如果user_data已有sheets，需要决定是否覆盖（这里优先使用已解析的excel_data）
+                # 或者可以合并：user_data['sheets'] = excel_data.get('sheets', [])
+
             settings = data.get('settings', {})
             endpoint = settings.get('endpoint', 'https://api.deepseek.com/v1/chat/completions')
             api_key = settings.get('apiKey', '')
@@ -951,30 +1053,136 @@ class ProxyHandler(SimpleHTTPRequestHandler):
             repeat_prompt = settings.get('repeatPrompt', True)
             batch_size = settings.get('batchSize', 0)
 
-            if batch_size > 0 and len(rules) > batch_size:
+            # 过滤规则：分离可执行规则和跳过规则（统一使用user_data）
+            executable_rules, skipped_rules = PromptBuilder.filter_rules_by_data_availability(rules, user_data)
+
+            # 记录跳过的规则
+            if skipped_rules:
+                print(f"\n[规则过滤] 跳过 {len(skipped_rules)} 条规则（缺少数据）:")
+                logger.info(f"[规则过滤] 跳过 {len(skipped_rules)} 条规则（缺少数据）:")
+                for skipped in skipped_rules:
+                    print(f"  - 规则{skipped['idx']} [{skipped['name']}]: {skipped['reason']}")
+                    logger.info(f"  - 规则{skipped['idx']} [{skipped['name']}]: {skipped['reason']}")
+                print()
+
+            # 如果没有可执行规则，直接返回结果
+            if not executable_rules:
+                logger.warning("[规则过滤] 所有规则都被跳过，无可用规则执行审核")
+                # 为所有规则生成跳过结果
+                all_skipped_results = []
+                for idx, rule in enumerate(rules):
+                    # 查找跳过原因
+                    skip_info = next((s for s in skipped_rules if s['idx'] == idx), None)
+                    reason = skip_info['reason'] if skip_info else '未知原因'
+
+                    all_skipped_results.append({
+                        'ruleId': idx,
+                        'ruleName': rule.get('name', f'规则{idx}'),
+                        'severity': rule.get('severity', 'warning'),
+                        'pass': True,  # 跳过的规则视为"通过"（实际未检查）
+                        'confidence': 100,
+                        'issues': [],
+                        'summary': f'已跳过: {reason}'
+                    })
+
+                return self._send_json(200, {'success': True, 'results': all_skipped_results})
+
+            if batch_size > 0 and len(executable_rules) > batch_size:
                 all_results = []
-                total_batches = (len(rules) + batch_size - 1) // batch_size
+                total_batches = (len(executable_rules) + batch_size - 1) // batch_size
 
                 for batch_idx in range(total_batches):
                     start_idx = batch_idx * batch_size
-                    end_idx = min(start_idx + batch_size, len(rules))
-                    batch_rules = rules[start_idx:end_idx]
+                    end_idx = min(start_idx + batch_size, len(executable_rules))
+                    batch_rules = executable_rules[start_idx:end_idx]
 
-                    prompt = PromptBuilder.build_batch_prompt(batch_rules, document_text, excel_data, repeat_prompt)
+                    # 构建batch上下文
+                    batch_context = {
+                        'document_text': document_text,
+                        'rules': batch_rules,  # 使用当前batch的可执行规则
+                        'user_data': user_data,  # 统一使用user_data
+                        'repeat_prompt': repeat_prompt
+                    }
+
+                    batch_config = {
+                        'endpoint': endpoint,
+                        'apiKey': api_key,
+                        'model': model,
+                        'auditRole': audit_role
+                    }
+
+                    prompt = PromptBuilder.build_batch_prompt(batch_rules, document_text, user_data, repeat_prompt)
                     batch_result = self._call_llm(prompt, endpoint, api_key, model, audit_role)
 
                     if 'error' in batch_result:
                         return self._send_json(502, {'error': batch_result['error']})
 
-                    batch_results = self._parse_audit_results(batch_result.get('content', ''), batch_rules)
+                    # 传递上下文给_parse_audit_results
+                    batch_results = self._parse_audit_results(batch_result.get('content', ''), batch_rules, batch_context, batch_config)
 
                     for i, r in enumerate(batch_results):
                         r['ruleId'] = start_idx + i
                     all_results.extend(batch_results)
 
-                return self._send_json(200, {'success': True, 'results': all_results})
+                # 合并跳过规则的结果
+                # 为跳过的规则创建索引映射
+                executable_idx_map = {}  # 原始rules索引 -> executable_results索引
+                for new_idx, rule in enumerate(executable_rules):
+                    # 查找原始索引
+                    original_idx = rules.index(rule)
+                    executable_idx_map[original_idx] = new_idx
+
+                final_results = []
+                for idx, rule in enumerate(rules):
+                    if idx in executable_idx_map:
+                        # 可执行规则，从all_results获取
+                        result_idx = executable_idx_map[idx]
+                        if result_idx < len(all_results):
+                            final_results.append(all_results[result_idx])
+                        else:
+                            # 结果缺失，添加错误
+                            final_results.append({
+                                'ruleId': idx,
+                                'ruleName': rule.get('name', f'规则{idx}'),
+                                'severity': rule.get('severity', 'warning'),
+                                'pass': False,
+                                'confidence': PARSE_FAILURE_CONFIDENCE,
+                                'issues': [{'location': '解析', 'problem': '未找到审核结果', 'suggestion': '请重试'}],
+                                'summary': '解析失败'
+                            })
+                    else:
+                        # 跳过的规则
+                        skip_info = next((s for s in skipped_rules if s['idx'] == idx), None)
+                        reason = skip_info['reason'] if skip_info else '未知原因'
+                        final_results.append({
+                            'ruleId': idx,
+                            'ruleName': rule.get('name', f'规则{idx}'),
+                            'severity': rule.get('severity', 'warning'),
+                            'pass': True,
+                            'confidence': 100,
+                            'issues': [],
+                            'summary': f'已跳过: {reason}'
+                        })
+
+                return self._send_json(200, {'success': True, 'results': final_results})
             else:
-                prompt = PromptBuilder.build_batch_prompt(rules, document_text, excel_data, repeat_prompt)
+                # 非批量处理：使用可执行规则
+                prompt = PromptBuilder.build_batch_prompt(executable_rules, document_text, user_data, repeat_prompt)
+
+            # 保存审核上下文用于重试（使用可执行规则）
+            audit_context = {
+                'document_text': document_text,
+                'rules': executable_rules,  # 使用可执行规则
+                'user_data': user_data,  # 统一使用user_data
+                'repeat_prompt': repeat_prompt
+            }
+
+            audit_config = {
+                'endpoint': endpoint,
+                'apiKey': api_key,
+                'model': model,
+                'auditRole': audit_role
+            }
 
             llm_body = {
                 'model': model,
@@ -998,10 +1206,50 @@ class ProxyHandler(SimpleHTTPRequestHandler):
                 llm_result = json.loads(resp_body.decode('utf-8'))
 
             content = llm_result.get('choices', [{}])[0].get('message', {}).get('content', '')
-            
-            results = self._parse_audit_results(content, rules)
 
-            self._send_json(200, {'success': True, 'results': results})
+            # 解析可执行规则的结果
+            executable_results = self._parse_audit_results(content, executable_rules, audit_context, audit_config)
+
+            # 合并跳过规则的结果
+            # 创建索引映射
+            executable_idx_map = {}
+            for new_idx, rule in enumerate(executable_rules):
+                original_idx = rules.index(rule)
+                executable_idx_map[original_idx] = new_idx
+
+            final_results = []
+            for idx, rule in enumerate(rules):
+                if idx in executable_idx_map:
+                    # 可执行规则，从executable_results获取
+                    result_idx = executable_idx_map[idx]
+                    if result_idx < len(executable_results):
+                        final_results.append(executable_results[result_idx])
+                    else:
+                        # 结果缺失
+                        final_results.append({
+                            'ruleId': idx,
+                            'ruleName': rule.get('name', f'规则{idx}'),
+                            'severity': rule.get('severity', 'warning'),
+                            'pass': False,
+                            'confidence': PARSE_FAILURE_CONFIDENCE,
+                            'issues': [{'location': '解析', 'problem': '未找到审核结果', 'suggestion': '请重试'}],
+                            'summary': '解析失败'
+                        })
+                else:
+                    # 跳过的规则
+                    skip_info = next((s for s in skipped_rules if s['idx'] == idx), None)
+                    reason = skip_info['reason'] if skip_info else '未知原因'
+                    final_results.append({
+                        'ruleId': idx,
+                        'ruleName': rule.get('name', f'规则{idx}'),
+                        'severity': rule.get('severity', 'warning'),
+                        'pass': True,
+                        'confidence': 100,
+                        'issues': [],
+                        'summary': f'已跳过: {reason}'
+                    })
+
+            self._send_json(200, {'success': True, 'results': final_results})
 
         except urllib.error.HTTPError as e:
             err_body = e.read().decode('utf-8', errors='ignore')
@@ -1015,23 +1263,73 @@ class ProxyHandler(SimpleHTTPRequestHandler):
         except Exception as e:
             self._send_json(500, {'error': str(e)})
 
-    def _parse_audit_results(self, content, rules):
-        """解析审核结果"""
+    def _parse_audit_results(self, content: str, rules: List[Dict], context: Optional[Dict] = None, config: Optional[Dict] = None) -> List[Dict]:
+        """解析审核结果
+
+        Args:
+            content: LLM返回的JSON字符串
+            rules: 规则列表
+            context: 审核上下文（可选，用于重试）
+            config: API配置（可选，用于重试）
+
+        Returns:
+            审核结果列表
+        """
         try:
             try:
                 result = json.loads(content)
             except json.JSONDecodeError:
-                match = re.search(r'```json\s*([\s\S]*?)\s*```', content)
-                if match:
-                    content = match.group(1)
+                # 尝试使用JSONRepair修复
+                repaired = JSONRepair.repair(content)
+                if repaired and repaired != content:
+                    try:
+                        result = json.loads(repaired)
+                    except json.JSONDecodeError as e:
+                        # JSONRepair修复失败，触发LLM重试
+                        if context and config:
+                            error_info = {
+                                'error_type': 'JSONDecodeError',
+                                'error_message': str(e),
+                                'lineno': e.lineno if hasattr(e, 'lineno') else '未知',
+                                'colno': e.colno if hasattr(e, 'colno') else '未知'
+                            }
+
+                            retry_result = self._retry_audit_with_context(context, error_info, config)
+
+                            if 'error' in retry_result:
+                                # 重试调用失败，返回错误
+                                return self._build_parse_error_result(rules, f'审核结果解析失败且重试修复失败: {retry_result["error"]}')
+
+                            # 重试成功，解析修复后的内容
+                            try:
+                                result = json.loads(retry_result.get('content', ''))
+                            except json.JSONDecodeError as e2:
+                                # 重试后仍无法解析
+                                return self._build_parse_error_result(rules, f'审核结果解析失败，重试修复后仍无法解析: {str(e2)}')
+                        else:
+                            # 无上下文或配置，无法重试
+                            raise
                 else:
-                    match = re.search(r'\{[\s\S]*\}', content)
-                    if match:
-                        content = match.group(0)
-                
-                content = content.strip()
-                content = re.sub(r',(\s*[}\]])', r'\1', content)
-                result = json.loads(content)
+                    # JSONRepair无法修复，触发LLM重试
+                    if context and config:
+                        error_info = {
+                            'error_type': 'JSONDecodeError',
+                            'error_message': 'JSON格式严重错误',
+                            'lineno': '未知',
+                            'colno': '未知'
+                        }
+
+                        retry_result = self._retry_audit_with_context(context, error_info, config)
+
+                        if 'error' in retry_result:
+                            return self._build_parse_error_result(rules, f'审核结果解析失败且重试修复失败: {retry_result["error"]}')
+
+                        try:
+                            result = json.loads(retry_result.get('content', ''))
+                        except json.JSONDecodeError as e2:
+                            return self._build_parse_error_result(rules, f'审核结果解析失败，重试修复后仍无法解析: {str(e2)}')
+                    else:
+                        raise
 
             results_list = result.get('results', [])
 
@@ -1070,26 +1368,105 @@ class ProxyHandler(SimpleHTTPRequestHandler):
             return final_results
 
         except Exception as e:
-            return [{
-                'ruleId': idx,
-                'ruleName': rule.get('name', f'规则{idx}'),
-                'severity': rule.get('severity', 'warning'),
-                'pass': False,
-                'confidence': 30,
-                'issues': [{'location': '解析', 'problem': f'结果解析失败: {str(e)}', 'suggestion': '请重试'}],
-                'summary': '解析失败'
-            } for idx, rule in enumerate(rules)]
+            return self._build_parse_error_result(rules, f'结果解析失败: {str(e)}')
 
-    def _call_llm(self, prompt, endpoint, api_key, model, audit_role):
-        """调用LLM API的辅助方法"""
+    def _build_parse_error_result(self, rules: List[Dict], error_message: str) -> List[Dict]:
+        """构建解析错误结果（DRY优化）
+
+        Args:
+            rules: 规则列表
+            error_message: 错误信息
+
+        Returns:
+            包含错误信息的审核结果列表
+        """
+        return [{
+            'ruleId': idx,
+            'ruleName': rule.get('name', f'规则{idx}'),
+            'severity': rule.get('severity', 'warning'),
+            'pass': False,
+            'confidence': PARSE_FAILURE_CONFIDENCE,
+            'issues': [{'location': '解析', 'problem': error_message, 'suggestion': '请重试'}],
+            'summary': '解析失败'
+        } for idx, rule in enumerate(rules)]
+
+    def _build_retry_prompt(self, context: Dict, error_info: Dict, rules_count: int) -> str:
+        """构造重试提示词
+
+        Args:
+            context: 审核上下文（包含document_text, rules, user_data, repeat_prompt）
+            error_info: 错误信息（包含error_type, error_message, lineno, colno）
+            rules_count: 规则数量
+
+        Returns:
+            重试提示词字符串
+        """
+        error_type = error_info.get('error_type', '未知错误')
+        error_message = error_info.get('error_message', '')
+        lineno = error_info.get('lineno', '未知')
+        colno = error_info.get('colno', '未知')
+
+        # 构建重试提示词前缀
+        retry_prefix = f"""你之前返回的审核结果JSON格式错误，解析失败。
+
+=== 错误信息 ===
+错误类型: {error_type}
+错误位置: 第{lineno}行，第{colno}列
+错误详情: {error_message}
+
+=== 重要提醒 ===
+请严格按照JSON格式要求重新返回审核结果：
+1. 必须返回合法JSON对象，不要添加markdown代码块标记
+2. results数组长度必须等于{rules_count}
+3. 每个ruleId从0到{rules_count-1}都要有对应结果对象
+4. 字符串使用双引号，不能用单引号
+5. 最后一个元素后面不要加逗号
+6. 数组为空时写[]而不是null
+7. 不要包含任何解释说明文字，只返回JSON
+
+"""
+
+        # 构建原始完整审核提示词
+        document_text = context.get('document_text', '')
+        rules = context.get('rules', [])
+        user_data = context.get('user_data')  # 统一使用user_data
+        repeat_prompt = context.get('repeat_prompt', True)
+
+        original_prompt = PromptBuilder.build_batch_prompt(rules, document_text, user_data, repeat_prompt)
+
+        return retry_prefix + original_prompt
+
+    def _retry_audit_with_context(self, context: Dict, error_info: Dict, config: Dict) -> Dict:
+        """执行LLM重试调用
+
+        Args:
+            context: 审核上下文
+            error_info: JSON解析错误信息
+            config: API配置
+
+        Returns:
+            成功返回{'content': ...}，失败返回{'error': ...}
+        """
         try:
+            rules = context.get('rules', [])
+            endpoint = config.get('endpoint', 'https://api.minimaxi.com/v1/chat/completions')
+            api_key = config.get('apiKey', '')
+            model = config.get('model', 'MiniMax-M2.7')
+            audit_role = config.get('auditRole', '专业文档审核专家')
+
+            # 构建重试提示词
+            retry_prompt = self._build_retry_prompt(context, error_info, len(rules))
+
+            logger.info("[Retry] JSON解析失败，启动LLM重试修复")
+
+            # 构建LLM请求体，使用更低的temperature提高格式规范性
             llm_body = {
                 'model': model,
                 'messages': [
                     {'role': 'system', 'content': f'{audit_role}，你擅长发现文档中的结构、逻辑和合规问题。请严格按照要求的JSON格式返回结果，不要添加任何额外说明。'},
-                    {'role': 'user', 'content': prompt}
+                    {'role': 'user', 'content': retry_prompt}
                 ],
-                'temperature': 0.1
+                'temperature': RETRY_TEMPERATURE
             }
 
             req_body = json.dumps(llm_body, ensure_ascii=False).encode('utf-8')
@@ -1099,7 +1476,61 @@ class ProxyHandler(SimpleHTTPRequestHandler):
                 req.add_header('Authorization', 'Bearer ' + api_key)
 
             ctx = ssl.create_default_context()
-            with urllib.request.urlopen(req, timeout=120, context=ctx) as resp:
+            with urllib.request.urlopen(req, timeout=LLM_TIMEOUT_SECONDS, context=ctx) as resp:
+                resp_body = resp.read()
+                resp_body = JSONRepair.repair_response(resp_body)
+                llm_result = json.loads(resp_body.decode('utf-8'))
+
+            content = llm_result.get('choices', [{}])[0].get('message', {}).get('content', '')
+
+            logger.info("[Retry] 修复成功")
+            return {'content': content}
+
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode('utf-8', errors='ignore')
+            logger.error(f"[Retry] 修复失败: LLM API错误 {e.code}")
+            return {'error': f'LLM API错误: {e.code}', 'detail': err_body}
+        except urllib.error.URLError as e:
+            logger.error(f"[Retry] 修复失败: 无法连接到LLM服务")
+            return {'error': f'无法连接到LLM服务，请检查网络连接或API端点配置: {e.reason}'}
+        except TimeoutError:
+            logger.error(f"[Retry] 修复失败: LLM服务响应超时")
+            return {'error': f'LLM服务响应超时（{LLM_TIMEOUT_SECONDS}秒）'}
+        except Exception as e:
+            logger.error(f"[Retry] 修复失败: {str(e)}")
+            return {'error': str(e)}
+
+    def _call_llm(self, prompt: str, endpoint: str, api_key: str, model: str, audit_role: str) -> Dict:
+        """调用LLM API的辅助方法
+
+        Args:
+            prompt: 提示词
+            endpoint: API端点
+            api_key: API密钥
+            model: 模型名称
+            audit_role: 审核角色
+
+        Returns:
+            成功返回{'content': ...}，失败返回{'error': ...}
+        """
+        try:
+            llm_body = {
+                'model': model,
+                'messages': [
+                    {'role': 'system', 'content': f'{audit_role}，你擅长发现文档中的结构、逻辑和合规问题。请严格按照要求的JSON格式返回结果，不要添加任何额外说明。'},
+                    {'role': 'user', 'content': prompt}
+                ],
+                'temperature': LLM_TEMPERATURE
+            }
+
+            req_body = json.dumps(llm_body, ensure_ascii=False).encode('utf-8')
+            req = urllib.request.Request(endpoint, data=req_body, method='POST')
+            req.add_header('Content-Type', 'application/json')
+            if api_key:
+                req.add_header('Authorization', 'Bearer ' + api_key)
+
+            ctx = ssl.create_default_context()
+            with urllib.request.urlopen(req, timeout=LLM_TIMEOUT_SECONDS, context=ctx) as resp:
                 resp_body = resp.read()
                 resp_body = JSONRepair.repair_response(resp_body)
                 llm_result = json.loads(resp_body.decode('utf-8'))
@@ -1113,7 +1544,7 @@ class ProxyHandler(SimpleHTTPRequestHandler):
         except urllib.error.URLError as e:
             return {'error': f'无法连接到LLM服务: {e.reason}'}
         except TimeoutError:
-            return {'error': 'LLM服务响应超时'}
+            return {'error': f'LLM服务响应超时（{LLM_TIMEOUT_SECONDS}秒）'}
         except Exception as e:
             return {'error': str(e)}
 
