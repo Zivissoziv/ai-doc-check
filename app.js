@@ -32,6 +32,7 @@ class SmartDocApp {
         this.ruleGroups = [];
         this.currentRuleGroup = null;
         this.isAuditing = false;
+        this.exactMatchMode = false;
 
         this.init();
     }
@@ -322,11 +323,44 @@ class SmartDocApp {
     compareStructure() {
         if (!this.template || !this.document) return;
         
-        const result = StructureCompare.compare(this.template, this.document);
+        const result = StructureCompare.compare(this.template, this.document, this.exactMatchMode);
         if (result) {
             StructureCompare.renderDiffs(result.diffs, result.score);
             StructureCompare.renderCompareView(result.templateNodes, result.docNodes, result.matches);
+            if (this.exactMatchMode && result.contentDiffs) {
+                StructureCompare.renderContentDiffs(result.contentDiffs);
+            } else {
+                StructureCompare.hideContentDiffs();
+            }
         }
+    }
+    
+    toggleExactMatch(enabled) {
+        this.exactMatchMode = enabled;
+        const hint = document.getElementById('exactMatchHint');
+        const track = document.querySelector('.toggle-track');
+        const thumb = document.querySelector('.toggle-thumb');
+        const structureContainer = document.getElementById('structureCompareContainer');
+        
+        if (enabled) {
+            hint.textContent = '开启内容差异对比';
+            track.classList.remove('bg-gray-300');
+            track.classList.add('bg-blue-600');
+            thumb.style.transform = 'translateX(20px)';
+            if (structureContainer) {
+                structureContainer.classList.add('hidden');
+            }
+        } else {
+            hint.textContent = '关闭时仅校验结构';
+            track.classList.remove('bg-blue-600');
+            track.classList.add('bg-gray-300');
+            thumb.style.transform = 'translateX(0)';
+            if (structureContainer) {
+                structureContainer.classList.remove('hidden');
+            }
+        }
+        
+        this.compareStructure();
     }
     
     renderRules() {

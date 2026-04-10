@@ -123,18 +123,41 @@
 
             <!-- 对比视图 -->
             <div id="view-compare" class="hidden h-full overflow-y-auto p-8">
-                <div class="grid grid-cols-2 gap-6 max-w-6xl mx-auto">
-                    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                        <h3 class="font-semibold mb-4 text-gray-900 flex items-center gap-2">
-                            <i class="fas fa-check-circle text-green-600"></i> 模板结构
-                        </h3>
-                        <div id="templateStructure" class="space-y-2 text-sm"></div>
+                <div class="max-w-6xl mx-auto">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="font-semibold text-gray-900">结构对比</h3>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <span class="text-sm text-gray-600">精确匹配</span>
+                            <div class="relative">
+                                <input type="checkbox" id="exactMatchToggle" class="sr-only" onchange="app.toggleExactMatch(this.checked)">
+                                <div class="toggle-track w-10 h-5 bg-gray-300 rounded-full transition-colors"></div>
+                                <div class="toggle-thumb absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform"></div>
+                            </div>
+                            <span class="text-xs text-gray-400" id="exactMatchHint">关闭时仅校验结构</span>
+                        </label>
                     </div>
-                    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                        <h3 class="font-semibold mb-4 text-gray-900 flex items-center gap-2">
-                            <i class="fas fa-file-lines text-blue-600"></i> 实际文档
-                        </h3>
-                        <div id="docStructure" class="space-y-2 text-sm"></div>
+                    <div id="structureCompareContainer" class="grid grid-cols-2 gap-6">
+                        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                            <h3 class="font-semibold mb-4 text-gray-900 flex items-center gap-2">
+                                <i class="fas fa-check-circle text-green-600"></i> 模板结构
+                            </h3>
+                            <div id="templateStructure" class="space-y-2 text-sm"></div>
+                        </div>
+                        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                            <h3 class="font-semibold mb-4 text-gray-900 flex items-center gap-2">
+                                <i class="fas fa-file-lines text-blue-600"></i> 实际文档
+                            </h3>
+                            <div id="docStructure" class="space-y-2 text-sm"></div>
+                        </div>
+                    </div>
+                    <div id="contentDiffContainer" class="hidden mt-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="font-semibold text-gray-900 flex items-center gap-2">
+                                <i class="fas fa-file-code text-purple-600"></i> 内容差异详情
+                            </h3>
+                            <div id="totalSimilarityScore" class="text-sm font-medium"></div>
+                        </div>
+                        <div id="contentDiffList" class="space-y-4"></div>
                     </div>
                 </div>
             </div>

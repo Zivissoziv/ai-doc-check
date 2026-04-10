@@ -331,7 +331,173 @@ const StructureCompare = {
         return matches;
     },
 
-    compare(template, document) {
+    getSectionContent(node) {
+        if (!node) return '';
+        let content = node.content || '';
+        if (node.children) {
+            const getChildContent = (children) => {
+                let text = '';
+                children.forEach(child => {
+                    if (child.type !== 'heading' || child.level === 99) {
+                        text += (child.content || '') + ' ';
+                    }
+                    if (child.children) {
+                        text += getChildContent(child.children);
+                    }
+                });
+                return text;
+            };
+            content += ' ' + getChildContent(node.children);
+        }
+        return content.trim();
+    },
+
+    compareContent(template, document, matches) {
+        if (!matches || matches.length === 0) return [];
+        
+        const contentDiffs = [];
+        
+        matches.forEach(match => {
+            const templateContent = this.getSectionContent(match.template);
+            const docContent = this.getSectionContent(match.doc);
+            
+            if (templateContent || docContent) {
+                const diffs = this.findTextDifferences(templateContent, docContent);
+                const similarity = this.calculateTextSimilarity(templateContent, docContent);
+                
+                if (diffs.length > 0 || similarity < 0.95) {
+                    contentDiffs.push({
+                        sectionTitle: match.template.content,
+                        templateContent,
+                        docContent,
+                        diffs,
+                        similarity,
+                        templateNode: match.template,
+                        docNode: match.doc
+                    });
+                }
+            }
+        });
+        
+        return contentDiffs;
+    },
+
+    findTextDifferences(templateText, docText) {
+        const diffs = [];
+        const templateSentences = this.splitIntoSentences(templateText);
+        const docSentences = this.splitIntoSentences(docText);
+        
+        const matchedTemplate = new Set();
+        const matchedDoc = new Set();
+        
+        templateSentences.forEach((tSentence, tIdx) => {
+            const tTrimmed = tSentence.trim();
+            if (!tTrimmed) return;
+            
+            for (let dIdx = 0; dIdx < docSentences.length; dIdx++) {
+                const dTrimmed = docSentences[dIdx].trim();
+                if (!dTrimmed || matchedDoc.has(dIdx)) continue;
+                
+                if (tTrimmed === dTrimmed) {
+                    matchedTemplate.add(tIdx);
+                    matchedDoc.add(dIdx);
+                    break;
+                }
+            }
+        });
+        
+        const templateUnmatched = [];
+        const docUnmatched = [];
+        
+        templateSentences.forEach((sentence, idx) => {
+            if (!matchedTemplate.has(idx) && sentence.trim()) {
+                templateUnmatched.push({ idx, text: sentence.trim() });
+            }
+        });
+        
+        docSentences.forEach((sentence, idx) => {
+            if (!matchedDoc.has(idx) && sentence.trim()) {
+                docUnmatched.push({ idx, text: sentence.trim() });
+            }
+        });
+        
+        const modifications = [];
+        const usedDocIndices = new Set();
+        
+        templateUnmatched.forEach(tItem => {
+            let bestMatch = null;
+            let bestSimilarity = 0;
+            
+            docUnmatched.forEach(dItem => {
+                if (usedDocIndices.has(dItem.idx)) return;
+                
+                const sim = this.similarity(tItem.text, dItem.text);
+                if (sim > 0.6 && sim > bestSimilarity) {
+                    bestSimilarity = sim;
+                    bestMatch = dItem;
+                }
+            });
+            
+            if (bestMatch && bestSimilarity > 0.6) {
+                modifications.push({
+                    type: 'modified',
+                    template: tItem.text,
+                    doc: bestMatch.text,
+                    similarity: bestSimilarity
+                });
+                usedDocIndices.add(bestMatch.idx);
+                matchedTemplate.add(tItem.idx);
+                matchedDoc.add(bestMatch.idx);
+            }
+        });
+        
+        diffs.push(...modifications);
+        
+        templateUnmatched.forEach(tItem => {
+            if (!matchedTemplate.has(tItem.idx)) {
+                diffs.push({
+                    type: 'removed',
+                    text: tItem.text
+                });
+            }
+        });
+        
+        docUnmatched.forEach(dItem => {
+            if (!matchedDoc.has(dItem.idx)) {
+                diffs.push({
+                    type: 'added',
+                    text: dItem.text
+                });
+            }
+        });
+        
+        return diffs;
+    },
+
+    splitIntoSentences(text) {
+        if (!text) return [];
+        return text.split(/[。！？\n]+/).filter(s => s.trim().length > 0);
+    },
+
+    calculateTextSimilarity(a, b) {
+        if (!a && !b) return 1;
+        if (!a || !b) return 0;
+        
+        const wordsA = a.split(/\s+/).filter(w => w.length > 0);
+        const wordsB = b.split(/\s+/).filter(w => w.length > 0);
+        
+        if (wordsA.length === 0 && wordsB.length === 0) return 1;
+        if (wordsA.length === 0 || wordsB.length === 0) return 0;
+        
+        const setA = new Set(wordsA);
+        const setB = new Set(wordsB);
+        const intersection = new Set([...setA].filter(x => setB.has(x)));
+        const union = new Set([...setA, ...setB]);
+        
+        return intersection.size / union.size;
+    },
+
+    compare(template, document, exactMatchMode = false) {
         if (!template || !document) return null;
         
         const diffs = [];
@@ -378,7 +544,12 @@ const StructureCompare = {
         const totalTemplateCount = templateNodes.length || 1;
         const score = Math.round((matchedTemplateCount / totalTemplateCount) * 100);
         
-        return { diffs, score, templateNodes, docNodes, matches };
+        let contentDiffs = null;
+        if (exactMatchMode) {
+            contentDiffs = this.compareContent(template, document, matches);
+        }
+        
+        return { diffs, score, templateNodes, docNodes, matches, contentDiffs };
     },
 
     renderDiffs(diffs, score) {
@@ -420,6 +591,141 @@ const StructureCompare = {
         
         document.getElementById('docStructure').innerHTML = (docNodes || [])
             .map(n => renderNode(n, matches?.some(m => m.doc?.id === n.id))).join('');
+    },
+
+    renderContentDiffs(contentDiffs) {
+        const container = document.getElementById('contentDiffContainer');
+        const list = document.getElementById('contentDiffList');
+        const totalScoreEl = document.getElementById('totalSimilarityScore');
+        
+        if (!contentDiffs || contentDiffs.length === 0) {
+            container.classList.add('hidden');
+            if (totalScoreEl) totalScoreEl.innerHTML = '';
+            return;
+        }
+        
+        container.classList.remove('hidden');
+        
+        let totalSimilarity = 0;
+        let totalDiffs = 0;
+        contentDiffs.forEach(diff => {
+            totalSimilarity += diff.similarity;
+            totalDiffs += diff.diffs.length;
+        });
+        const avgSimilarity = totalSimilarity / contentDiffs.length;
+        
+        if (totalScoreEl) {
+            const scoreClass = avgSimilarity > 0.8 ? 'text-green-600' : avgSimilarity > 0.5 ? 'text-yellow-600' : 'text-red-600';
+            const bgClass = avgSimilarity > 0.8 ? 'bg-green-100' : avgSimilarity > 0.5 ? 'bg-yellow-100' : 'bg-red-100';
+            totalScoreEl.innerHTML = `
+                <span class="px-3 py-1.5 rounded-lg ${bgClass} ${scoreClass}">
+                    <i class="fas fa-chart-pie mr-1"></i>
+                    总体匹配度: ${Math.round(avgSimilarity * 100)}%
+                </span>
+                <span class="ml-2 text-gray-500 text-xs">共 ${contentDiffs.length} 个章节，${totalDiffs} 处差异</span>
+            `;
+        }
+        
+        list.innerHTML = contentDiffs.map((diff, idx) => `
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div class="p-4 bg-gray-50 border-b border-gray-200 flex items-center justify-between cursor-pointer" onclick="StructureCompare.toggleContentDiff(${idx})">
+                    <div class="flex items-center gap-2">
+                        <i class="fas fa-chevron-right text-gray-400 transition-transform" id="contentDiffIcon-${idx}"></i>
+                        <span class="font-medium text-gray-900">${diff.sectionTitle.substring(0, 50)}${diff.sectionTitle.length > 50 ? '...' : ''}</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-xs px-2 py-1 rounded-full ${diff.similarity > 0.8 ? 'bg-green-100 text-green-700' : diff.similarity > 0.5 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}">
+                            相似度: ${Math.round(diff.similarity * 100)}%
+                        </span>
+                        <span class="text-xs text-gray-500">${diff.diffs.length} 处差异</span>
+                    </div>
+                </div>
+                <div class="hidden p-4" id="contentDiffDetail-${idx}">
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <h4 class="text-xs font-semibold text-gray-500 uppercase mb-2">模板内容</h4>
+                            <div class="text-sm text-gray-700 bg-gray-50 rounded p-3 max-h-40 overflow-y-auto">${this.highlightDifferences(diff.templateContent, diff.diffs, 'template')}</div>
+                        </div>
+                        <div>
+                            <h4 class="text-xs font-semibold text-gray-500 uppercase mb-2">文档内容</h4>
+                            <div class="text-sm text-gray-700 bg-gray-50 rounded p-3 max-h-40 overflow-y-auto">${this.highlightDifferences(diff.docContent, diff.diffs, 'doc')}</div>
+                        </div>
+                    </div>
+                    <div class="border-t border-gray-200 pt-4">
+                        <h4 class="text-xs font-semibold text-gray-500 uppercase mb-2">差异详情</h4>
+                        <div class="space-y-2">
+                            ${diff.diffs.map(d => `
+                                <div class="text-xs p-2 rounded ${d.type === 'added' ? 'bg-green-50 border-l-2 border-green-500' : d.type === 'removed' ? 'bg-red-50 border-l-2 border-red-500' : 'bg-yellow-50 border-l-2 border-yellow-500'}">
+                                    <span class="font-medium ${d.type === 'added' ? 'text-green-700' : d.type === 'removed' ? 'text-red-700' : 'text-yellow-700'}">
+                                        ${d.type === 'added' ? '新增' : d.type === 'removed' ? '删除' : '修改'}
+                                    </span>
+                                    ${d.type === 'modified' ? `
+                                        <div class="mt-1">
+                                            <div class="text-red-600 line-through">${d.template}</div>
+                                            <div class="text-green-600">${d.doc}</div>
+                                        </div>
+                                    ` : `
+                                        <span class="ml-2 ${d.type === 'added' ? 'text-green-600' : 'text-red-600'}">${d.text}</span>
+                                    `}
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    },
+
+    highlightDifferences(content, diffs, type) {
+        if (!content) return '<span class="text-gray-400 italic">无内容</span>';
+        
+        let highlighted = content;
+        
+        diffs.forEach(diff => {
+            if (diff.type === 'added' && type === 'doc') {
+                highlighted = highlighted.replace(
+                    new RegExp(this.escapeRegex(diff.text), 'g'),
+                    `<span class="bg-green-200 text-green-800 px-0.5 rounded">${diff.text}</span>`
+                );
+            } else if (diff.type === 'removed' && type === 'template') {
+                highlighted = highlighted.replace(
+                    new RegExp(this.escapeRegex(diff.text), 'g'),
+                    `<span class="bg-red-200 text-red-800 px-0.5 rounded line-through">${diff.text}</span>`
+                );
+            } else if (diff.type === 'modified') {
+                const text = type === 'template' ? diff.template : diff.doc;
+                highlighted = highlighted.replace(
+                    new RegExp(this.escapeRegex(text), 'g'),
+                    `<span class="bg-yellow-200 text-yellow-800 px-0.5 rounded">${text}</span>`
+                );
+            }
+        });
+        
+        return highlighted;
+    },
+
+    escapeRegex(string) {
+        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    },
+
+    toggleContentDiff(idx) {
+        const detail = document.getElementById(`contentDiffDetail-${idx}`);
+        const icon = document.getElementById(`contentDiffIcon-${idx}`);
+        
+        if (detail.classList.contains('hidden')) {
+            detail.classList.remove('hidden');
+            icon.style.transform = 'rotate(90deg)';
+        } else {
+            detail.classList.add('hidden');
+            icon.style.transform = 'rotate(0deg)';
+        }
+    },
+
+    hideContentDiffs() {
+        const container = document.getElementById('contentDiffContainer');
+        if (container) {
+            container.classList.add('hidden');
+        }
     }
 };
 
