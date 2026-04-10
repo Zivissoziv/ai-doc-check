@@ -8,3 +8,4 @@ playwright.config.js
 test*/
 node_modules/
 .claude/
+backend/target/
