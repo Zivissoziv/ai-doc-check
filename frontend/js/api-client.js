@@ -134,31 +134,33 @@ const RulesManager = {
             return;
         }
 
-        container.innerHTML = rules.map((rule, idx) => `
-            <div class="flex items-start gap-3 p-3 bg-gray-50 rounded-lg group hover:bg-gray-100 transition-colors ${rule.enabled === false ? 'opacity-50' : ''}">
-                <button onclick="app.toggleRuleStatus(${idx})" 
-                    class="mt-1 w-5 h-5 rounded flex items-center justify-center ${rule.enabled !== false ? 'bg-blue-500 text-white' : 'bg-gray-300 text-gray-500'}">
-                    <i class="fas fa-${rule.enabled !== false ? 'check' : 'times'} text-xs"></i>
-                </button>
-                <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2">
-                        <span class="font-medium text-gray-900 truncate">${rule.name}</span>
-                        <span class="px-2 py-0.5 text-xs rounded-full ${rule.severity === 'error' ? 'bg-red-100 text-red-700' : rule.severity === 'warning' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'}">
-                            ${rule.severity === 'error' ? '错误' : rule.severity === 'warning' ? '警告' : '信息'}
-                        </span>
+        container.innerHTML = rules.map((rule, idx) => {
+            const isEnabled = rule.enabled !== false;
+            return `
+                <div class="p-3 border rounded-xl transition-all duration-200 group ${isEnabled ? 'bg-white border-gray-200 shadow-sm hover:shadow-md' : 'bg-gray-50 border-gray-100 opacity-70'}">
+                    <div class="flex items-start justify-between mb-2">
+                        <div onclick="app.editRule(${idx})" class="flex items-center gap-2 overflow-hidden cursor-pointer flex-1" title="点击编辑规则">
+                            <span class="flex-shrink-0 w-2 h-2 rounded-full ${rule.severity === 'error' ? 'bg-red-500' : rule.severity === 'warning' ? 'bg-yellow-500' : 'bg-blue-500'} shadow-sm"></span>
+                            <span class="font-medium text-sm truncate ${isEnabled ? 'text-gray-900 group-hover:text-blue-600' : 'text-gray-400'} transition-colors">${rule.name}</span>
+                            <i class="fas fa-edit text-xs text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity"></i>
+                        </div>
+                        <div class="flex items-center gap-2 flex-shrink-0">
+                            <div onclick="app.toggleRuleStatus(${idx})" 
+                                class="relative inline-flex h-5 w-9 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${isEnabled ? 'bg-blue-600' : 'bg-gray-200'}"
+                                title="${isEnabled ? '点击禁用' : '点击启用'}">
+                                <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${isEnabled ? 'translate-x-4' : 'translate-x-0'}"></span>
+                            </div>
+                            <button onclick="app.deleteRule(${idx})" 
+                                class="w-5 h-5 flex items-center justify-center text-gray-300 hover:text-red-500 transition-colors"
+                                title="删除规则">
+                                <i class="fas fa-trash-alt text-xs"></i>
+                            </button>
+                        </div>
                     </div>
-                    <p class="text-xs text-gray-500 mt-1 line-clamp-2">${rule.prompt}</p>
+                    <p onclick="app.editRule(${idx})" class="text-xs ${isEnabled ? 'text-gray-500' : 'text-gray-400'} line-clamp-2 leading-relaxed cursor-pointer">${rule.prompt}</p>
                 </div>
-                <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onclick="app.editRule(${idx})" class="p-1.5 text-gray-400 hover:text-blue-500">
-                        <i class="fas fa-edit text-sm"></i>
-                    </button>
-                    <button onclick="app.deleteRule(${idx})" class="p-1.5 text-gray-400 hover:text-red-500">
-                        <i class="fas fa-trash text-sm"></i>
-                    </button>
-                </div>
-            </div>
-        `).join('');
+            `;
+        }).join('');
     }
 };
 
@@ -438,40 +440,90 @@ const AiAudit = {
     },
 
     renderResult(result, container) {
-        const passClass = result.pass ? 'text-green-600' : 'text-red-600';
-        const bgClass = result.pass ? 'bg-green-50' : 'bg-red-50';
-        const icon = result.pass ? 'fa-check-circle' : 'fa-exclamation-circle';
+        const div = document.createElement('div');
+        div.className = 'bg-white rounded-xl border border-gray-200 p-6 fade-in';
 
-        let issuesHtml = '';
-        if (result.issues && result.issues.length > 0) {
-            issuesHtml = result.issues.map(issue => `
-                <div class="mt-2 p-2 bg-white rounded border text-sm">
-                    <div class="text-gray-600"><i class="fas fa-map-marker-alt mr-1"></i> ${issue.location || ''}</div>
-                    <div class="text-red-600 mt-1"><i class="fas fa-times-circle mr-1"></i> ${issue.problem || ''}</div>
-                    <div class="text-blue-600 mt-1"><i class="fas fa-lightbulb mr-1"></i> ${issue.suggestion || ''}</div>
+        const isSkipped = result.summary && result.summary.startsWith('已跳过:');
+
+        if (isSkipped) {
+            div.className = 'bg-gray-50 rounded-xl border border-gray-300 p-6 fade-in opacity-75';
+
+            div.innerHTML = `
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-full flex items-center justify-center bg-gray-200 text-gray-500">
+                            <i class="fas fa-forward text-lg"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-semibold text-gray-600">${result.ruleName}</h3>
+                            <div class="flex items-center gap-2 text-xs text-gray-500">
+                                <span class="px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">已跳过</span>
+                                <span>置信度: ${result.confidence}%</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-            `).join('');
+                <div class="text-sm text-gray-500 mb-4">
+                    <i class="fas fa-info-circle mr-1"></i> 此规则因缺少必要数据而被跳过，未进行实际审核
+                </div>
+                <div class="text-xs text-gray-400 pt-3 border-t border-gray-200">
+                    <i class="fas fa-quote-left mr-1 opacity-50"></i> ${result.summary}
+                </div>`;
+
+            container.appendChild(div);
+            return;
         }
 
-        container.innerHTML = `
-            <div class="p-4 ${bgClass} rounded-lg border">
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-2">
-                        <i class="fas ${icon} ${passClass}"></i>
-                        <span class="font-medium">${result.ruleName}</span>
-                        <span class="px-2 py-0.5 text-xs rounded-full ${result.severity === 'error' ? 'bg-red-100 text-red-700' : result.severity === 'warning' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'}">
-                            ${result.severity === 'error' ? '错误' : result.severity === 'warning' ? '警告' : '信息'}
-                        </span>
+        const statusColor = result.pass ? 'green' : 'red';
+        const statusIcon = result.pass ? 'check' : 'times';
+        const severityClass = result.severity === 'error' ? 'red' : result.severity === 'warning' ? 'yellow' : 'blue';
+        
+        const issuesHtml = result.issues?.length > 0 
+            ? `<div class="space-y-3 mb-4">${result.issues.map((issue, idx) => `
+                <div class="p-3 bg-gray-50 rounded-lg border-l-4 border-${severityClass}-400">
+                    <div class="flex items-start gap-2">
+                        <i class="fas fa-map-marker-alt text-gray-400 mt-0.5 text-xs"></i>
+                        <div class="flex-1">
+                            <div class="text-xs text-gray-500 mb-1 group relative">
+                                <span>${issue.location || '未知位置'}</span>
+                                <button onclick="AiAudit.jumpToLocation('${(issue.textSnippet || issue.location || '').replace(/'/g, "\\'")}', '${(issue.location || '').replace(/'/g, "\\'")}')" class="ml-2 opacity-0 group-hover:opacity-100 text-blue-500 hover:text-blue-700 transition-opacity" title="跳转到文档位置"><i class="fas fa-location-arrow text-xs"></i></button>
+                            </div>
+                            <div class="text-sm text-gray-900 mb-1">${issue.problem}</div>
+                            ${issue.suggestion ? `<div class="text-xs text-blue-600 bg-blue-50 p-2 rounded mt-1"><i class="fas fa-lightbulb mr-1"></i> ${issue.suggestion}</div>` : ''}
+                        </div>
                     </div>
-                    <div class="flex items-center gap-2">
-                        <span class="text-xs text-gray-500">置信度: ${result.confidence}%</span>
-                        <span class="${passClass} font-medium">${result.pass ? '通过' : '未通过'}</span>
+                </div>`).join('')}</div>`
+            : '<div class="text-sm text-green-600 mb-4"><i class="fas fa-check-circle mr-1"></i> 未发现问题</div>';
+        
+        div.innerHTML = `
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-full flex items-center justify-center bg-${statusColor}-100 text-${statusColor}-600">
+                        <i class="fas fa-${statusIcon} text-lg"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-semibold text-gray-900">${result.ruleName}</h3>
+                        <div class="flex items-center gap-2 text-xs text-gray-500">
+                            <span class="px-2 py-0.5 rounded-full bg-${severityClass}-100 text-${severityClass}-700">${result.severity === 'error' ? '错误' : result.severity === 'warning' ? '警告' : '信息'}</span>
+                            <span>置信度: ${result.confidence}%</span>
+                        </div>
                     </div>
                 </div>
-                <p class="text-sm text-gray-600 mt-2">${result.summary || ''}</p>
-                ${issuesHtml}
             </div>
-        `;
+            ${issuesHtml}
+            <div class="text-xs text-gray-500 pt-3 border-t border-gray-100">
+                <i class="fas fa-quote-left mr-1 opacity-50"></i> ${result.summary}
+            </div>`;
+        
+        container.appendChild(div);
+    },
+
+    jumpToLocation(textSnippet, location) {
+        UiHelpers.switchTab('preview');
+        
+        setTimeout(() => {
+            UiHelpers.highlightAndScroll(textSnippet, location);
+        }, 100);
     }
 };
 
