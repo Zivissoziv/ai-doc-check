@@ -1,0 +1,2 @@
+2026-04-15 15:46:41.893 [http-nio-8080-exec-10] INFO  c.s.controller.AuditController - 收到审核请求，规则组: znywz
+2026-04-15 15:46:41.925 [http-nio-8080-exec-10] INFO  com.smartdoc.service.AiAuditService - 开始AI审核，规则数量: 3, 文档长度: 734
