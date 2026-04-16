@@ -528,9 +528,9 @@ ${r.prompt}`).join('\n')}
                     <div class="flex items-start gap-2">
                         <i class="fas fa-map-marker-alt text-gray-400 mt-0.5 text-xs"></i>
                         <div class="flex-1">
-                            <div class="text-xs text-gray-500 mb-1 group relative">
+                            <div class="text-xs text-gray-500 mb-1 flex items-center gap-1">
                                 <span>${issue.location || '未知位置'}</span>
-                                <button onclick="AiAudit.jumpToLocation('${(issue.textSnippet || issue.location || '').replace(/'/g, "\\'")}', '${(issue.location || '').replace(/'/g, "\\'")}')" class="ml-2 opacity-0 group-hover:opacity-100 text-blue-500 hover:text-blue-700 transition-opacity" title="跳转到文档位置"><i class="fas fa-location-arrow text-xs"></i></button>
+                                <button onclick="AiAudit.jumpToLocation('${(issue.textSnippet || issue.location || '').replace(/'/g, "\\'")}', '${(issue.location || '').replace(/'/g, "\\'")}')" class="text-blue-500 hover:text-blue-700 transition-colors" title="跳转到文档位置"><i class="fas fa-location-arrow text-xs"></i></button>
                             </div>
                             <div class="text-sm text-gray-900 mb-1">${issue.problem}</div>
                             ${issue.suggestion ? `<div class="text-xs text-blue-600 bg-blue-50 p-2 rounded mt-1"><i class="fas fa-lightbulb mr-1"></i> ${issue.suggestion}</div>` : ''}

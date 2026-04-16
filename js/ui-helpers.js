@@ -352,20 +352,23 @@ const StructureCompare = {
         return content.trim();
     },
 
-    compareContent(template, document, matches) {
-        if (!matches || matches.length === 0) return [];
+    compareContent(template, document, matches, templateNodes) {
+        if (!templateNodes) return [];
         
         const contentDiffs = [];
+        const matchedTemplateIds = new Set(matches.map(m => m.template.id));
         
-        matches.forEach(match => {
-            const templateContent = this.getSectionContent(match.template);
-            const docContent = this.getSectionContent(match.doc);
+        templateNodes.forEach(node => {
+            const match = matches.find(m => m.template.id === node.id);
             
-            if (templateContent || docContent) {
-                const diffs = this.findTextDifferences(templateContent, docContent);
-                const similarity = this.calculateTextSimilarity(templateContent, docContent);
+            if (match) {
+                const templateContent = this.getSectionContent(match.template);
+                const docContent = this.getSectionContent(match.doc);
                 
-                if (diffs.length > 0 || similarity < 0.95) {
+                if (templateContent || docContent) {
+                    const diffs = this.findTextDifferences(templateContent, docContent);
+                    const similarity = this.calculateTextSimilarity(templateContent, docContent);
+                    
                     contentDiffs.push({
                         sectionTitle: match.template.content,
                         templateContent,
@@ -373,9 +376,22 @@ const StructureCompare = {
                         diffs,
                         similarity,
                         templateNode: match.template,
-                        docNode: match.doc
+                        docNode: match.doc,
+                        isMissing: false
                     });
                 }
+            } else {
+                const templateContent = this.getSectionContent(node);
+                contentDiffs.push({
+                    sectionTitle: node.content,
+                    templateContent,
+                    docContent: '',
+                    diffs: [{ type: 'removed', template: templateContent, doc: '' }],
+                    similarity: 0,
+                    templateNode: node,
+                    docNode: null,
+                    isMissing: true
+                });
             }
         });
         
@@ -540,13 +556,25 @@ const StructureCompare = {
             }
         });
         
-        const matchedTemplateCount = matches.filter(m => m.similarity > 0.8).length;
         const totalTemplateCount = templateNodes.length || 1;
-        const score = Math.round((matchedTemplateCount / totalTemplateCount) * 100);
+        let totalScore = 0;
+        
+        templateNodes.forEach(node => {
+            const match = matches.find(m => m.template.id === node.id);
+            if (match) {
+                totalScore += match.similarity;
+            } else {
+                console.log('[匹配度] 缺少章节:', node.content);
+            }
+        });
+        
+        console.log('[匹配度] 模板节点数:', totalTemplateCount, '匹配总分:', totalScore, '匹配率:', Math.round((totalScore / totalTemplateCount) * 100) + '%');
+        
+        const score = Math.round((totalScore / totalTemplateCount) * 100);
         
         let contentDiffs = null;
         if (exactMatchMode) {
-            contentDiffs = this.compareContent(template, document, matches);
+            contentDiffs = this.compareContent(template, document, matches, templateNodes);
         }
         
         return { diffs, score, templateNodes, docNodes, matches, contentDiffs };
@@ -627,11 +655,12 @@ const StructureCompare = {
         }
         
         list.innerHTML = contentDiffs.map((diff, idx) => `
-            <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                <div class="p-4 bg-gray-50 border-b border-gray-200 flex items-center justify-between cursor-pointer" onclick="StructureCompare.toggleContentDiff(${idx})">
+            <div class="bg-white rounded-xl shadow-sm border ${diff.isMissing ? 'border-red-300' : 'border-gray-200'} overflow-hidden">
+                <div class="p-4 ${diff.isMissing ? 'bg-red-50' : 'bg-gray-50'} border-b border-gray-200 flex items-center justify-between cursor-pointer" onclick="StructureCompare.toggleContentDiff(${idx})">
                     <div class="flex items-center gap-2">
-                        <i class="fas fa-chevron-right text-gray-400 transition-transform" id="contentDiffIcon-${idx}"></i>
-                        <span class="font-medium text-gray-900">${diff.sectionTitle.substring(0, 50)}${diff.sectionTitle.length > 50 ? '...' : ''}</span>
+                        <i class="fas ${diff.isMissing ? 'fa-times-circle text-red-500' : 'fa-chevron-right text-gray-400'} transition-transform" id="contentDiffIcon-${idx}"></i>
+                        <span class="font-medium ${diff.isMissing ? 'text-red-700' : 'text-gray-900'}">${diff.sectionTitle.substring(0, 50)}${diff.sectionTitle.length > 50 ? '...' : ''}</span>
+                        ${diff.isMissing ? '<span class="text-xs px-2 py-0.5 rounded bg-red-200 text-red-800">缺失</span>' : ''}
                     </div>
                     <div class="flex items-center gap-2">
                         <span class="text-xs px-2 py-1 rounded-full ${diff.similarity > 0.8 ? 'bg-green-100 text-green-700' : diff.similarity > 0.5 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}">
@@ -641,36 +670,47 @@ const StructureCompare = {
                     </div>
                 </div>
                 <div class="hidden p-4" id="contentDiffDetail-${idx}">
-                    <div class="grid grid-cols-2 gap-4 mb-4">
-                        <div>
-                            <h4 class="text-xs font-semibold text-gray-500 uppercase mb-2">模板内容</h4>
-                            <div class="text-sm text-gray-700 bg-gray-50 rounded p-3 max-h-40 overflow-y-auto">${this.highlightDifferences(diff.templateContent, diff.diffs, 'template')}</div>
+                    ${diff.isMissing ? `
+                        <div class="bg-red-50 rounded p-4">
+                            <div class="flex items-center gap-2 text-red-700 mb-2">
+                                <i class="fas fa-exclamation-triangle"></i>
+                                <span class="font-medium">该章节在文档中缺失</span>
+                            </div>
+                            <h4 class="text-xs font-semibold text-gray-500 uppercase mb-2">模板预期内容</h4>
+                            <div class="text-sm text-gray-700 bg-gray-50 rounded p-3 max-h-40 overflow-y-auto">${diff.templateContent || '无内容'}</div>
                         </div>
-                        <div>
-                            <h4 class="text-xs font-semibold text-gray-500 uppercase mb-2">文档内容</h4>
-                            <div class="text-sm text-gray-700 bg-gray-50 rounded p-3 max-h-40 overflow-y-auto">${this.highlightDifferences(diff.docContent, diff.diffs, 'doc')}</div>
+                    ` : `
+                        <div class="grid grid-cols-2 gap-4 mb-4">
+                            <div>
+                                <h4 class="text-xs font-semibold text-gray-500 uppercase mb-2">模板内容</h4>
+                                <div class="text-sm text-gray-700 bg-gray-50 rounded p-3 max-h-40 overflow-y-auto">${this.highlightDifferences(diff.templateContent, diff.diffs, 'template')}</div>
+                            </div>
+                            <div>
+                                <h4 class="text-xs font-semibold text-gray-500 uppercase mb-2">文档内容</h4>
+                                <div class="text-sm text-gray-700 bg-gray-50 rounded p-3 max-h-40 overflow-y-auto">${this.highlightDifferences(diff.docContent, diff.diffs, 'doc')}</div>
+                            </div>
                         </div>
-                    </div>
-                    <div class="border-t border-gray-200 pt-4">
-                        <h4 class="text-xs font-semibold text-gray-500 uppercase mb-2">差异详情</h4>
-                        <div class="space-y-2">
-                            ${diff.diffs.map(d => `
-                                <div class="text-xs p-2 rounded ${d.type === 'added' ? 'bg-green-50 border-l-2 border-green-500' : d.type === 'removed' ? 'bg-red-50 border-l-2 border-red-500' : 'bg-yellow-50 border-l-2 border-yellow-500'}">
-                                    <span class="font-medium ${d.type === 'added' ? 'text-green-700' : d.type === 'removed' ? 'text-red-700' : 'text-yellow-700'}">
-                                        ${d.type === 'added' ? '新增' : d.type === 'removed' ? '删除' : '修改'}
-                                    </span>
-                                    ${d.type === 'modified' ? `
-                                        <div class="mt-1">
-                                            <div class="text-red-600 line-through">${d.template}</div>
-                                            <div class="text-green-600">${d.doc}</div>
-                                        </div>
-                                    ` : `
-                                        <span class="ml-2 ${d.type === 'added' ? 'text-green-600' : 'text-red-600'}">${d.text}</span>
-                                    `}
-                                </div>
-                            `).join('')}
+                        <div class="border-t border-gray-200 pt-4">
+                            <h4 class="text-xs font-semibold text-gray-500 uppercase mb-2">差异详情</h4>
+                            <div class="space-y-2">
+                                ${diff.diffs.map(d => `
+                                    <div class="text-xs p-2 rounded ${d.type === 'added' ? 'bg-green-50 border-l-2 border-green-500' : d.type === 'removed' ? 'bg-red-50 border-l-2 border-red-500' : 'bg-yellow-50 border-l-2 border-yellow-500'}">
+                                        <span class="font-medium ${d.type === 'added' ? 'text-green-700' : d.type === 'removed' ? 'text-red-700' : 'text-yellow-700'}">
+                                            ${d.type === 'added' ? '新增' : d.type === 'removed' ? '删除' : '修改'}
+                                        </span>
+                                        ${d.type === 'modified' ? `
+                                            <div class="mt-1">
+                                                <div class="text-red-600 line-through">${d.template}</div>
+                                                <div class="text-green-600">${d.doc}</div>
+                                            </div>
+                                        ` : `
+                                            <span class="ml-2 ${d.type === 'added' ? 'text-green-600' : 'text-red-600'}">${d.text}</span>
+                                        `}
+                                    </div>
+                                `).join('')}
+                            </div>
                         </div>
-                    </div>
+                    `}
                 </div>
             </div>
         `).join('');
