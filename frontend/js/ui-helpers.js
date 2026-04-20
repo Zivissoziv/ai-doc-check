@@ -699,9 +699,17 @@ const StructureCompare = {
             }
         });
         
-        const matchedTemplateCount = matches.filter(m => m.similarity > 0.8).length;
         const totalTemplateCount = templateNodes.length || 1;
-        const score = Math.round((matchedTemplateCount / totalTemplateCount) * 100);
+        let totalScore = 0;
+        
+        templateNodes.forEach(node => {
+            const match = matches.find(m => m.template.id === node.id);
+            if (match) {
+                totalScore += match.similarity;
+            }
+        });
+        
+        const score = Math.round((totalScore / totalTemplateCount) * 100);
         
         let contentDiffs = null;
         if (exactMatchMode) {

@@ -82,3 +82,18 @@ SELECT 1, '文档结构检查', '检查文档是否有清晰的章节结构，�
 
 INSERT INTO rule (rule_group_id, rule_name, prompt, severity, is_enabled, sort_order)
 SELECT 1, '关键信息检查', '检查文档是否包含必要的关键信息，如日期、版本号等', 'ERROR', TRUE, 3;
+
+-- AI审核统计表
+CREATE TABLE IF NOT EXISTS audit_stats (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    total_count INT DEFAULT 0,
+    today_count INT DEFAULT 0,
+    last_date VARCHAR(10),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 插入默认统计数据
+INSERT INTO audit_stats (id, total_count, today_count, last_date)
+VALUES (1, 0, 0, '')
+ON DUPLICATE KEY UPDATE total_count = VALUES(total_count);

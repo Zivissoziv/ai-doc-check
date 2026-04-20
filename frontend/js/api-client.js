@@ -327,6 +327,9 @@ const DocumentParser = {
     },
 
     async parsePdf(arrayBuffer) {
+        if (typeof pdfjsLib !== 'undefined' && pdfjsLib.GlobalWorkerOptions) {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = './libs/pdf.worker.min.js';
+        }
         const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
         let text = '';
         let html = '';
