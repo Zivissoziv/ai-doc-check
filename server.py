@@ -505,6 +505,8 @@ class ProxyHandler(SimpleHTTPRequestHandler):
             self._get_api_config()
         elif self.path == '/api/rules':
             self._api_get_rules()
+        elif self.path == '/api/stats':
+            self._get_audit_stats()
         elif self.path.startswith('/api/config/rules/'):
             group_id = self.path[len('/api/config/rules/'):].split('?')[0]
             self._get_rule_group(group_id)
@@ -526,6 +528,8 @@ class ProxyHandler(SimpleHTTPRequestHandler):
             self._create_rule_group()
         elif self.path == '/api/audit':
             self._api_audit()
+        elif self.path == '/api/stats/increment':
+            self._increment_audit_stats()
         elif self.path == '/api/ticket/download':
             self._ticket_download()
         else:
@@ -1556,6 +1560,68 @@ class ProxyHandler(SimpleHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
         self.wfile.write(body)
+
+    def _get_audit_stats(self):
+        """获取AI审核统计数据"""
+        try:
+            data_path = os.path.join(CONFIG_DIR, 'data.json')
+            if not os.path.exists(data_path):
+                self._send_json(200, {'totalCount': 0, 'todayCount': 0})
+                return
+            
+            with open(data_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            stats = data.get('auditStats', {})
+            today_date = self._get_today_date()
+            
+            if stats.get('lastDate', '') != today_date:
+                stats['todayCount'] = 0
+            
+            self._send_json(200, {
+                'totalCount': stats.get('totalCount', 0),
+                'todayCount': stats.get('todayCount', 0)
+            })
+        except Exception as e:
+            self._send_json(500, {'error': str(e)})
+
+    def _increment_audit_stats(self):
+        """增加AI审核统计次数"""
+        try:
+            data_path = os.path.join(CONFIG_DIR, 'data.json')
+            
+            data = {}
+            if os.path.exists(data_path):
+                with open(data_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            
+            stats = data.get('auditStats', {'totalCount': 0, 'todayCount': 0, 'lastDate': ''})
+            today_date = self._get_today_date()
+            
+            if stats.get('lastDate', '') != today_date:
+                stats['todayCount'] = 0
+                stats['lastDate'] = today_date
+            
+            stats['totalCount'] = stats.get('totalCount', 0) + 1
+            stats['todayCount'] = stats.get('todayCount', 0) + 1
+            
+            data['auditStats'] = stats
+            
+            with open(data_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=4)
+            
+            self._send_json(200, {
+                'success': True,
+                'totalCount': stats['totalCount'],
+                'todayCount': stats['todayCount']
+            })
+        except Exception as e:
+            self._send_json(500, {'error': str(e)})
+
+    def _get_today_date(self):
+        """获取今天的日期字符串"""
+        from datetime import datetime
+        return datetime.now().strftime('%Y-%m-%d')
 
     def log_message(self, format, *args):
         print(f'[Server] {self.address_string()} - {format % args}')

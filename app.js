@@ -770,6 +770,7 @@ class SmartDocApp {
             UiHelpers.setStatus(`审核完成，共检查 ${activeRules.length} 条规则`);
             document.getElementById('auditBadge').classList.remove('hidden');
             UiHelpers.switchTab('audit');
+            this.incrementAuditStats();
         } catch (err) {
             UiHelpers.setStatus('审核失败: ' + err.message);
             console.error('批量审核失败:', err);
@@ -901,8 +902,32 @@ class SmartDocApp {
     scrollToNode(nodeId) { UiHelpers.scrollToNode(nodeId); }
     setStatus(text, loading = false) { UiHelpers.setStatus(text, loading); }
     exportHtmlReport() { ReportExporter.exportHtml(this.document, this.template, this.excelData, this.auditResults); }
-    showHelp() { UiHelpers.toggleModal('helpModal', true); }
+    showHelp() {
+        UiHelpers.toggleModal('helpModal', true);
+        this.loadAuditStats();
+    }
     closeHelp() { UiHelpers.toggleModal('helpModal', false); }
+    
+    async loadAuditStats() {
+        try {
+            const response = await fetch('/api/stats');
+            if (response.ok) {
+                const data = await response.json();
+                document.getElementById('totalAuditCount').textContent = data.totalCount || 0;
+                document.getElementById('todayAuditCount').textContent = data.todayCount || 0;
+            }
+        } catch (e) {
+            console.error('获取统计数据失败:', e);
+        }
+    }
+    
+    async incrementAuditStats() {
+        try {
+            await fetch('/api/stats/increment', { method: 'POST' });
+        } catch (e) {
+            console.error('更新统计数据失败:', e);
+        }
+    }
     
     showImportExportModal() { UiHelpers.toggleModal('importExportModal', true); }
     closeImportExportModal() { UiHelpers.toggleModal('importExportModal', false); }
