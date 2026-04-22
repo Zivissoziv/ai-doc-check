@@ -567,14 +567,7 @@ class SmartDocApp {
             return;
         }
         
-        const exportData = {
-            groupName: group.name,
-            groupId: group.id,
-            exportTime: new Date().toISOString(),
-            rules: this.rules
-        };
-        
-        const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+        const blob = new Blob([JSON.stringify(this.rules, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -588,6 +581,12 @@ class SmartDocApp {
     }
     
     importRules() {
+        const group = this.ruleGroups.find(g => g.groupId === this.currentRuleGroup);
+        if (!group) {
+            alert('请先选择规则组');
+            return;
+        }
+        
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = '.json';
@@ -599,21 +598,26 @@ class SmartDocApp {
                 const text = await file.text();
                 const importData = JSON.parse(text);
                 
-                if (!importData.rules || !Array.isArray(importData.rules)) {
+                let rules = [];
+                if (Array.isArray(importData)) {
+                    rules = importData;
+                } else if (importData.rules && Array.isArray(importData.rules)) {
+                    rules = importData.rules;
+                } else {
                     throw new Error('无效的规则文件格式');
                 }
                 
-                const confirmMsg = `即将导入 ${importData.rules.length} 条规则${importData.groupName ? `（来自规则组: ${importData.groupName}）` : ''}。\n\n这将覆盖当前规则组的所有现有规则，是否继续？`;
+                const confirmMsg = `即将导入 ${rules.length} 条规则到当前规则组「${group.name}」。\n\n这将覆盖当前规则组的所有现有规则（共 ${this.rules.length} 条），是否继续？`;
                 
                 if (!confirm(confirmMsg)) {
                     return;
                 }
                 
-                this.rules = importData.rules;
-                await RulesManager.saveRules(this.currentRuleGroup, this.rules);
-                RulesManager.renderRules(this.rules, 'rulesList');
+                this.rules = rules;
+                await RulesManager.saveToServer(this.currentRuleGroup, this.rules, group.name);
+                this.renderRules();
                 
-                UiHelpers.setStatus(`已导入 ${this.rules.length} 条规则`);
+                UiHelpers.setStatus(`已导入 ${this.rules.length} 条规则到「${group.name}」`);
             } catch (err) {
                 alert('导入失败: ' + err.message);
             }

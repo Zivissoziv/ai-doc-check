@@ -1,6 +1,8 @@
 package com.smartdoc.service;
 
 import lombok.extern.slf4j.Slf4j;
+import org.apache.poi.hwpf.HWPFDocument;
+import org.apache.poi.hwpf.extractor.WordExtractor;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -28,6 +30,8 @@ public class DocumentParserService {
         switch (detectedType) {
             case "docx":
                 return parseDocx(fileBytes);
+            case "doc":
+                return parseDoc(fileBytes);
             case "pdf":
                 return parsePdf(fileBytes);
             case "txt":
@@ -40,6 +44,15 @@ public class DocumentParserService {
     public String detectFileType(byte[] fileBytes, String providedType) {
         if (providedType != null && !"auto".equals(providedType)) {
             return providedType;
+        }
+
+        if (fileBytes.length >= 8) {
+            if (fileBytes[0] == (byte) 0xD0 && fileBytes[1] == (byte) 0xCF && 
+                fileBytes[2] == (byte) 0x11 && fileBytes[3] == (byte) 0xE0 &&
+                fileBytes[4] == (byte) 0xA1 && fileBytes[5] == (byte) 0xB1 &&
+                fileBytes[6] == (byte) 0x1A && fileBytes[7] == (byte) 0xE1) {
+                return "doc";
+            }
         }
 
         if (fileBytes.length >= 4) {
@@ -56,6 +69,22 @@ public class DocumentParserService {
             return "txt";
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    public String parseDoc(byte[] fileBytes) {
+        try (ByteArrayInputStream bis = new ByteArrayInputStream(fileBytes);
+             HWPFDocument document = new HWPFDocument(bis);
+             WordExtractor extractor = new WordExtractor(document)) {
+
+            String text = extractor.getText();
+            String result = text != null ? text.trim() : "";
+            log.debug("解析DOC成功，文本长度: {}", result.length());
+            return result;
+
+        } catch (IOException e) {
+            log.error("解析DOC失败: {}", e.getMessage());
+            throw new RuntimeException("解析DOC文件失败: " + e.getMessage(), e);
         }
     }
 

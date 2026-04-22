@@ -205,6 +205,11 @@ const DocumentParser = {
             text = result.text;
             tree = result.tree;
             html = result.html;
+        } else if (ext === 'doc') {
+            const result = await this.parseDoc(arrayBuffer, file.name);
+            text = result.text;
+            tree = result.tree;
+            html = result.html;
         } else if (ext === 'pdf') {
             const result = await this.parsePdf(arrayBuffer);
             text = result.text;
@@ -223,6 +228,28 @@ const DocumentParser = {
             tree: tree,
             html: html
         };
+    },
+
+    async parseDoc(arrayBuffer, fileName) {
+        const formData = new FormData();
+        const blob = new Blob([arrayBuffer], { type: 'application/msword' });
+        formData.append('file', blob, fileName);
+
+        const response = await fetch('/api/parse', {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || 'DOC文件解析失败');
+        }
+
+        const result = await response.json();
+        const tree = this.buildTreeFromText(result.text);
+        const html = `<pre class="whitespace-pre-wrap">${this.escapeHtml(result.text)}</pre>`;
+
+        return { text: result.text, tree, html };
     },
 
     async parseDocx(arrayBuffer) {

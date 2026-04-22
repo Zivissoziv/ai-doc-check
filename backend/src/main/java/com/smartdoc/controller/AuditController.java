@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Base64;
 import java.util.HashMap;
@@ -243,5 +244,127 @@ public class AuditController {
                         .sortOrder(dto.getSortOrder() != null ? dto.getSortOrder() : 0)
                         .build())
                 .collect(java.util.stream.Collectors.toList());
+    }
+
+    @PostMapping("/parse")
+    public ResponseEntity<Map<String, Object>> parseDocument(@RequestParam("file") MultipartFile file) {
+        log.info("收到文档解析请求，文件名: {}, 大小: {} bytes", file.getOriginalFilename(), file.getSize());
+
+        if (file.isEmpty()) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "上传的文件为空");
+            return ResponseEntity.badRequest().body(errorResponse);
+        }
+
+        String filename = file.getOriginalFilename();
+        String fileType = null;
+        if (filename != null) {
+            int dotIndex = filename.lastIndexOf('.');
+            if (dotIndex > 0) {
+                fileType = filename.substring(dotIndex + 1).toLowerCase();
+            }
+        }
+
+        byte[] fileBytes;
+        try {
+            fileBytes = file.getBytes();
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "读取文件失败: " + e.getMessage());
+            return ResponseEntity.badRequest().body(errorResponse);
+        }
+
+        String detectedType = documentParserService.detectFileType(fileBytes, fileType);
+        if (detectedType == null) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "无法识别文件类型");
+            return ResponseEntity.badRequest().body(errorResponse);
+        }
+
+        String text;
+        try {
+            text = documentParserService.parseDocument(fileBytes, detectedType);
+        } catch (Exception e) {
+            log.error("解析文档失败: {}", e.getMessage());
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "解析文档失败: " + e.getMessage());
+            return ResponseEntity.unprocessableEntity().body(errorResponse);
+        }
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("text", text);
+        response.put("tree", buildDocumentTree(text));
+        response.put("html", buildDocumentHtml(text));
+        response.put("fileType", detectedType);
+        response.put("filename", filename);
+
+        return ResponseEntity.ok(response);
+    }
+
+    private String buildDocumentTree(String text) {
+        if (text == null || text.trim().isEmpty()) {
+            return "";
+        }
+        StringBuilder tree = new StringBuilder();
+        String[] lines = text.split("\n");
+        int sectionCount = 0;
+        for (String line : lines) {
+            String trimmedLine = line.trim();
+            if (trimmedLine.isEmpty()) {
+                continue;
+            }
+            if (isSectionTitle(trimmedLine)) {
+                sectionCount++;
+                tree.append("├── ").append(trimmedLine).append("\n");
+            } else if (sectionCount > 0) {
+                tree.append("│   ").append(trimmedLine.substring(0, Math.min(50, trimmedLine.length())));
+                if (trimmedLine.length() > 50) {
+                    tree.append("...");
+                }
+                tree.append("\n");
+            }
+        }
+        return tree.toString();
+    }
+
+    private boolean isSectionTitle(String line) {
+        return line.matches("^[第一二三四五六七八九十零百千万]+[章节条款].*") ||
+               line.matches("^\\d+[\\.、].*") ||
+               line.matches("^[（(][一二三四五六七八九十]+[)）].*") ||
+               line.matches("^[一二三四五六七八九十]+[、.].*");
+    }
+
+    private String buildDocumentHtml(String text) {
+        if (text == null || text.trim().isEmpty()) {
+            return "";
+        }
+        StringBuilder html = new StringBuilder();
+        html.append("<div class=\"document-content\">");
+        String[] lines = text.split("\n");
+        for (String line : lines) {
+            String trimmedLine = line.trim();
+            if (trimmedLine.isEmpty()) {
+                continue;
+            }
+            if (isSectionTitle(trimmedLine)) {
+                html.append("<h3>").append(escapeHtml(trimmedLine)).append("</h3>");
+            } else {
+                html.append("<p>").append(escapeHtml(trimmedLine)).append("</p>");
+            }
+        }
+        html.append("</div>");
+        return html.toString();
+    }
+
+    private String escapeHtml(String text) {
+        if (text == null) {
+            return "";
+        }
+        return text
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
     }
 }
