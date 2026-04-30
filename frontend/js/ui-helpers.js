@@ -713,10 +713,40 @@ const StructureCompare = {
         
         let contentDiffs = null;
         if (exactMatchMode) {
-            contentDiffs = this.compareContent(template, document, matches);
+            const hasHeadings = docNodes.length > 0 || templateNodes.length > 0;
+            if (hasHeadings) {
+                contentDiffs = this.compareContent(template, document, matches);
+            } else {
+                contentDiffs = this.compareFullText(template, document);
+            }
         }
         
         return { diffs, score, templateNodes, docNodes, matches, contentDiffs };
+    },
+
+    compareFullText(template, document) {
+        const contentDiffs = [];
+        if (!template || !document) return contentDiffs;
+
+        const templateText = template.text || '';
+        const docText = document.text || '';
+
+        const diffs = this.findTextDifferences(templateText, docText);
+        const similarity = this.calculateTextSimilarity(templateText, docText);
+
+        contentDiffs.push({
+            sectionTitle: '全文对比',
+            templateContent: templateText,
+            docContent: docText,
+            diffs: diffs,
+            similarity: similarity,
+            templateNode: null,
+            docNode: null,
+            matchType: 'matched',
+            level: 0
+        });
+
+        return contentDiffs;
     },
 
     renderDiffs(diffs, score) {
@@ -997,10 +1027,9 @@ const DocumentRenderer = {
         const container = document.getElementById(containerId);
         if (!container) return;
         
-        const contentHTML = doc.html 
-            || (doc.tree?.length > 0 
-                ? doc.tree.map(node => `<div id="node-${node.id}" class="mb-4 p-2 rounded hover:bg-gray-50 transition-colors">${node.html}</div>`).join('')
-                : '<div class="text-gray-500 italic">无法预览文档内容</div>');
+        const contentHTML = doc.tree?.length > 0 
+            ? this._renderNodes(doc.tree)
+            : (doc.html || '<div class="text-gray-500 italic">无法预览文档内容</div>');
         
         container.innerHTML = `
             <div class="prose max-w-none">
@@ -1013,5 +1042,23 @@ const DocumentRenderer = {
                 </div>
                 <div class="preview-content">${contentHTML}</div>
             </div>`;
+    },
+
+    _renderNodes(nodes) {
+        if (!nodes || !Array.isArray(nodes)) return '';
+        return nodes.map(node => {
+            const childrenHtml = this._renderNodes(node.children);
+            const isHeading = node.type === 'heading';
+            return `<div id="node-${node.id}" class="${isHeading ? 'mb-3' : 'mb-1'} p-1 rounded hover:bg-gray-50 transition-colors" ${isHeading ? `data-heading="${node.content}"` : ''}>
+                ${node.html || `<p>${this._escapeHtml(node.content || '')}</p>`}
+                ${childrenHtml}
+            </div>`;
+        }).join('');
+    },
+
+    _escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 };

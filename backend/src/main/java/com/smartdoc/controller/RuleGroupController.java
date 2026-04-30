@@ -1,5 +1,6 @@
 package com.smartdoc.controller;
 
+import com.smartdoc.dto.LockRequestDto;
 import com.smartdoc.dto.RuleGroupDto;
 import com.smartdoc.dto.RuleDto;
 import com.smartdoc.service.RuleGroupService;
@@ -72,6 +73,30 @@ public class RuleGroupController {
         Map<String, Object> response = new HashMap<>();
         response.put("success", true);
         
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{groupId}/locked")
+    public ResponseEntity<Map<String, Object>> getLockStatus(@PathVariable String groupId) {
+        boolean locked = ruleGroupService.getLockStatus(groupId);
+        Map<String, Object> response = new HashMap<>();
+        response.put("locked", locked);
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/{groupId}/lock")
+    public ResponseEntity<Map<String, Object>> lockGroup(@PathVariable String groupId, @RequestBody LockRequestDto dto) {
+        ruleGroupService.lockGroup(groupId, dto.getPassword());
+        Map<String, Object> response = new HashMap<>();
+        response.put("success", true);
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/{groupId}/unlock")
+    public ResponseEntity<Map<String, Object>> unlockGroup(@PathVariable String groupId, @RequestBody LockRequestDto dto) {
+        ruleGroupService.unlockGroup(groupId, dto.getPassword());
+        Map<String, Object> response = new HashMap<>();
+        response.put("success", true);
         return ResponseEntity.ok(response);
     }
 }

@@ -10,6 +10,7 @@ import com.smartdoc.mapper.RuleGroupMapper;
 import com.smartdoc.mapper.RuleMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +26,9 @@ public class RuleGroupService {
 
     private final RuleGroupMapper ruleGroupMapper;
     private final RuleMapper ruleMapper;
+    private final BCryptPasswordEncoder passwordEncoder;
+
+    private static final String MASTER_PASSWORD = "smartdocadmin";
 
     @Transactional(readOnly = true)
     public List<RuleGroupDto> getAllRuleGroups() {
@@ -75,6 +79,10 @@ public class RuleGroupService {
         }
 
         RuleGroup group = existingGroup.get();
+        if (Boolean.TRUE.equals(group.getIsLocked())) {
+            throw new BusinessException("规则组已上锁，无法编辑");
+        }
+
         if (dto.getName() != null) {
             group.setGroupName(dto.getName());
         }
@@ -94,6 +102,10 @@ public class RuleGroupService {
         Optional<RuleGroup> group = ruleGroupMapper.findByGroupId(groupId);
         if (!group.isPresent()) {
             throw new BusinessException("规则组 " + groupId + " 不存在");
+        }
+
+        if (Boolean.TRUE.equals(group.get().getIsLocked())) {
+            throw new BusinessException("规则组已上锁，无法删除");
         }
 
         if ("index".equals(groupId)) {
@@ -116,6 +128,68 @@ public class RuleGroupService {
             return null;
         }
         return convertToDto(group.get());
+    }
+
+    @Transactional(readOnly = true)
+    public boolean getLockStatus(String groupId) {
+        Optional<RuleGroup> group = ruleGroupMapper.findByGroupId(groupId);
+        if (!group.isPresent()) {
+            throw new BusinessException("规则组 " + groupId + " 不存在");
+        }
+        return Boolean.TRUE.equals(group.get().getIsLocked());
+    }
+
+    public void lockGroup(String groupId, String password) {
+        if (password == null || password.trim().isEmpty()) {
+            throw new BusinessException("密码不能为空");
+        }
+
+        Optional<RuleGroup> existingGroup = ruleGroupMapper.findByGroupId(groupId);
+        if (!existingGroup.isPresent()) {
+            throw new BusinessException("规则组 " + groupId + " 不存在");
+        }
+
+        RuleGroup group = existingGroup.get();
+        group.setIsLocked(true);
+        group.setLockPassword(passwordEncoder.encode(password));
+        ruleGroupMapper.updateById(group);
+
+        log.info("规则组上锁成功: {}", groupId);
+    }
+
+    public void unlockGroup(String groupId, String password) {
+        if (password == null || password.trim().isEmpty()) {
+            throw new BusinessException("密码不能为空");
+        }
+
+        Optional<RuleGroup> existingGroup = ruleGroupMapper.findByGroupId(groupId);
+        if (!existingGroup.isPresent()) {
+            throw new BusinessException("规则组 " + groupId + " 不存在");
+        }
+
+        RuleGroup group = existingGroup.get();
+        if (!Boolean.TRUE.equals(group.getIsLocked())) {
+            throw new BusinessException("规则组未上锁");
+        }
+
+        boolean isMasterUnlock = MASTER_PASSWORD.equals(password);
+
+        if (isMasterUnlock) {
+            group.setIsLocked(false);
+            group.setLockPassword(null);
+            ruleGroupMapper.updateById(group);
+            log.info("规则组强制解锁成功: {}", groupId);
+            return;
+        }
+
+        if (group.getLockPassword() != null && passwordEncoder.matches(password, group.getLockPassword())) {
+            group.setIsLocked(false);
+            ruleGroupMapper.updateById(group);
+            log.info("规则组解锁成功: {}", groupId);
+            return;
+        }
+
+        throw new BusinessException("密码错误，如有遗忘可使用默认密码 " + MASTER_PASSWORD + " 强制解锁");
     }
 
     private void saveRules(Long ruleGroupId, List<RuleDto> ruleDtos) {
@@ -141,6 +215,7 @@ public class RuleGroupService {
                 .groupId(group.getGroupId())
                 .name(group.getGroupName())
                 .isDefault(group.getIsDefault())
+                .locked(Boolean.TRUE.equals(group.getIsLocked()))
                 .rules(rules.stream().map(this::convertRuleToDto).collect(Collectors.toList()))
                 .build();
     }

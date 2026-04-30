@@ -27,5 +27,8 @@ public class RuleGroupDto {
     @Builder.Default
     private Boolean isDefault = false;
 
+    @Builder.Default
+    private Boolean locked = false;
+
     private List<RuleDto> rules;
 }

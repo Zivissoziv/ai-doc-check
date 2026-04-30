@@ -27,6 +27,7 @@ public class AuditController {
     private final DocumentParserService documentParserService;
     private final AiAuditService aiAuditService;
     private final ApiConfigService apiConfigService;
+    private final AuditFeedbackService auditFeedbackService;
     private final ObjectMapper objectMapper;
 
     @GetMapping("/rules")
@@ -170,6 +171,8 @@ public class AuditController {
                 rules, documentText, apiConfig, userData, repeatPrompt, batchSize
             );
 
+            auditFeedbackService.saveAuditResults(results);
+
             Map<String, Object> successResponse = new HashMap<>();
             successResponse.put("success", true);
             successResponse.put("results", results);
@@ -237,6 +240,7 @@ public class AuditController {
     private List<Rule> convertDtosToRules(List<RuleDto> dtos) {
         return dtos.stream()
                 .map(dto -> Rule.builder()
+                        .id(dto.getId())
                         .ruleName(dto.getName())
                         .prompt(dto.getPrompt())
                         .severity(Rule.Severity.valueOf(dto.getSeverity().toUpperCase()))

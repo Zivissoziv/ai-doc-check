@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS rule_group (
     group_id VARCHAR(50) NOT NULL UNIQUE,
     group_name VARCHAR(200) NOT NULL,
     is_default BOOLEAN DEFAULT FALSE,
+    is_locked BOOLEAN DEFAULT FALSE,
+    lock_password VARCHAR(100),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -97,3 +99,17 @@ CREATE TABLE IF NOT EXISTS audit_stats (
 INSERT INTO audit_stats (id, total_count, today_count, last_date)
 VALUES (1, 0, 0, '')
 ON DUPLICATE KEY UPDATE total_count = VALUES(total_count);
+
+-- 审核反馈表
+CREATE TABLE IF NOT EXISTS audit_feedback (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    rule_id BIGINT,
+    pass BOOLEAN,
+    confidence INT,
+    results_json TEXT,
+    feedback_type VARCHAR(20),
+    reason VARCHAR(500),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_feedback_rule_id (rule_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

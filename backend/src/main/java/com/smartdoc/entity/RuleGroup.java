@@ -32,6 +32,13 @@ public class RuleGroup {
     @Builder.Default
     private Boolean isDefault = false;
 
+    @TableField("is_locked")
+    @Builder.Default
+    private Boolean isLocked = false;
+
+    @TableField("lock_password")
+    private String lockPassword;
+
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

@@ -140,6 +140,7 @@ class SmartDocApp {
         this.rules = rules || [];
         RulesManager.save(this.rules);
         this.renderRules();
+        this.updateGroupLockUI();
         if (groupName) {
             UiHelpers.setStatus(`已加载规则组: ${groupName}`);
         }
@@ -624,11 +625,118 @@ class SmartDocApp {
         };
         input.click();
     }
-    
+
+    toggleGroupActions(event) {
+        if (event) {
+            event.stopPropagation();
+        }
+        const dropdown = document.getElementById('groupActionsDropdown');
+        dropdown.classList.toggle('hidden');
+        if (!dropdown.classList.contains('hidden')) {
+            const hideDropdown = (e) => {
+                if (!dropdown.contains(e.target)) {
+                    dropdown.classList.add('hidden');
+                    document.removeEventListener('click', hideDropdown);
+                }
+            };
+            setTimeout(() => document.addEventListener('click', hideDropdown), 0);
+        }
+    }
+
+    updateGroupLockUI() {
+        const group = this.ruleGroups.find(g => g.groupId === this.currentRuleGroup);
+        const isLocked = group?.locked;
+        const lockBtn = document.getElementById('lockGroupBtn');
+        const unlockBtn = document.getElementById('unlockGroupBtn');
+        const addBtn = document.getElementById('addRuleBtn');
+        const lockedBadge = document.getElementById('lockedBadge');
+        if (!lockBtn || !unlockBtn) return;
+        if (isLocked) {
+            lockBtn.classList.add('hidden');
+            unlockBtn.classList.remove('hidden');
+            if (addBtn) { addBtn.disabled = true; addBtn.classList.add('opacity-50', 'cursor-not-allowed'); }
+            if (lockedBadge) lockedBadge.classList.remove('hidden');
+        } else {
+            lockBtn.classList.remove('hidden');
+            unlockBtn.classList.add('hidden');
+            if (addBtn) { addBtn.disabled = false; addBtn.classList.remove('opacity-50', 'cursor-not-allowed'); }
+            if (lockedBadge) lockedBadge.classList.add('hidden');
+        }
+    }
+
+    showLockGroupModal() {
+        document.getElementById('lockPassword').value = '';
+        document.getElementById('lockPasswordConfirm').value = '';
+        UiHelpers.toggleModal('lockModal', true);
+    }
+
+    closeLockModal() {
+        UiHelpers.toggleModal('lockModal', false);
+    }
+
+    async submitLockGroup() {
+        const password = document.getElementById('lockPassword').value.trim();
+        const confirm = document.getElementById('lockPasswordConfirm').value.trim();
+
+        if (!password || !confirm) {
+            alert('请填写密码');
+            return;
+        }
+        if (password !== confirm) {
+            alert('两次输入的密码不一致');
+            return;
+        }
+        if (password.length < 4) {
+            alert('密码长度不能少于4位');
+            return;
+        }
+
+        try {
+            await LockAPI.lockGroup(this.currentRuleGroup, password);
+            const group = this.ruleGroups.find(g => g.groupId === this.currentRuleGroup);
+            if (group) group.locked = true;
+            this.closeLockModal();
+            this.updateGroupLockUI();
+            this.renderRules();
+            UiHelpers.setStatus('规则组已上锁');
+        } catch (err) {
+            alert('上锁失败: ' + err.message);
+        }
+    }
+
+    showUnlockGroupModal() {
+        document.getElementById('unlockPassword').value = '';
+        UiHelpers.toggleModal('unlockModal', true);
+    }
+
+    closeUnlockModal() {
+        UiHelpers.toggleModal('unlockModal', false);
+    }
+
+    async submitUnlockGroup() {
+        const password = document.getElementById('unlockPassword').value.trim();
+        if (!password) {
+            alert('请输入密码');
+            return;
+        }
+
+        try {
+            await LockAPI.unlockGroup(this.currentRuleGroup, password);
+            const group = this.ruleGroups.find(g => g.groupId === this.currentRuleGroup);
+            if (group) group.locked = false;
+            this.closeUnlockModal();
+            this.updateGroupLockUI();
+            this.renderRules();
+            UiHelpers.setStatus('规则组已解锁');
+        } catch (err) {
+            alert('解锁失败: ' + err.message);
+        }
+    }
+
     _renderAuditResults(batchResults, placeholders, startIdx) {
         batchResults.forEach((result, i) => {
             this.auditResults[startIdx + i] = result;
-            AiAudit.renderResult(result, placeholders[startIdx + i]);
+            AiAudit.renderResult(result, placeholders[startIdx + i], startIdx + i);
         });
     }
     
@@ -705,8 +813,27 @@ class SmartDocApp {
 
             results.forEach((result, i) => {
                 this.auditResults[i] = result;
-                AiAudit.renderResult(result, placeholders[i]);
+                AiAudit.renderResult(result, placeholders[i], i);
             });
+
+            try {
+                const saveResults = results.map(r => ({
+                    ruleId: r.ruleId,
+                    ruleName: r.ruleName,
+                    severity: r.severity,
+                    pass: r.pass,
+                    confidence: r.confidence,
+                    issues: r.issues || [],
+                    summary: r.summary || ''
+                }));
+                const saveResponse = await FeedbackAPI.saveAuditResults(saveResults);
+                const feedbackIds = saveResponse.ids || [];
+                results.forEach((r, i) => {
+                    r._feedbackId = feedbackIds[i];
+                });
+            } catch (err) {
+                console.error('保存审核结果失败:', err);
+            }
 
             UiHelpers.setStatus(`审核完成，共检查 ${activeRules.length} 条规则`);
             document.getElementById('auditBadge').classList.remove('hidden');
@@ -841,27 +968,13 @@ class SmartDocApp {
     }
     
     switchTab(tab) { UiHelpers.switchTab(tab); }
-    scrollToNode(nodeId) { UiHelpers.scrollToNode(nodeId); }
+    scrollToNode(nodeId) { UiHelpers.switchTab('preview'); setTimeout(() => UiHelpers.scrollToNode(nodeId), 100); }
     setStatus(text, loading = false) { UiHelpers.setStatus(text, loading); }
     exportHtmlReport() { ReportExporter.exportHtml(this.document, this.template, this.excelData, this.auditResults); }
     showHelp() {
         UiHelpers.toggleModal('helpModal', true);
-        this.loadAuditStats();
     }
     closeHelp() { UiHelpers.toggleModal('helpModal', false); }
-    
-    async loadAuditStats() {
-        try {
-            const response = await fetch('/api/stats');
-            if (response.ok) {
-                const data = await response.json();
-                document.getElementById('totalAuditCount').textContent = data.totalCount || 0;
-                document.getElementById('todayAuditCount').textContent = data.todayCount || 0;
-            }
-        } catch (e) {
-            console.error('获取统计数据失败:', e);
-        }
-    }
     
     async incrementAuditStats() {
         try {
@@ -885,6 +998,23 @@ class SmartDocApp {
         }
     }
     
+    exportTicketData() {
+        if (!this.ticketData) {
+            alert('暂无数据可导出');
+            return;
+        }
+        const json = JSON.stringify(this.ticketData, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `工单数据_${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
     showDataPreview() {
         if (!this.ticketData) {
             alert('暂无数据可预览');
@@ -984,6 +1114,247 @@ class SmartDocApp {
         } else {
             btn.classList.add('hidden');
         }
+    }
+
+    resubmitFeedback(idx) {
+        this.openFeedbackModal(idx);
+    }
+
+    openFeedbackModal(idx) {
+        const result = this.auditResults[idx];
+        if (!result || !result._feedbackId) return;
+
+        this._feedbackModalIdx = idx;
+        document.getElementById('feedbackModalRuleName').textContent = result.ruleName || '';
+
+        document.querySelectorAll('input[name="feedbackType"]').forEach(r => r.checked = false);
+        document.getElementById('feedbackReasonArea').classList.add('hidden');
+        document.getElementById('feedbackReasonInput').value = '';
+
+        UiHelpers.toggleModal('feedbackModal', true);
+    }
+
+    closeFeedbackModal() {
+        this._feedbackModalIdx = null;
+        UiHelpers.toggleModal('feedbackModal', false);
+    }
+
+    onFeedbackTypeChange() {
+        const selected = document.querySelector('input[name="feedbackType"]:checked');
+        if (selected && selected.value === 'INACCURATE') {
+            document.getElementById('feedbackReasonArea').classList.remove('hidden');
+        } else {
+            document.getElementById('feedbackReasonArea').classList.add('hidden');
+        }
+    }
+
+    async submitFeedbackFromModal() {
+        const idx = this._feedbackModalIdx;
+        if (idx === null || idx === undefined) return;
+
+        const result = this.auditResults[idx];
+        if (!result || !result._feedbackId) return;
+
+        const selected = document.querySelector('input[name="feedbackType"]:checked');
+        if (!selected) {
+            alert('请选择反馈结果（准确/不准确）');
+            return;
+        }
+
+        const feedbackType = selected.value;
+        const reason = document.getElementById('feedbackReasonInput').value.trim();
+
+        if (feedbackType === 'INACCURATE' && !reason) {
+            alert('请填写不准确的原因');
+            return;
+        }
+
+        try {
+            await FeedbackAPI.submitFeedback(result._feedbackId, feedbackType, reason);
+            result._feedbackType = feedbackType;
+            this.closeFeedbackModal();
+
+            const label = document.getElementById('feedback-label-' + idx);
+            if (label) {
+                if (feedbackType === 'ACCURATE') {
+                    label.innerHTML = '<span class="text-green-600"><i class="fas fa-check mr-1"></i>准确</span>';
+                } else {
+                    label.innerHTML = '<span class="text-red-600"><i class="fas fa-times mr-1"></i>不准确</span>';
+                }
+            }
+        } catch (err) {
+            alert('提交反馈失败: ' + err.message);
+        }
+    }
+
+    async showStatsAnalysis() {
+        UiHelpers.toggleModal('statsAnalysisModal', true);
+        const content = document.getElementById('statsAnalysisContent');
+        content.innerHTML = '<div class="text-center text-gray-400 py-8"><i class="fas fa-spinner fa-spin text-3xl mb-2"></i><p class="text-sm">加载中...</p></div>';
+
+        try {
+            const [statsRes, groupsRes] = await Promise.all([
+                fetch('/api/stats'),
+                fetch('/api/config/rules')
+            ]);
+
+            const stats = statsRes.ok ? await statsRes.json() : { totalCount: 0, todayCount: 0 };
+            const groupData = groupsRes.ok ? await groupsRes.json() : { groups: [] };
+
+            this._statsGroupData = groupData.groups || [];
+
+            let groupOptionsHtml = '<option value="">-- 请选择规则组 --</option>';
+            this._statsGroupData.forEach(g => {
+                groupOptionsHtml += `<option value="${g.groupId}">${g.name}</option>`;
+            });
+
+            content.innerHTML = `
+                <div class="bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl p-4">
+                    <h3 class="text-sm font-semibold text-gray-700 mb-3"><i class="fas fa-chart-simple text-blue-500 mr-1"></i>全局审核统计</h3>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-white rounded-lg p-4 shadow-sm border border-blue-100">
+                            <div class="flex items-center gap-2 mb-2">
+                                <i class="fas fa-chart-line text-blue-500"></i>
+                                <span class="text-sm text-gray-500">累计调用次数</span>
+                            </div>
+                            <div class="text-2xl font-bold text-blue-600">${stats.totalCount || 0}</div>
+                        </div>
+                        <div class="bg-white rounded-lg p-4 shadow-sm border border-purple-100">
+                            <div class="flex items-center gap-2 mb-2">
+                                <i class="fas fa-calendar-day text-purple-500"></i>
+                                <span class="text-sm text-gray-500">今日调用次数</span>
+                            </div>
+                            <div class="text-2xl font-bold text-purple-600">${stats.todayCount || 0}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-xl border border-gray-200 p-4">
+                    <h3 class="text-sm font-semibold text-gray-700 mb-3"><i class="fas fa-robot text-blue-500 mr-1"></i>规则反馈统计</h3>
+                    <div class="flex gap-2 mb-3">
+                        <select id="statsGroupSelect" onchange="app.onStatsGroupChange()" class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            ${groupOptionsHtml}
+                        </select>
+                        <select id="statsRuleSelect" onchange="app.loadSelectedRuleStats()" class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" disabled>
+                            <option value="">-- 请先选择规则组 --</option>
+                        </select>
+                    </div>
+                    <div id="selectedRuleStats">
+                        <div class="text-center text-gray-400 py-4 text-sm">
+                            <i class="fas fa-hand-pointer mr-1"></i>请先选择规则组，再选择规则查看不准确反馈
+                        </div>
+                    </div>
+                </div>
+            `;
+        } catch (err) {
+            content.innerHTML = '<div class="text-center text-red-500 py-8"><i class="fas fa-exclamation-triangle text-3xl mb-2"></i><p class="text-sm">加载失败: ' + err.message + '</p></div>';
+        }
+    }
+
+    onStatsGroupChange() {
+        const groupId = document.getElementById('statsGroupSelect').value;
+        const ruleSelect = document.getElementById('statsRuleSelect');
+        const container = document.getElementById('selectedRuleStats');
+
+        if (!groupId) {
+            ruleSelect.innerHTML = '<option value="">-- 请先选择规则组 --</option>';
+            ruleSelect.disabled = true;
+            container.innerHTML = '<div class="text-center text-gray-400 py-4 text-sm"><i class="fas fa-hand-pointer mr-1"></i>请先选择规则组，再选择规则查看不准确反馈</div>';
+            return;
+        }
+
+        const group = this._statsGroupData.find(g => g.groupId === groupId);
+        const rules = (group && group.rules) || [];
+
+        if (rules.length === 0) {
+            ruleSelect.innerHTML = '<option value="">-- 该规则组暂无规则 --</option>';
+            ruleSelect.disabled = true;
+            container.innerHTML = '<div class="text-center text-gray-400 py-4 text-sm">该规则组暂无规则</div>';
+            return;
+        }
+
+        ruleSelect.disabled = false;
+        ruleSelect.innerHTML = '<option value="">-- 请选择规则 --</option>' +
+            rules.map(r => `<option value="${r.id}">${r.name}</option>`).join('');
+
+        container.innerHTML = '<div class="text-center text-gray-400 py-4 text-sm"><i class="fas fa-hand-pointer mr-1"></i>请从上方下拉框选择规则查看不准确反馈</div>';
+    }
+
+    async loadSelectedRuleStats() {
+        const ruleId = document.getElementById('statsRuleSelect').value;
+        const container = document.getElementById('selectedRuleStats');
+
+        if (!ruleId) {
+            container.innerHTML = '<div class="text-center text-gray-400 py-4 text-sm"><i class="fas fa-hand-pointer mr-1"></i>请从上方下拉框选择规则查看不准确反馈</div>';
+            return;
+        }
+
+        container.innerHTML = '<div class="text-center text-gray-400 py-4"><i class="fas fa-spinner fa-spin text-xl mb-1"></i><p class="text-xs">加载中...</p></div>';
+
+        try {
+            const stats = await FeedbackAPI.getRuleStats(ruleId);
+            if (stats.totalAuditCount === 0) {
+                container.innerHTML = '<div class="text-center text-gray-400 py-4 text-sm"><i class="fas fa-chart-pie text-xl mb-1 opacity-30"></i><p class="text-xs">暂无审核数据</p></div>';
+                return;
+            }
+
+            const inaccurateOnly = (stats.recentFeedbacks || []).filter(f => f.feedbackType === 'INACCURATE');
+
+            let recentHtml = '';
+            if (inaccurateOnly.length > 0) {
+                recentHtml = `
+                    <div class="mt-3">
+                        <h4 class="text-xs font-medium text-gray-700 mb-2">不准确反馈详情与原因</h4>
+                        <div class="space-y-2">
+                            ${inaccurateOnly.map(f => `
+                                <div class="p-3 bg-red-50 rounded-lg border-l-4 border-red-400">
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <span class="text-xs text-red-600"><i class="fas fa-times mr-1"></i>不准确</span>
+                                        <span class="text-xs text-gray-400">${f.createdAt ? new Date(f.createdAt).toLocaleString('zh-CN') : ''}</span>
+                                    </div>
+                                    ${f.reason ? `<div class="text-xs text-gray-700">${f.reason}</div>` : '<div class="text-xs text-gray-400">未提供原因</div>'}
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            container.innerHTML = `
+                <div class="text-sm font-medium text-gray-900 mb-3">${stats.ruleName || '规则'}</div>
+                <div class="grid grid-cols-2 gap-2 mb-3">
+                    <div class="bg-blue-50 rounded-lg p-2 text-center">
+                        <div class="text-lg font-bold text-blue-600">${stats.totalAuditCount}</div>
+                        <div class="text-xs text-blue-500">累计审核</div>
+                    </div>
+                    <div class="bg-green-50 rounded-lg p-2 text-center">
+                        <div class="text-lg font-bold text-green-600">${stats.passRate != null ? Math.round(stats.passRate) : 0}%</div>
+                        <div class="text-xs text-green-500">通过率</div>
+                    </div>
+                </div>
+                ${stats.inaccurateCount > 0 ? `
+                <div class="bg-red-50 rounded-lg p-3 mb-2">
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm text-red-600"><i class="fas fa-times mr-1"></i>不准确反馈</span>
+                        <span class="text-sm font-bold text-red-700">${stats.inaccurateCount} 次</span>
+                    </div>
+                </div>
+                ` : `
+                <div class="bg-green-50 rounded-lg p-3 mb-2">
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm text-green-600"><i class="fas fa-check-circle mr-1"></i>暂无不准确反馈</span>
+                    </div>
+                </div>
+                `}
+                ${recentHtml}
+            `;
+        } catch (err) {
+            container.innerHTML = '<div class="text-center text-red-500 py-4 text-sm"><i class="fas fa-exclamation-triangle text-xl mb-1"></i><p class="text-xs">加载失败: ' + err.message + '</p></div>';
+        }
+    }
+
+    closeStatsAnalysis() {
+        UiHelpers.toggleModal('statsAnalysisModal', false);
     }
 }
 

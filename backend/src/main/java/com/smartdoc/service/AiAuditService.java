@@ -86,7 +86,8 @@ public class AiAuditService {
             List<AuditResultDto> batchResults = parseAuditResults(response, batchRules);
             
             for (int i = 0; i < batchResults.size(); i++) {
-                batchResults.get(i).setRuleId(startIdx + i);
+                Rule rule = batchRules.get(i);
+                batchResults.get(i).setRuleId(rule.getId() != null ? rule.getId().intValue() : startIdx + i);
             }
             
             allResults.addAll(batchResults);
@@ -368,7 +369,7 @@ public class AiAuditService {
             }
             
             return AuditResultDto.builder()
-                    .ruleId(index)
+                    .ruleId(rule.getId() != null ? rule.getId().intValue() : index)
                     .ruleName(rule.getRuleName())
                     .severity(rule.getSeverity().name().toLowerCase())
                     .pass(ruleResult.path("pass").asBoolean(false))
@@ -390,7 +391,7 @@ public class AiAuditService {
                 .build());
         
         return AuditResultDto.builder()
-                .ruleId(index)
+                .ruleId(rule.getId() != null ? rule.getId().intValue() : index)
                 .ruleName(rule.getRuleName())
                 .severity(rule.getSeverity().name().toLowerCase())
                 .pass(false)

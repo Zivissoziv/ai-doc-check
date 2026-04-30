@@ -21,6 +21,43 @@ const ConfigAPI = {
     }
 };
 
+const LockAPI = {
+    async lockGroup(groupId, password) {
+        const response = await fetch(`/api/config/rules/${groupId}/lock`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password })
+        });
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || '上锁失败');
+        }
+        return response.json();
+    },
+
+    async unlockGroup(groupId, password) {
+        const response = await fetch(`/api/config/rules/${groupId}/unlock`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password })
+        });
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || '解锁失败');
+        }
+        return response.json();
+    },
+
+    async getLockStatus(groupId) {
+        const response = await fetch(`/api/config/rules/${groupId}/locked`);
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || '获取锁状态失败');
+        }
+        return response.json();
+    }
+};
+
 const RulesManager = {
     async getGroupsFromServer() {
         const response = await fetch('/api/config/rules');
@@ -120,7 +157,7 @@ const RulesManager = {
 
         container.innerHTML = groups.map(g => `
             <option value="${g.groupId}" ${g.groupId === currentId ? 'selected' : ''}>
-                ${g.name}
+                ${g.locked ? '🔒 ' : ''}${g.name}
             </option>
         `).join('');
     },
@@ -134,30 +171,32 @@ const RulesManager = {
             return;
         }
 
+        const isLocked = app.ruleGroups.find(g => g.groupId === app.currentRuleGroup)?.locked;
+
         container.innerHTML = rules.map((rule, idx) => {
             const isEnabled = rule.enabled !== false;
             return `
                 <div class="p-3 border rounded-xl transition-all duration-200 group ${isEnabled ? 'bg-white border-gray-200 shadow-sm hover:shadow-md' : 'bg-gray-50 border-gray-100 opacity-70'}">
                     <div class="flex items-start justify-between mb-2">
-                        <div onclick="app.editRule(${idx})" class="flex items-center gap-2 overflow-hidden cursor-pointer flex-1" title="点击编辑规则">
+                        <div onclick="${isLocked ? '' : `app.editRule(${idx})`}" class="flex items-center gap-2 overflow-hidden cursor-pointer flex-1" title="${isLocked ? '规则组已上锁，无法编辑' : '点击编辑规则'}">
                             <span class="flex-shrink-0 w-2 h-2 rounded-full ${rule.severity === 'error' ? 'bg-red-500' : rule.severity === 'warning' ? 'bg-yellow-500' : 'bg-blue-500'} shadow-sm"></span>
                             <span class="font-medium text-sm truncate ${isEnabled ? 'text-gray-900 group-hover:text-blue-600' : 'text-gray-400'} transition-colors">${rule.name}</span>
                             <i class="fas fa-edit text-xs text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity"></i>
                         </div>
                         <div class="flex items-center gap-2 flex-shrink-0">
-                            <div onclick="app.toggleRuleStatus(${idx})" 
-                                class="relative inline-flex h-5 w-9 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${isEnabled ? 'bg-blue-600' : 'bg-gray-200'}"
-                                title="${isEnabled ? '点击禁用' : '点击启用'}">
+                            <div onclick="${isLocked ? '' : `app.toggleRuleStatus(${idx})`}" 
+                                class="relative inline-flex h-5 w-9 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${isEnabled ? 'bg-blue-600' : 'bg-gray-200'} ${isLocked ? 'cursor-not-allowed opacity-60' : ''}"
+                                title="${isLocked ? '规则组已上锁' : (isEnabled ? '点击禁用' : '点击启用')}">
                                 <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${isEnabled ? 'translate-x-4' : 'translate-x-0'}"></span>
                             </div>
-                            <button onclick="app.deleteRule(${idx})" 
-                                class="w-5 h-5 flex items-center justify-center text-gray-300 hover:text-red-500 transition-colors"
-                                title="删除规则">
+                            <button onclick="${isLocked ? '' : `app.deleteRule(${idx})`}" 
+                                class="w-5 h-5 flex items-center justify-center text-gray-300 hover:text-red-500 transition-colors ${isLocked ? 'cursor-not-allowed opacity-30' : ''}"
+                                title="${isLocked ? '规则组已上锁' : '删除规则'}">
                                 <i class="fas fa-trash-alt text-xs"></i>
                             </button>
                         </div>
                     </div>
-                    <p onclick="app.editRule(${idx})" class="text-xs ${isEnabled ? 'text-gray-500' : 'text-gray-400'} line-clamp-2 leading-relaxed cursor-pointer">${rule.prompt}</p>
+                    <p onclick="${isLocked ? '' : `app.editRule(${idx})`}" class="text-xs ${isEnabled ? 'text-gray-500' : 'text-gray-400'} line-clamp-2 leading-relaxed cursor-pointer">${rule.prompt}</p>
                 </div>
             `;
         }).join('');
@@ -469,7 +508,7 @@ const AiAudit = {
         };
     },
 
-    renderResult(result, container) {
+    renderResult(result, container, resultIndex) {
         const div = document.createElement('div');
         div.className = 'bg-white rounded-xl border border-gray-200 p-6 fade-in';
 
@@ -514,9 +553,9 @@ const AiAudit = {
                     <div class="flex items-start gap-2">
                         <i class="fas fa-map-marker-alt text-gray-400 mt-0.5 text-xs"></i>
                         <div class="flex-1">
-                            <div class="text-xs text-gray-500 mb-1 group relative">
+                            <div class="text-xs text-gray-500 mb-1">
                                 <span>${issue.location || '未知位置'}</span>
-                                <button onclick="AiAudit.jumpToLocation('${(issue.textSnippet || issue.location || '').replace(/'/g, "\\'")}', '${(issue.location || '').replace(/'/g, "\\'")}')" class="ml-2 opacity-0 group-hover:opacity-100 text-blue-500 hover:text-blue-700 transition-opacity" title="跳转到文档位置"><i class="fas fa-location-arrow text-xs"></i></button>
+                                <button onclick="AiAudit.jumpToLocation('${(issue.textSnippet || issue.location || '').replace(/'/g, "\\'")}', '${(issue.location || '').replace(/'/g, "\\'")}')" class="ml-2 text-blue-500 hover:text-blue-700" title="跳转到文档位置"><i class="fas fa-location-arrow text-xs"></i></button>
                             </div>
                             <div class="text-sm text-gray-900 mb-1">${issue.problem}</div>
                             ${issue.suggestion ? `<div class="text-xs text-blue-600 bg-blue-50 p-2 rounded mt-1"><i class="fas fa-lightbulb mr-1"></i> ${issue.suggestion}</div>` : ''}
@@ -524,6 +563,13 @@ const AiAudit = {
                     </div>
                 </div>`).join('')}</div>`
             : '<div class="text-sm text-green-600 mb-4"><i class="fas fa-check-circle mr-1"></i> 未发现问题</div>';
+        
+        const feedbackLabelId = 'feedback-label-' + resultIndex;
+        const feedbackStatus = result._feedbackType
+            ? (result._feedbackType === 'ACCURATE'
+                ? '<span class="text-green-600"><i class="fas fa-check mr-1"></i>准确</span>'
+                : '<span class="text-red-600"><i class="fas fa-times mr-1"></i>不准确</span>')
+            : '<span class="text-gray-400"><i class="fas fa-comment mr-1"></i>反馈</span>';
         
         div.innerHTML = `
             <div class="flex items-center justify-between mb-4">
@@ -541,8 +587,13 @@ const AiAudit = {
                 </div>
             </div>
             ${issuesHtml}
-            <div class="text-xs text-gray-500 pt-3 border-t border-gray-100">
-                <i class="fas fa-quote-left mr-1 opacity-50"></i> ${result.summary}
+            <div class="flex items-center justify-between pt-3 border-t border-gray-100">
+                <div class="text-xs text-gray-500">
+                    <i class="fas fa-quote-left mr-1 opacity-50"></i> ${result.summary}
+                </div>
+                <button onclick="app.openFeedbackModal(${resultIndex})" class="text-xs flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-gray-100 transition-colors flex-shrink-0 ml-2" id="${feedbackLabelId}">
+                    ${feedbackStatus}
+                </button>
             </div>`;
         
         container.appendChild(div);
@@ -599,5 +650,42 @@ const ReportExporter = {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+    }
+};
+
+const FeedbackAPI = {
+    async saveAuditResults(results) {
+        const response = await fetch('/api/feedback/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(results)
+        });
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || '保存审核结果失败');
+        }
+        return response.json();
+    },
+
+    async submitFeedback(feedbackId, feedbackType, reason) {
+        const response = await fetch(`/api/feedback/${feedbackId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ feedbackType, reason: reason || '' })
+        });
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || '提交反馈失败');
+        }
+        return response.json();
+    },
+
+    async getRuleStats(ruleId) {
+        const response = await fetch(`/api/feedback/stats/${ruleId}`);
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || '获取统计信息失败');
+        }
+        return response.json();
     }
 };
