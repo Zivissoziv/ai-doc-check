@@ -189,7 +189,7 @@ public class RuleGroupService {
             return;
         }
 
-        throw new BusinessException("密码错误，如有遗忘可使用默认密码 " + MASTER_PASSWORD + " 强制解锁");
+        throw new BusinessException("密码错误");
     }
 
     private void saveRules(Long ruleGroupId, List<RuleDto> ruleDtos) {

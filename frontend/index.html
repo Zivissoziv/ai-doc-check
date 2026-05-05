@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SmartDoc AI - 智能文档审核工具</title>
+    <title>文档智能审核工具</title>
     <script src="./libs/tailwind/tailwind.min.js"></script>
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="./libs/fontawesome/css/all.min.css">
@@ -21,8 +21,7 @@
         <div class="w-8 h-8 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-lg flex items-center justify-center text-white font-bold">
             <i class="fas fa-file-signature"></i>
         </div>
-        <h1 class="font-bold text-lg text-gray-900">SmartDoc <span class="text-blue-600">AI</span></h1>
-        <span class="px-2 py-0.5 bg-blue-50 text-blue-600 text-xs rounded-full border border-blue-100">Beta</span>
+        <h1 class="font-bold text-lg text-gray-900">文档智能审核工具</h1>
     </div>
     
     <div class="flex items-center gap-4">
@@ -524,28 +523,42 @@
                             <i class="fas fa-sitemap text-blue-500"></i>
                             <span class="font-medium">结构对比</span>
                         </div>
-                        <p class="text-sm text-gray-500">上传模板后，自动对比文档结构，检测缺失或多余的章节</p>
+                        <p class="text-sm text-gray-500">上传模板后，自动对比文档结构，检测缺失或多余的章节。开启精确匹配可进行全文内容对比</p>
                     </div>
                     <div class="border border-gray-200 rounded-xl p-4">
                         <div class="flex items-center gap-2 mb-2">
                             <i class="fas fa-robot text-green-500"></i>
                             <span class="font-medium">AI审核</span>
                         </div>
-                        <p class="text-sm text-gray-500">基于自定义规则，AI智能分析文档内容并给出修改建议</p>
+                        <p class="text-sm text-gray-500">基于自定义规则，AI智能分析文档内容并给出修改建议。每条结果可标记准确/不准确反馈</p>
                     </div>
                     <div class="border border-gray-200 rounded-xl p-4">
                         <div class="flex items-center gap-2 mb-2">
                             <i class="fas fa-layer-group text-purple-500"></i>
-                            <span class="font-medium">规则组</span>
+                            <span class="font-medium">规则组管理</span>
                         </div>
-                        <p class="text-sm text-gray-500">预设多套规则组，可快速切换不同审核标准</p>
+                        <p class="text-sm text-gray-500">预设多套规则组，点击 ⋮ 菜单可编辑名称、新建、删除、导入导出规则。支持上锁保护防止误修改</p>
                     </div>
                     <div class="border border-gray-200 rounded-xl p-4">
                         <div class="flex items-center gap-2 mb-2">
                             <i class="fas fa-table text-orange-500"></i>
                             <span class="font-medium">Excel数据</span>
                         </div>
-                        <p class="text-sm text-gray-500">上传Excel作为数据源，在规则中引用动态数据</p>
+                        <p class="text-sm text-gray-500">上传Excel作为数据源，可在规则中引用动态数据。数据预览弹窗支持导出为JSON文件</p>
+                    </div>
+                    <div class="border border-gray-200 rounded-xl p-4">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fas fa-comment text-indigo-500"></i>
+                            <span class="font-medium">审核结果反馈</span>
+                        </div>
+                        <p class="text-sm text-gray-500">每条审核结果卡片右下角可点击"反馈"按钮，标记结果为准确或不准确，帮助优化审核规则</p>
+                    </div>
+                    <div class="border border-gray-200 rounded-xl p-4">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fas fa-chart-pie text-pink-500"></i>
+                            <span class="font-medium">统计分析</span>
+                        </div>
+                        <p class="text-sm text-gray-500">点击右上角「统计分析」查看全局调用统计和按规则组/规则筛选的不准确反馈详情与原因</p>
                     </div>
                 </div>
             </section>
@@ -593,120 +606,43 @@
                 </div>
             </section>
 
-            <!-- 第三方API接口 -->
+            <!-- 规则组锁定 -->
             <section>
                 <h3 class="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
                     <span class="w-6 h-6 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-sm font-bold">5</span>
-                    第三方API接口
+                    规则组锁定
                 </h3>
-                <div class="space-y-4">
-                    <div class="bg-gray-50 rounded-xl p-4">
-                        <h4 class="font-medium text-gray-900 mb-2 flex items-center gap-2">
-                            <span class="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs font-mono">GET</span>
-                            /api/rules
-                        </h4>
-                        <p class="text-sm text-gray-600 mb-3">获取所有可用的规则组列表</p>
-                        <div class="bg-white rounded-lg p-3 border border-gray-200">
-                            <p class="text-xs text-gray-500 mb-1">响应示例：</p>
-                            <pre class="text-xs text-gray-700 overflow-x-auto">{
-  "groups": [
-    { "id": "znywz", "name": "智能运维组" },
-    { "id": "yyxzz", "name": "应用X组" }
-  ],
-  "defaultGroup": "znywz"
-}</pre>
+                <div class="bg-gray-50 rounded-xl p-4 space-y-3">
+                    <p class="text-sm text-gray-600">点击规则组旁的 ⋮ 菜单，选择「上锁规则组」可为当前规则组设置密码保护：</p>
+                    <div class="flex items-start gap-3">
+                        <div class="w-8 h-8 bg-orange-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                            <i class="fas fa-lock text-orange-600 text-sm"></i>
+                        </div>
+                        <div>
+                            <p class="font-medium text-gray-900">上锁</p>
+                            <p class="text-sm text-gray-500">设置密码后规则组进入锁定状态，无法编辑、删除或新增规则</p>
                         </div>
                     </div>
-                    
-                    <div class="bg-gray-50 rounded-xl p-4">
-                        <h4 class="font-medium text-gray-900 mb-2 flex items-center gap-2">
-                            <span class="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-mono">POST</span>
-                            /api/audit
-                        </h4>
-                        <p class="text-sm text-gray-600 mb-3">传入规则组ID和文档URL，返回AI审核结果</p>
-                        <div class="bg-white rounded-lg p-3 border border-gray-200 mb-3">
-                            <p class="text-xs text-gray-500 mb-1">请求体示例：</p>
-                            <pre class="text-xs text-gray-700 overflow-x-auto">{
-  "ruleGroupId": "znywz",
-  "documentUrl": "https://example.com/doc.docx",
-  "documentType": "docx",
-  "excelUrl": "https://example.com/data.xlsx",
-  "settings": {
-    "endpoint": "https://api.deepseek.com/v1/chat/completions",
-    "apiKey": "sk-xxx",
-    "model": "deepseek-chat"
-  }
-}</pre>
+                    <div class="flex items-start gap-3">
+                        <div class="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                            <i class="fas fa-unlock text-green-600 text-sm"></i>
                         </div>
-                        <div class="bg-white rounded-lg p-3 border border-gray-200">
-                            <p class="text-xs text-gray-500 mb-1">响应示例：</p>
-                            <pre class="text-xs text-gray-700 overflow-x-auto">{
-  "success": true,
-  "results": [
-    {
-      "ruleId": 0,
-      "ruleName": "格式规范检查",
-      "severity": "warning",
-      "pass": true,
-      "confidence": 95,
-      "issues": [],
-      "summary": "文档格式规范"
-    }
-  ]
-}</pre>
+                        <div>
+                            <p class="font-medium text-gray-900">解锁</p>
+                            <p class="text-sm text-gray-500">输入锁密码即可解除锁定，恢复正常编辑</p>
                         </div>
-                    </div>
-
-                    <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                        <p class="text-sm text-yellow-800">
-                            <i class="fas fa-lightbulb mr-1"></i>
-                            <strong>提示：</strong>支持通过URL或Base64传入文档，URL无需特定扩展名结尾
-                        </p>
                     </div>
                 </div>
             </section>
 
-            <!-- 错误码说明 -->
+            <!-- 文档目录跳转 -->
             <section>
                 <h3 class="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
                     <span class="w-6 h-6 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-sm font-bold">6</span>
-                    错误码说明
+                    文档目录跳转
                 </h3>
                 <div class="bg-gray-50 rounded-xl p-4">
-                    <div class="grid grid-cols-2 gap-2 text-sm">
-                        <div class="flex items-center gap-2">
-                            <span class="font-mono text-green-600">200</span>
-                            <span class="text-gray-600">成功</span>
-                        </div>
-                        <div class="flex items-center gap-2">
-                            <span class="font-mono text-yellow-600">400</span>
-                            <span class="text-gray-600">请求参数错误</span>
-                        </div>
-                        <div class="flex items-center gap-2">
-                            <span class="font-mono text-yellow-600">404</span>
-                            <span class="text-gray-600">规则组不存在</span>
-                        </div>
-                        <div class="flex items-center gap-2">
-                            <span class="font-mono text-yellow-600">413</span>
-                            <span class="text-gray-600">文件过大</span>
-                        </div>
-                        <div class="flex items-center gap-2">
-                            <span class="font-mono text-yellow-600">422</span>
-                            <span class="text-gray-600">文件格式不支持</span>
-                        </div>
-                        <div class="flex items-center gap-2">
-                            <span class="font-mono text-red-600">500</span>
-                            <span class="text-gray-600">服务器内部错误</span>
-                        </div>
-                        <div class="flex items-center gap-2">
-                            <span class="font-mono text-red-600">502</span>
-                            <span class="text-gray-600">LLM API调用失败</span>
-                        </div>
-                        <div class="flex items-center gap-2">
-                            <span class="font-mono text-red-600">504</span>
-                            <span class="text-gray-600">请求超时</span>
-                        </div>
-                    </div>
+                    <p class="text-sm text-gray-600">左侧面板的文档结构目录中，点击任意章节标题可自动跳转到文档预览区的对应位置并高亮显示，方便快速浏览文档内容。</p>
                 </div>
             </section>
 
@@ -942,7 +878,7 @@
             </button>
         </div>
         <div class="p-6 space-y-4">
-            <p class="text-sm text-gray-500">请输入锁密码解锁规则组。如忘记密码，可使用默认密码 <code class="bg-gray-100 px-1 rounded text-xs">smartdocadmin</code> 强制解锁。</p>
+            <p class="text-sm text-gray-500">请输入锁密码解锁规则组。</p>
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">密码 <span class="text-red-500">*</span></label>
                 <input type="password" id="unlockPassword" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-sm" placeholder="请输入锁密码">
