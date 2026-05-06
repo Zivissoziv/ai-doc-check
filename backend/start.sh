@@ -6,9 +6,17 @@ JAR_FILE="target/${APP_NAME}-${APP_VERSION}.jar"
 
 LOG_PATH="${LOG_PATH:-./logs}"
 SPRING_PROFILES_ACTIVE="${SPRING_PROFILES_ACTIVE:-prod}"
-DB_URL="${DB_URL:-jdbc:mysql://localhost:3306/smartdoc?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai}"
-DB_USERNAME="${DB_USERNAME:-root}"
-DB_PASSWORD="${DB_PASSWORD:-123456}"
+
+# 如果存在 config/ 外部配置文件，直接使用（无需设置环境变量）
+# 否则回退到环境变量方式
+CONFIG_DIR="./config"
+if [ -d "$CONFIG_DIR" ] && [ "$(ls -A $CONFIG_DIR/*.properties 2>/dev/null)" ]; then
+    echo "使用外部配置文件: ${CONFIG_DIR}/application-${SPRING_PROFILES_ACTIVE}.properties"
+    CONFIG_OPTS=""
+else
+    echo "未检测到外部配置文件，使用环境变量方式"
+    CONFIG_OPTS="-DDB_URL=${DB_URL:-jdbc:mysql://localhost:3306/smartdoc?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai} -DDB_USERNAME=${DB_USERNAME:-root} -DDB_PASSWORD=${DB_PASSWORD:-123456}"
+fi
 
 JAVA_OPTS="-Xms512m -Xmx1024m -XX:+UseG1GC"
 
@@ -19,7 +27,7 @@ echo "SmartDoc Backend Startup Script"
 echo "========================================"
 echo "Profile: ${SPRING_PROFILES_ACTIVE}"
 echo "Log Path: ${LOG_PATH}"
-echo "Database: ${DB_URL}"
+echo "Config: ${CONFIG_DIR:-环境变量}"
 echo "========================================"
 
 if [ ! -f "$JAR_FILE" ]; then
@@ -31,9 +39,7 @@ fi
 nohup java ${JAVA_OPTS} \
     -Dspring.profiles.active=${SPRING_PROFILES_ACTIVE} \
     -DLOG_PATH=${LOG_PATH} \
-    -DDB_URL=${DB_URL} \
-    -DDB_USERNAME=${DB_USERNAME} \
-    -DDB_PASSWORD=${DB_PASSWORD} \
+    ${CONFIG_OPTS} \
     -jar ${JAR_FILE} \
     > ${LOG_PATH}/startup.log 2>&1 &
 
