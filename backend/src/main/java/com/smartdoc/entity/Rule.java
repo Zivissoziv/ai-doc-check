@@ -1,7 +1,14 @@
 package com.smartdoc.entity;
 
-import com.baomidou.mybatisplus.annotation.*;
-import lombok.*;
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import javax.validation.constraints.NotBlank;
 import javax.validation.constraints.Size;
@@ -48,6 +55,11 @@ public class Rule {
     private LocalDateTime updatedAt;
 
     public enum Severity {
-        ERROR, WARNING, INFO
+        /** 错误（必须修复） */
+        ERROR,
+        /** 警告（建议修改） */
+        WARNING,
+        /** 提示（仅供参考） */
+        INFO
     }
 }

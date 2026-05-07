@@ -4,7 +4,7 @@ SET NAMES utf8mb4;
 SET CHARACTER SET utf8mb4;
 
 -- 创建数据库
-CREATE DATABASE IF NOT EXISTS smartdoc DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS smartdoc DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
 
 USE smartdoc;
 
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS rule_group (
     lock_password VARCHAR(100),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 -- 规则表
 CREATE TABLE IF NOT EXISTS rule (
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS rule (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (rule_group_id) REFERENCES rule_group(id) ON DELETE CASCADE,
     INDEX idx_rule_group_id (rule_group_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 -- API配置表
 CREATE TABLE IF NOT EXISTS api_config (
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS api_config (
     ticket_token VARCHAR(500),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 -- 模板表
 CREATE TABLE IF NOT EXISTS template (
@@ -61,29 +61,7 @@ CREATE TABLE IF NOT EXISTS template (
     is_default BOOLEAN DEFAULT FALSE,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- 插入默认API配置
-INSERT INTO api_config (id, provider, endpoint, model, audit_role) 
-VALUES (1, 'custom', 'https://api.deepseek.com/v1/chat/completions', 'deepseek-chat', '专业文档审核专家')
-ON DUPLICATE KEY UPDATE endpoint = VALUES(endpoint);
-
--- 插入默认规则组
-INSERT INTO rule_group (group_id, group_name, is_default) 
-VALUES ('znywz', '智能运维组', TRUE);
-
-INSERT INTO rule_group (group_id, group_name, is_default) 
-VALUES ('yyxzz', '应用X组', FALSE);
-
--- 插入示例规则
-INSERT INTO rule (rule_group_id, rule_name, prompt, severity, is_enabled, sort_order)
-SELECT 1, '文档标题检查', '检查文档是否有明确的标题，标题是否规范', 'WARNING', TRUE, 1;
-
-INSERT INTO rule (rule_group_id, rule_name, prompt, severity, is_enabled, sort_order)
-SELECT 1, '文档结构检查', '检查文档是否有清晰的章节结构，是否包含必要的章节', 'WARNING', TRUE, 2;
-
-INSERT INTO rule (rule_group_id, rule_name, prompt, severity, is_enabled, sort_order)
-SELECT 1, '关键信息检查', '检查文档是否包含必要的关键信息，如日期、版本号等', 'ERROR', TRUE, 3;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 -- AI审核统计表
 CREATE TABLE IF NOT EXISTS audit_stats (
@@ -93,12 +71,22 @@ CREATE TABLE IF NOT EXISTS audit_stats (
     last_date VARCHAR(10),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 -- 插入默认统计数据
 INSERT INTO audit_stats (id, total_count, today_count, last_date)
 VALUES (1, 0, 0, '')
 ON DUPLICATE KEY UPDATE total_count = VALUES(total_count);
+
+-- 审核每日统计表
+CREATE TABLE IF NOT EXISTS audit_daily_stats (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    stat_date DATE NOT NULL UNIQUE,
+    count INT DEFAULT 0,
+    total_duration_ms BIGINT DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 -- 审核反馈表
 CREATE TABLE IF NOT EXISTS audit_feedback (
@@ -109,7 +97,8 @@ CREATE TABLE IF NOT EXISTS audit_feedback (
     results_json TEXT,
     feedback_type VARCHAR(20),
     reason VARCHAR(500),
+     duration_ms BIGINT DEFAULT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_feedback_rule_id (rule_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

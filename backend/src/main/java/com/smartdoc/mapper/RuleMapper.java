@@ -23,4 +23,7 @@ public interface RuleMapper extends BaseMapper<Rule> {
 
     @Delete("DELETE FROM rule WHERE rule_group_id = #{ruleGroupId}")
     void deleteByRuleGroupId(@Param("ruleGroupId") Long ruleGroupId);
+
+    @Select("SELECT r.id FROM rule r JOIN rule_group rg ON r.rule_group_id = rg.id WHERE rg.group_id = #{groupId}")
+    List<Long> findIdsByGroupId(@Param("groupId") String groupId);
 }

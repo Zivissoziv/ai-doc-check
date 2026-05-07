@@ -36,7 +36,7 @@ public class AuditFeedbackService {
             try {
                 resultsJson = objectMapper.writeValueAsString(result);
             } catch (JsonProcessingException e) {
-                log.error("序列化审核结果失败: {}", e.getMessage());
+                log.error("序列化审核结果失败: {}", e.getMessage(), e);
                 throw new BusinessException("序列化审核结果失败: " + e.getMessage());
             }
             AuditFeedback feedback = AuditFeedback.builder()
@@ -74,9 +74,9 @@ public class AuditFeedbackService {
     public RuleFeedbackStatsDto getRuleStats(Long ruleId) {
         AuditFeedbackMapper mapper = auditFeedbackMapper;
 
-        Long totalAuditCount = mapper.selectCount(
+        Long totalAuditCount = Long.valueOf(mapper.selectCount(
                 new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<AuditFeedback>()
-                        .eq(AuditFeedback::getRuleId, ruleId));
+                        .eq(AuditFeedback::getRuleId, ruleId)));
         Long passCount = mapper.countByRuleIdAndPass(ruleId, true);
 
         double passRate = 0.0;
@@ -84,10 +84,10 @@ public class AuditFeedbackService {
             passRate = (double) passCount / totalAuditCount * 100;
         }
 
-        Long totalFeedbackCount = mapper.selectCount(
+        Long totalFeedbackCount = Long.valueOf(mapper.selectCount(
                 new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<AuditFeedback>()
                         .eq(AuditFeedback::getRuleId, ruleId)
-                        .isNotNull(AuditFeedback::getFeedbackType));
+                        .isNotNull(AuditFeedback::getFeedbackType)));
         Long accurateCount = mapper.countByRuleIdAndFeedbackType(ruleId, "ACCURATE");
         Long inaccurateCount = mapper.countByRuleIdAndFeedbackType(ruleId, "INACCURATE");
 

@@ -8,7 +8,11 @@ import com.smartdoc.entity.ApiConfig;
 import com.smartdoc.entity.Rule;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.*;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
@@ -180,14 +184,21 @@ public class AiAuditService {
         return basePrompt;
     }
 
+    private static final Pattern DATA_VAR_PATTERN = Pattern.compile("\\{\\{data\\.([^}]+)\\}\\}");
+    private static final Pattern CODE_BLOCK_PATTERN = Pattern.compile("```(?:json)?\\s*([\\s\\S]*?)\\s*```");
+    private static final Pattern TRAILING_COMMA_PATTERN = Pattern.compile(",\\s*([}\\]])");
+    private static final Pattern NAN_PATTERN = Pattern.compile("\\bNaN\\b");
+    private static final Pattern INFINITY_PATTERN = Pattern.compile("\\bInfinity\\b");
+    private static final Pattern NEG_INFINITY_PATTERN = Pattern.compile("\\b-Infinity\\b");
+    private static final Pattern DOT_SPLIT_PATTERN = Pattern.compile("\\.");
+
     private String replaceDataVars(String prompt, Map<String, Object> data) {
-        Pattern pattern = Pattern.compile("\\{\\{data\\.([^}]+)\\}\\}");
-        Matcher matcher = pattern.matcher(prompt);
+        Matcher matcher = DATA_VAR_PATTERN.matcher(prompt);
         
         StringBuffer result = new StringBuffer();
         while (matcher.find()) {
             String varPath = matcher.group(1);
-            String[] parts = varPath.split("\\.");
+            String[] parts = DOT_SPLIT_PATTERN.split(varPath);
             
             Object value = data;
             try {
@@ -261,7 +272,7 @@ public class AiAuditService {
             return extractContent(responseBody);
             
         } catch (Exception e) {
-            log.error("调用LLM失败: {}", e.getMessage());
+            log.error("调用LLM失败: {}", e.getMessage(), e);
             throw new RuntimeException("调用AI服务失败: " + e.getMessage(), e);
         }
     }
@@ -283,7 +294,7 @@ public class AiAuditService {
             throw new RuntimeException("LLM响应格式错误");
             
         } catch (Exception e) {
-            log.error("解析LLM响应失败: {}", e.getMessage());
+            log.error("解析LLM响应失败: {}", e.getMessage(), e);
             throw new RuntimeException("解析AI响应失败: " + e.getMessage(), e);
         }
     }
@@ -294,19 +305,18 @@ public class AiAuditService {
         }
 
         content = content.trim();
-        
-        Pattern codeBlockPattern = Pattern.compile("```(?:json)?\\s*([\\s\\S]*?)\\s*```");
-        Matcher matcher = codeBlockPattern.matcher(content);
-        if (matcher.find()) {
-            content = matcher.group(1).trim();
+
+        Matcher codeBlockMatcher = CODE_BLOCK_PATTERN.matcher(content);
+        if (codeBlockMatcher.find()) {
+            content = codeBlockMatcher.group(1).trim();
         }
 
-        content = content.replaceAll(",\\s*([}\\]])", "$1");
+        content = TRAILING_COMMA_PATTERN.matcher(content).replaceAll("$1");
         
         content = content.replace("undefined", "null");
-        content = content.replaceAll("\\bNaN\\b", "null");
-        content = content.replaceAll("\\bInfinity\\b", "null");
-        content = content.replaceAll("\\b-Infinity\\b", "null");
+        content = NAN_PATTERN.matcher(content).replaceAll("null");
+        content = INFINITY_PATTERN.matcher(content).replaceAll("null");
+        content = NEG_INFINITY_PATTERN.matcher(content).replaceAll("null");
 
         return content;
     }
@@ -342,7 +352,7 @@ public class AiAuditService {
             }
             
         } catch (Exception e) {
-            log.error("解析审核结果失败: {}", e.getMessage());
+            log.error("解析审核结果失败: {}", e.getMessage(), e);
             
             for (int i = 0; i < rules.size(); i++) {
                 Rule rule = rules.get(i);

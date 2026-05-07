@@ -1,5 +1,6 @@
 package com.smartdoc.service;
 
+import com.alibaba.excel.EasyExcel;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.hwpf.HWPFDocument;
 import org.apache.poi.hwpf.extractor.WordExtractor;
@@ -14,6 +15,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Service
@@ -83,7 +85,7 @@ public class DocumentParserService {
             return result;
 
         } catch (IOException e) {
-            log.error("解析DOC失败: {}", e.getMessage());
+            log.error("解析DOC失败: {}", e.getMessage(), e);
             throw new RuntimeException("解析DOC文件失败: " + e.getMessage(), e);
         }
     }
@@ -107,7 +109,7 @@ public class DocumentParserService {
             return result;
 
         } catch (IOException e) {
-            log.error("解析DOCX失败: {}", e.getMessage());
+            log.error("解析DOCX失败: {}", e.getMessage(), e);
             throw new RuntimeException("解析DOCX文件失败: " + e.getMessage(), e);
         }
     }
@@ -123,7 +125,7 @@ public class DocumentParserService {
             return text.trim();
 
         } catch (IOException e) {
-            log.error("解析PDF失败: {}", e.getMessage());
+            log.error("解析PDF失败: {}", e.getMessage(), e);
             throw new RuntimeException("解析PDF文件失败: " + e.getMessage(), e);
         }
     }
@@ -139,59 +141,36 @@ public class DocumentParserService {
                 log.debug("解析TXT(GBK)成功，文本长度: {}", text.length());
                 return text.trim();
             } catch (Exception ex) {
-                log.error("解析TXT失败: {}", ex.getMessage());
+                log.error("解析TXT失败: {}", ex.getMessage(), ex);
                 throw new RuntimeException("解析TXT文件失败: " + ex.getMessage(), ex);
             }
         }
     }
 
     public List<List<String>> parseExcel(byte[] fileBytes) {
-        try (ByteArrayInputStream bis = new ByteArrayInputStream(fileBytes);
-             org.apache.poi.ss.usermodel.Workbook workbook = 
-                 new org.apache.poi.xssf.usermodel.XSSFWorkbook(bis)) {
-            
-            List<List<String>> result = new ArrayList<>();
-            
-            for (int i = 0; i < workbook.getNumberOfSheets(); i++) {
-                org.apache.poi.ss.usermodel.Sheet sheet = workbook.getSheetAt(i);
-                List<String> sheetData = new ArrayList<>();
-                
-                for (org.apache.poi.ss.usermodel.Row row : sheet) {
+        List<List<String>> result = new ArrayList<>();
+        try (ByteArrayInputStream bis = new ByteArrayInputStream(fileBytes)) {
+            List<Object> rows = EasyExcel.read(bis).headRowNumber(0).sheet().doReadSync();
+            List<String> sheetData = new ArrayList<>();
+            for (Object row : rows) {
+                if (row instanceof Map) {
+                    Map<Integer, String> rowMap = (Map<Integer, String>) row;
                     StringBuilder rowBuilder = new StringBuilder();
-                    for (org.apache.poi.ss.usermodel.Cell cell : row) {
-                        String cellValue = getCellValue(cell);
-                        rowBuilder.append(cellValue).append("\t");
+                    for (Map.Entry<Integer, String> entry : rowMap.entrySet()) {
+                        if (rowBuilder.length() > 0) {
+                            rowBuilder.append("\t");
+                        }
+                        rowBuilder.append(entry.getValue() != null ? entry.getValue() : "");
                     }
                     sheetData.add(rowBuilder.toString().trim());
                 }
-                result.add(sheetData);
             }
-            
-            log.debug("解析Excel成功，sheet数量: {}", result.size());
+            result.add(sheetData);
+            log.debug("解析Excel成功，sheet数据行数: {}", sheetData.size());
             return result;
-            
-        } catch (IOException e) {
-            log.error("解析Excel失败: {}", e.getMessage());
+        } catch (Exception e) {
+            log.error("解析Excel失败: {}", e.getMessage(), e);
             throw new RuntimeException("解析Excel文件失败: " + e.getMessage(), e);
-        }
-    }
-
-    private String getCellValue(org.apache.poi.ss.usermodel.Cell cell) {
-        if (cell == null) {
-            return "";
-        }
-        
-        switch (cell.getCellType()) {
-            case STRING:
-                return cell.getStringCellValue();
-            case NUMERIC:
-                return String.valueOf(cell.getNumericCellValue());
-            case BOOLEAN:
-                return String.valueOf(cell.getBooleanCellValue());
-            case FORMULA:
-                return cell.getCellFormula();
-            default:
-                return "";
         }
     }
 }

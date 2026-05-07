@@ -15,7 +15,15 @@ mybatis-plus:
 logging:
   level:
     com.smartdoc: DEBUG
+    com.smartdoc.mapper: DEBUG
     org.springframework.web: DEBUG
+    org.springframework.boot: INFO
+    org.springframework.boot.autoconfigure: INFO
+    com.baomidou.mybatisplus: DEBUG
+    org.mybatis: DEBUG
+    java.sql.Connection: DEBUG
+    java.sql.Statement: DEBUG
+    java.sql.PreparedStatement: DEBUG
   file:
     path: ./logs
 

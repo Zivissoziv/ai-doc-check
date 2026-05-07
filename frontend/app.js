@@ -764,6 +764,7 @@ class SmartDocApp {
         }
         
         this.isAuditing = true;
+        const auditStartTime = Date.now();
         const btn = document.getElementById('runAuditBtn');
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 审核中...';
@@ -839,6 +840,17 @@ class SmartDocApp {
             document.getElementById('auditBadge').classList.remove('hidden');
             UiHelpers.switchTab('audit');
             this.incrementAuditStats();
+
+            const auditDuration = Date.now() - auditStartTime;
+            try {
+                await fetch('/api/stats/duration', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ durationMs: auditDuration, groupId: this.currentRuleGroup })
+                });
+            } catch (e) {
+                console.error('记录耗时失败:', e);
+            }
         } catch (err) {
             UiHelpers.setStatus('审核失败: ' + err.message);
             console.error('审核失败:', err);
@@ -1193,12 +1205,14 @@ class SmartDocApp {
         content.innerHTML = '<div class="text-center text-gray-400 py-8"><i class="fas fa-spinner fa-spin text-3xl mb-2"></i><p class="text-sm">加载中...</p></div>';
 
         try {
-            const [statsRes, groupsRes] = await Promise.all([
+            const [statsRes, dailyRes, groupsRes] = await Promise.all([
                 fetch('/api/stats'),
+                fetch('/api/stats/daily'),
                 fetch('/api/config/rules')
             ]);
 
             const stats = statsRes.ok ? await statsRes.json() : { totalCount: 0, todayCount: 0 };
+            const dailyData = dailyRes.ok ? await dailyRes.json() : [];
             const groupData = groupsRes.ok ? await groupsRes.json() : { groups: [] };
 
             this._statsGroupData = groupData.groups || [];
@@ -1208,10 +1222,12 @@ class SmartDocApp {
                 groupOptionsHtml += `<option value="${g.groupId}">${g.name}</option>`;
             });
 
+            const chartHtml = this._renderDailyChart(dailyData);
+
             content.innerHTML = `
                 <div class="bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl p-4">
                     <h3 class="text-sm font-semibold text-gray-700 mb-3"><i class="fas fa-chart-simple text-blue-500 mr-1"></i>全局审核统计</h3>
-                    <div class="grid grid-cols-2 gap-4">
+                    <div class="grid grid-cols-2 gap-4 mb-4">
                         <div class="bg-white rounded-lg p-4 shadow-sm border border-blue-100">
                             <div class="flex items-center gap-2 mb-2">
                                 <i class="fas fa-chart-line text-blue-500"></i>
@@ -1227,15 +1243,27 @@ class SmartDocApp {
                             <div class="text-2xl font-bold text-purple-600">${stats.todayCount || 0}</div>
                         </div>
                     </div>
+                    ${chartHtml}
+                </div>
+
+                <div class="bg-white rounded-xl border border-gray-200 p-4">
+                    <h3 class="text-sm font-semibold text-gray-700 mb-3"><i class="fas fa-layer-group text-blue-500 mr-1"></i>规则组统计</h3>
+                    <div class="mb-3">
+                        <select id="statsGroupSelect" onchange="app.onStatsGroupChange()" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            ${groupOptionsHtml}
+                        </select>
+                    </div>
+                    <div id="groupStatsPanel">
+                        <div class="text-center text-gray-400 py-4 text-sm">
+                            <i class="fas fa-hand-pointer mr-1"></i>请选择规则组查看统计信息
+                        </div>
+                    </div>
                 </div>
 
                 <div class="bg-white rounded-xl border border-gray-200 p-4">
                     <h3 class="text-sm font-semibold text-gray-700 mb-3"><i class="fas fa-robot text-blue-500 mr-1"></i>规则反馈统计</h3>
-                    <div class="flex gap-2 mb-3">
-                        <select id="statsGroupSelect" onchange="app.onStatsGroupChange()" class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                            ${groupOptionsHtml}
-                        </select>
-                        <select id="statsRuleSelect" onchange="app.loadSelectedRuleStats()" class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" disabled>
+                    <div class="mb-3">
+                        <select id="statsRuleSelect" onchange="app.loadSelectedRuleStats()" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" disabled>
                             <option value="">-- 请先选择规则组 --</option>
                         </select>
                     </div>
@@ -1251,15 +1279,40 @@ class SmartDocApp {
         }
     }
 
-    onStatsGroupChange() {
+    _renderDailyChart(dailyData) {
+        if (!dailyData || dailyData.length === 0) {
+            return '<div class="text-center text-gray-400 py-2 text-xs">暂无近7天数据</div>';
+        }
+        const maxCount = Math.max(...dailyData.map(d => d.count), 1);
+        let barsHtml = dailyData.map((d, i) => {
+            const height = Math.max(Math.round(d.count / maxCount * 100), d.count > 0 ? 4 : 0);
+            const avgSec = d.avgDurationMs > 0 ? Math.round(d.avgDurationMs / 1000) : 0;
+            return `<div class="flex-1 flex flex-col items-center gap-1">
+                <span class="text-xs font-medium text-gray-700">${d.count}</span>
+                <div class="w-full bg-blue-100 rounded-t-md relative" style="height:${height}px;min-width:20px">
+                    <div class="absolute inset-x-0 bottom-0 bg-blue-500 rounded-t-md" style="height:${height}px"></div>
+                </div>
+                <span class="text-xs text-gray-400">${d.date}</span>
+                ${avgSec > 0 ? `<span class="text-xs text-gray-300">${avgSec}s</span>` : ''}
+            </div>`;
+        }).join('');
+
+        return `<div>
+            <h4 class="text-xs font-medium text-gray-600 mb-2">近7天调用量</h4>
+            <div class="flex items-end gap-1 h-[140px] px-2">${barsHtml}</div>
+        </div>`;
+    }
+
+    async onStatsGroupChange() {
         const groupId = document.getElementById('statsGroupSelect').value;
         const ruleSelect = document.getElementById('statsRuleSelect');
-        const container = document.getElementById('selectedRuleStats');
+        const groupPanel = document.getElementById('groupStatsPanel');
 
         if (!groupId) {
             ruleSelect.innerHTML = '<option value="">-- 请先选择规则组 --</option>';
             ruleSelect.disabled = true;
-            container.innerHTML = '<div class="text-center text-gray-400 py-4 text-sm"><i class="fas fa-hand-pointer mr-1"></i>请先选择规则组，再选择规则查看不准确反馈</div>';
+            groupPanel.innerHTML = '<div class="text-center text-gray-400 py-4 text-sm"><i class="fas fa-hand-pointer mr-1"></i>请选择规则组查看统计信息</div>';
+            document.getElementById('selectedRuleStats').innerHTML = '<div class="text-center text-gray-400 py-4 text-sm"><i class="fas fa-hand-pointer mr-1"></i>请先选择规则组，再选择规则查看不准确反馈</div>';
             return;
         }
 
@@ -1269,15 +1322,42 @@ class SmartDocApp {
         if (rules.length === 0) {
             ruleSelect.innerHTML = '<option value="">-- 该规则组暂无规则 --</option>';
             ruleSelect.disabled = true;
-            container.innerHTML = '<div class="text-center text-gray-400 py-4 text-sm">该规则组暂无规则</div>';
-            return;
+            document.getElementById('selectedRuleStats').innerHTML = '<div class="text-center text-gray-400 py-4 text-sm">该规则组暂无规则</div>';
+        } else {
+            ruleSelect.disabled = false;
+            ruleSelect.innerHTML = '<option value="">-- 请选择规则 --</option>' +
+                rules.map(r => `<option value="${r.id}">${r.name}</option>`).join('');
+            document.getElementById('selectedRuleStats').innerHTML = '<div class="text-center text-gray-400 py-4 text-sm"><i class="fas fa-hand-pointer mr-1"></i>请从上方下拉框选择规则查看不准确反馈</div>';
         }
 
-        ruleSelect.disabled = false;
-        ruleSelect.innerHTML = '<option value="">-- 请选择规则 --</option>' +
-            rules.map(r => `<option value="${r.id}">${r.name}</option>`).join('');
+        groupPanel.innerHTML = '<div class="text-center text-gray-400 py-4"><i class="fas fa-spinner fa-spin text-xl mb-1"></i><p class="text-xs">加载中...</p></div>';
 
-        container.innerHTML = '<div class="text-center text-gray-400 py-4 text-sm"><i class="fas fa-hand-pointer mr-1"></i>请从上方下拉框选择规则查看不准确反馈</div>';
+        try {
+            const gsRes = await fetch(`/api/stats/group/${groupId}`);
+            if (!gsRes.ok) throw new Error('获取规则组统计失败');
+            const gs = await gsRes.json();
+
+            const avgSec = gs.avgDurationMs > 0 ? (gs.avgDurationMs / 1000).toFixed(1) : '-';
+
+            groupPanel.innerHTML = `
+                <div class="grid grid-cols-3 gap-2">
+                    <div class="bg-blue-50 rounded-lg p-3 text-center">
+                        <div class="text-xl font-bold text-blue-600">${gs.totalAuditCount || 0}</div>
+                        <div class="text-xs text-blue-500">累计审核</div>
+                    </div>
+                    <div class="bg-green-50 rounded-lg p-3 text-center">
+                        <div class="text-xl font-bold text-green-600">${gs.passRate || 0}%</div>
+                        <div class="text-xs text-green-500">总通过率</div>
+                    </div>
+                    <div class="bg-purple-50 rounded-lg p-3 text-center">
+                        <div class="text-xl font-bold text-purple-600">${avgSec === '-' ? '-' : avgSec + 's'}</div>
+                        <div class="text-xs text-purple-500">平均耗时</div>
+                    </div>
+                </div>
+            `;
+        } catch (err) {
+            groupPanel.innerHTML = '<div class="text-center text-red-500 py-4 text-sm">加载失败: ' + err.message + '</div>';
+        }
     }
 
     async loadSelectedRuleStats() {

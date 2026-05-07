@@ -4,9 +4,15 @@ import com.smartdoc.entity.AuditStats;
 import com.smartdoc.service.AuditStatsService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -18,11 +24,7 @@ public class AuditStatsController {
 
     @GetMapping("/stats")
     public ResponseEntity<Map<String, Object>> getStats() {
-        AuditStats stats = auditStatsService.getStats();
-        Map<String, Object> response = new HashMap<>();
-        response.put("totalCount", stats.getTotalCount());
-        response.put("todayCount", stats.getTodayCount());
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(auditStatsService.getStats());
     }
 
     @PostMapping("/stats/increment")
@@ -33,5 +35,25 @@ public class AuditStatsController {
         response.put("totalCount", stats.getTotalCount());
         response.put("todayCount", stats.getTodayCount());
         return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/stats/duration")
+    public ResponseEntity<Map<String, Object>> recordDuration(@RequestBody Map<String, Object> body) {
+        Long durationMs = Long.valueOf(body.getOrDefault("durationMs", 0).toString());
+        String groupId = (String) body.getOrDefault("groupId", null);
+        auditStatsService.recordAuditDuration(durationMs, groupId);
+        Map<String, Object> response = new HashMap<>();
+        response.put("success", true);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/stats/daily")
+    public ResponseEntity<List<Map<String, Object>>> getDailyStats() {
+        return ResponseEntity.ok(auditStatsService.getDailyStats());
+    }
+
+    @GetMapping("/stats/group/{groupId}")
+    public ResponseEntity<Map<String, Object>> getGroupStats(@PathVariable String groupId) {
+        return ResponseEntity.ok(auditStatsService.getGroupStats(groupId));
     }
 }
