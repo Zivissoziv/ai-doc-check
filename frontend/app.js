@@ -160,7 +160,6 @@ class SmartDocApp {
         this.settings.model = apiConfig.model || API_DEFAULTS.model;
         this.settings.auditRole = apiConfig.auditRole || API_DEFAULTS.auditRole;
         this.settings.hasApiKey = apiConfig.hasApiKey || false;
-        this.settings.ticketEndpoint = apiConfig.ticketEndpoint || '';
     }
     
     async loadPresetConfig() {
@@ -776,9 +775,28 @@ class SmartDocApp {
         
         try {
             const auditList = document.getElementById('auditList');
-            const placeholders = activeRules.map((_, i) => {
+            const placeholders = activeRules.map((rule, i) => {
                 const div = document.createElement('div');
                 div.id = 'audit-rule-' + i;
+                div.innerHTML = `
+                    <div class="bg-white rounded-xl border border-gray-200 p-6 animate-pulse">
+                        <div class="flex items-center gap-3 mb-4">
+                            <div class="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center">
+                                <i class="fas fa-spinner fa-spin text-gray-400"></i>
+                            </div>
+                            <div class="flex-1">
+                                <div class="h-4 bg-gray-200 rounded w-1/3 mb-2"></div>
+                                <div class="flex items-center gap-2">
+                                    <span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-400 text-xs">${rule.severity === 'error' ? '错误' : rule.severity === 'warning' ? '警告' : '信息'}</span>
+                                    <span class="text-xs text-gray-300"><i class="fas fa-spinner fa-spin"></i> 审核中...</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="space-y-2">
+                            <div class="h-3 bg-gray-100 rounded w-full"></div>
+                            <div class="h-3 bg-gray-100 rounded w-2/3"></div>
+                        </div>
+                    </div>`;
                 auditList.appendChild(div);
                 return div;
             });
@@ -798,27 +816,72 @@ class SmartDocApp {
                 }
             };
 
-            const response = await fetch('/api/audit', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(auditRequest)
-            });
+            const batchSize = this.settings.batchSize || 0;
+            let allResults = [];
 
-            if (!response.ok) {
-                const err = await response.json();
-                throw new Error(err.error || '审核请求失败');
+            if (batchSize > 0) {
+                const response = await fetch('/api/audit/stream', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(auditRequest)
+                });
+
+                if (!response.ok) {
+                    throw new Error('审核请求失败');
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+
+                    for (const line of lines) {
+                        if (!line.trim()) continue;
+                        try {
+                            const parsed = JSON.parse(line);
+                            const idx = parsed.index;
+                            const result = parsed.result;
+                            if (idx != null && result) {
+                                this.auditResults[idx] = result;
+                                AiAudit.renderResult(result, placeholders[idx], idx);
+                                allResults[idx] = result;
+                            }
+                        } catch (e) {
+                            console.error('解析流式结果失败:', e);
+                        }
+                    }
+                }
+            } else {
+                const response = await fetch('/api/audit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(auditRequest)
+                });
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.error || '审核请求失败');
+                }
+
+                const data = await response.json();
+                allResults = data.results || [];
+
+                allResults.forEach((result, i) => {
+                    this.auditResults[i] = result;
+                    AiAudit.renderResult(result, placeholders[i], i);
+                });
             }
 
-            const data = await response.json();
-            const results = data.results || [];
-
-            results.forEach((result, i) => {
-                this.auditResults[i] = result;
-                AiAudit.renderResult(result, placeholders[i], i);
-            });
-
             try {
-                const saveResults = results.map(r => ({
+                const validResults = allResults.filter(Boolean);
+                const saveResults = validResults.map(r => ({
                     ruleId: r.ruleId,
                     ruleName: r.ruleName,
                     severity: r.severity,
@@ -829,7 +892,7 @@ class SmartDocApp {
                 }));
                 const saveResponse = await FeedbackAPI.saveAuditResults(saveResults);
                 const feedbackIds = saveResponse.ids || [];
-                results.forEach((r, i) => {
+                validResults.forEach((r, i) => {
                     r._feedbackId = feedbackIds[i];
                 });
             } catch (err) {

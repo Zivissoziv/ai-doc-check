@@ -509,13 +509,20 @@ const AiAudit = {
     },
 
     renderResult(result, container, resultIndex) {
+        container.innerHTML = '';
         const div = document.createElement('div');
         div.className = 'bg-white rounded-xl border border-gray-200 p-6 fade-in';
 
-        const isSkipped = result.summary && result.summary.startsWith('已跳过:');
+        const isSkipped = result.summary && (result.summary.startsWith('已跳过:') || result.summary.startsWith('未匹配关键词:'));
 
         if (isSkipped) {
             div.className = 'bg-gray-50 rounded-xl border border-gray-300 p-6 fade-in opacity-75';
+
+            const isKeywordMiss = result.summary && result.summary.startsWith('未匹配关键词:');
+            const skipLabel = isKeywordMiss ? '未匹配' : '已跳过';
+            const skipDesc = isKeywordMiss
+                ? 'AI 已完成审核，但文档中未找到所需关键字'
+                : '此规则因缺少必要数据而被跳过，未进行实际审核';
 
             div.innerHTML = `
                 <div class="flex items-center justify-between mb-4">
@@ -526,14 +533,14 @@ const AiAudit = {
                         <div>
                             <h3 class="font-semibold text-gray-600">${result.ruleName}</h3>
                             <div class="flex items-center gap-2 text-xs text-gray-500">
-                                <span class="px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">已跳过</span>
+                                <span class="px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">${skipLabel}</span>
                                 <span>置信度: ${result.confidence}%</span>
                             </div>
                         </div>
                     </div>
                 </div>
                 <div class="text-sm text-gray-500 mb-4">
-                    <i class="fas fa-info-circle mr-1"></i> 此规则因缺少必要数据而被跳过，未进行实际审核
+                    <i class="fas fa-info-circle mr-1"></i> ${skipDesc}
                 </div>
                 <div class="text-xs text-gray-400 pt-3 border-t border-gray-200">
                     <i class="fas fa-quote-left mr-1 opacity-50"></i> ${result.summary}

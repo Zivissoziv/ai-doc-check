@@ -1,5 +1,6 @@
 package com.smartdoc.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartdoc.dto.AuditResultDto;
@@ -13,13 +14,17 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
+import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -34,11 +39,9 @@ public class AiAuditService {
     @Value("${smartdoc.audit.temperature:0.1}")
     private double defaultTemperature;
 
-    private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
     public AiAuditService() {
-        this.restTemplate = new RestTemplate();
         this.objectMapper = new ObjectMapper();
     }
 
@@ -62,13 +65,35 @@ public class AiAuditService {
             throw new IllegalArgumentException("没有启用的规则");
         }
 
-        log.info("开始AI审核，规则数量: {}, 文档长度: {}", enabledRules.size(), documentText.length());
-
-        if (batchSize > 0 && enabledRules.size() > batchSize) {
-            return performBatchAudit(enabledRules, documentText, apiConfig, userData, repeatPrompt, batchSize);
-        } else {
-            return performSingleAudit(enabledRules, documentText, apiConfig, userData, repeatPrompt);
+        Map<Integer, AuditResultDto> skippedMap = new HashMap<>();
+        List<Rule> resolvableRules = new ArrayList<>();
+        Map<String, Object> safeUserData = userData != null ? userData : new HashMap<>();
+        for (int i = 0; i < enabledRules.size(); i++) {
+            Rule rule = enabledRules.get(i);
+            if (hasDataVarReference(rule.getPrompt())) {
+                List<String> missing = getMissingDataVars(rule.getPrompt(), safeUserData);
+                if (!missing.isEmpty()) {
+                    log.info("跳过规则 '{}': 缺少数据变量 {}", rule.getRuleName(), missing);
+                    skippedMap.put(i, buildSkippedResult(rule, missing));
+                    continue;
+                }
+            }
+            resolvableRules.add(rule);
         }
+
+        List<AuditResultDto> auditResults;
+        if (!resolvableRules.isEmpty()) {
+            log.info("开始AI审核，规则数量: {}, 文档长度: {}", resolvableRules.size(), documentText.length());
+            if (batchSize > 0 && resolvableRules.size() > batchSize) {
+                auditResults = performBatchAudit(resolvableRules, documentText, apiConfig, userData, repeatPrompt, batchSize);
+            } else {
+                auditResults = performSingleAudit(resolvableRules, documentText, apiConfig, userData, repeatPrompt);
+            }
+        } else {
+            auditResults = new ArrayList<>();
+        }
+
+        return mergeInOriginalOrder(enabledRules.size(), skippedMap, auditResults);
     }
 
     private List<AuditResultDto> performBatchAudit(List<Rule> rules, String documentText,
@@ -84,17 +109,24 @@ public class AiAuditService {
 
             log.info("处理第 {} 批，规则 {}-{}", batchIndex + 1, startIdx + 1, endIdx);
 
-            String prompt = buildBatchPrompt(batchRules, documentText, userData, repeatPrompt);
-            String response = callLLM(prompt, apiConfig, defaultTemperature);
+            try {
+                String prompt = buildBatchPrompt(batchRules, documentText, userData, repeatPrompt);
+                String response = callLLM(prompt, apiConfig, defaultTemperature);
 
-            List<AuditResultDto> batchResults = parseAuditResults(response, batchRules);
-            
-            for (int i = 0; i < batchResults.size(); i++) {
-                Rule rule = batchRules.get(i);
-                batchResults.get(i).setRuleId(rule.getId() != null ? rule.getId().intValue() : startIdx + i);
+                List<AuditResultDto> batchResults = parseAuditResults(response, batchRules);
+                
+                for (int i = 0; i < batchResults.size(); i++) {
+                    Rule rule = batchRules.get(i);
+                    batchResults.get(i).setRuleId(rule.getId() != null ? rule.getId().intValue() : startIdx + i);
+                }
+                
+                allResults.addAll(batchResults);
+            } catch (Exception e) {
+                log.error("第 {} 批审核失败: {}", batchIndex + 1, e.getMessage(), e);
+                for (int i = 0; i < batchRules.size(); i++) {
+                    allResults.add(buildErrorResult(batchRules.get(i), startIdx + i, "审核失败: " + e.getMessage()));
+                }
             }
-            
-            allResults.addAll(batchResults);
 
             if (batchIndex < totalBatches - 1) {
                 try {
@@ -114,6 +146,105 @@ public class AiAuditService {
         String prompt = buildBatchPrompt(rules, documentText, userData, repeatPrompt);
         String response = callLLM(prompt, apiConfig, defaultTemperature);
         return parseAuditResults(response, rules);
+    }
+
+    public void performAuditStreaming(List<Rule> rules, String documentText,
+                                       ApiConfig apiConfig, Map<String, Object> userData,
+                                       boolean repeatPrompt, int batchSize,
+                                       Consumer<Map.Entry<Integer, AuditResultDto>> resultCallback) {
+        if (rules == null || rules.isEmpty()) {
+            throw new IllegalArgumentException("规则列表为空");
+        }
+
+        if (documentText == null || documentText.isEmpty()) {
+            throw new IllegalArgumentException("文档内容为空");
+        }
+
+        List<Rule> enabledRules = rules.stream()
+            .filter(r -> r.getIsEnabled() != null && r.getIsEnabled())
+            .collect(Collectors.toList());
+
+        if (enabledRules.isEmpty()) {
+            throw new IllegalArgumentException("没有启用的规则");
+        }
+
+        Map<Integer, AuditResultDto> skippedMap = new HashMap<>();
+        List<Rule> resolvableRules = new ArrayList<>();
+        Map<String, Object> safeUserData = userData != null ? userData : new HashMap<>();
+        for (int i = 0; i < enabledRules.size(); i++) {
+            Rule rule = enabledRules.get(i);
+            if (hasDataVarReference(rule.getPrompt())) {
+                List<String> missing = getMissingDataVars(rule.getPrompt(), safeUserData);
+                if (!missing.isEmpty()) {
+                    log.info("跳过规则 '{}': 缺少数据变量 {}", rule.getRuleName(), missing);
+                    skippedMap.put(i, buildSkippedResult(rule, missing));
+                    continue;
+                }
+            }
+            resolvableRules.add(rule);
+        }
+
+        for (Map.Entry<Integer, AuditResultDto> entry : skippedMap.entrySet()) {
+            resultCallback.accept(entry);
+        }
+
+        int finalBatchSize = batchSize > 0 ? batchSize : resolvableRules.size();
+        int totalBatches = resolvableRules.isEmpty() ? 0 : (resolvableRules.size() + finalBatchSize - 1) / finalBatchSize;
+
+        if (totalBatches > 0) {
+            log.info("开始流式AI审核，可审规则: {}, 文档长度: {}", resolvableRules.size(), documentText.length());
+        }
+
+        for (int batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+            int startIdx = batchIndex * finalBatchSize;
+            int endIdx = Math.min(startIdx + finalBatchSize, resolvableRules.size());
+            List<Rule> batchRules = resolvableRules.subList(startIdx, endIdx);
+
+            log.info("流式处理第 {} 批，规则 {}-{}", batchIndex + 1, findGlobalStart(enabledRules.size(), skippedMap, startIdx) + 1,
+                    findGlobalStart(enabledRules.size(), skippedMap, endIdx - 1) + 1);
+
+            try {
+                String prompt = buildBatchPrompt(batchRules, documentText, userData, repeatPrompt);
+                String response = callLLM(prompt, apiConfig, defaultTemperature);
+
+                List<AuditResultDto> batchResults = parseAuditResults(response, batchRules);
+
+                for (int i = 0; i < batchResults.size(); i++) {
+                    Rule rule = batchRules.get(i);
+                    int globalIdx = findGlobalStart(enabledRules.size(), skippedMap, startIdx + i);
+                    batchResults.get(i).setRuleId(rule.getId() != null ? rule.getId().intValue() : globalIdx);
+                    resultCallback.accept(new AbstractMap.SimpleEntry<>(globalIdx, batchResults.get(i)));
+                }
+            } catch (Exception e) {
+                log.error("第 {} 批审核失败: {}", batchIndex + 1, e.getMessage(), e);
+                for (int i = 0; i < batchRules.size(); i++) {
+                    int globalIdx = findGlobalStart(enabledRules.size(), skippedMap, startIdx + i);
+                    resultCallback.accept(new AbstractMap.SimpleEntry<>(globalIdx,
+                            buildErrorResult(batchRules.get(i), globalIdx, "审核失败: " + e.getMessage())));
+                }
+            }
+
+            if (batchIndex < totalBatches - 1) {
+                try {
+                    Thread.sleep(500);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
+    }
+
+    private int findGlobalStart(int totalEnabled, Map<Integer, AuditResultDto> skippedMap, int resolvableIdx) {
+        int count = 0;
+        for (int i = 0; i < totalEnabled; i++) {
+            if (!skippedMap.containsKey(i)) {
+                if (count == resolvableIdx) {
+                    return i;
+                }
+                count++;
+            }
+        }
+        return resolvableIdx;
     }
 
     public String buildBatchPrompt(List<Rule> rules, String documentText, 
@@ -191,6 +322,8 @@ public class AiAuditService {
     private static final Pattern INFINITY_PATTERN = Pattern.compile("\\bInfinity\\b");
     private static final Pattern NEG_INFINITY_PATTERN = Pattern.compile("\\b-Infinity\\b");
     private static final Pattern DOT_SPLIT_PATTERN = Pattern.compile("\\.");
+    private static final Pattern SINGLE_QUOTE_PATTERN = Pattern.compile("'([^']*?)'");
+    private static final Pattern LEADING_TEXT_PATTERN = Pattern.compile("^[^{]*");
 
     private String replaceDataVars(String prompt, Map<String, Object> data) {
         Matcher matcher = DATA_VAR_PATTERN.matcher(prompt);
@@ -223,6 +356,67 @@ public class AiAuditService {
         matcher.appendTail(result);
         
         return result.toString();
+    }
+
+    private boolean hasDataVarReference(String prompt) {
+        return DATA_VAR_PATTERN.matcher(prompt).find();
+    }
+
+    private List<String> getMissingDataVars(String prompt, Map<String, Object> data) {
+        List<String> missing = new ArrayList<>();
+        Matcher matcher = DATA_VAR_PATTERN.matcher(prompt);
+        while (matcher.find()) {
+            String varPath = matcher.group(1);
+            String[] parts = DOT_SPLIT_PATTERN.split(varPath);
+            Object value = data;
+            for (String part : parts) {
+                if (value instanceof Map) {
+                    value = ((Map<?, ?>) value).get(part);
+                } else {
+                    value = null;
+                    break;
+                }
+            }
+            if (value == null || (value instanceof String && ((String) value).isEmpty())) {
+                missing.add("{{data." + varPath + "}}");
+            }
+        }
+        return missing;
+    }
+
+    private AuditResultDto buildSkippedResult(Rule rule, List<String> missingVars) {
+        String missingStr = String.join("、", missingVars);
+        AuditResultDto result = new AuditResultDto();
+        result.setRuleId(rule.getId() != null ? rule.getId().intValue() : 0);
+        result.setRuleName(rule.getRuleName());
+        result.setSeverity(rule.getSeverity().name().toLowerCase());
+        result.setPass(false);
+        result.setConfidence(0);
+        result.setSummary("已跳过: 缺少必要数据 " + missingStr);
+        result.setIssues(null);
+        return result;
+    }
+
+    private List<AuditResultDto> mergeInOriginalOrder(int totalCount,
+            Map<Integer, AuditResultDto> skippedMap,
+            List<AuditResultDto> auditResults) {
+        List<AuditResultDto> merged = new ArrayList<>();
+        int auditIdx = 0;
+        for (int i = 0; i < totalCount; i++) {
+            if (skippedMap.containsKey(i)) {
+                merged.add(skippedMap.get(i));
+            } else {
+                merged.add(auditResults.get(auditIdx++));
+            }
+        }
+        return merged;
+    }
+
+    private RestTemplate createRestTemplate() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(timeout * 1000);
+        factory.setReadTimeout(timeout * 1000);
+        return new RestTemplate(factory);
     }
 
     private String callLLM(String prompt, ApiConfig apiConfig, double temperature) {
@@ -261,23 +455,44 @@ public class AiAuditService {
 
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
-        try {
-            ResponseEntity<String> response = restTemplate.exchange(
-                endpoint, HttpMethod.POST, entity, String.class
-            );
-            
-            String responseBody = response.getBody();
-            log.debug("LLM响应长度: {}", responseBody != null ? responseBody.length() : 0);
-            
-            return extractContent(responseBody);
-            
-        } catch (Exception e) {
-            log.error("调用LLM失败: {}", e.getMessage(), e);
-            throw new RuntimeException("调用AI服务失败: " + e.getMessage(), e);
+        int maxRetries = 1;
+        int attempt = 0;
+        while (attempt <= maxRetries) {
+            try {
+                RestTemplate rt = createRestTemplate();
+                ResponseEntity<String> response = rt.exchange(
+                    endpoint, HttpMethod.POST, entity, String.class
+                );
+                
+                String responseBody = response.getBody();
+                log.debug("LLM响应长度: {}", responseBody != null ? responseBody.length() : 0);
+                
+                return extractContent(responseBody);
+                
+            } catch (ResourceAccessException e) {
+                attempt++;
+                if (attempt > maxRetries) {
+                    log.error("调用LLM超时(已重试{}次): {}", maxRetries, e.getMessage(), e);
+                    throw new RuntimeException("调用AI服务超时，请稍后重试", e);
+                }
+                log.warn("调用LLM超时(第{}次重试): {}", attempt, e.getMessage());
+                try {
+                    Thread.sleep(2000);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+            } catch (Exception e) {
+                log.error("调用LLM失败: {}", e.getMessage(), e);
+                throw new RuntimeException("调用AI服务失败: " + e.getMessage(), e);
+            }
         }
+        throw new RuntimeException("调用AI服务失败");
     }
 
     private String extractContent(String responseBody) {
+        if (responseBody == null || responseBody.isEmpty()) {
+            throw new RuntimeException("LLM返回内容为空");
+        }
         try {
             JsonNode root = objectMapper.readTree(responseBody);
             JsonNode choices = root.path("choices");
@@ -286,13 +501,20 @@ public class AiAuditService {
                 JsonNode message = choices.get(0).path("message");
                 String content = message.path("content").asText();
                 
-                content = repairJson(content);
+                if (content == null || content.isEmpty()) {
+                    throw new RuntimeException("LLM返回content为空");
+                }
                 
+                content = repairJson(content);
+
                 return content;
             }
             
-            throw new RuntimeException("LLM响应格式错误");
+            throw new RuntimeException("LLM响应格式错误: choices为空");
             
+        } catch (JsonProcessingException e) {
+            log.error("解析LLM原始响应JSON失败: {}", e.getMessage());
+            throw new RuntimeException("解析AI响应失败: " + e.getMessage(), e);
         } catch (Exception e) {
             log.error("解析LLM响应失败: {}", e.getMessage(), e);
             throw new RuntimeException("解析AI响应失败: " + e.getMessage(), e);
@@ -311,12 +533,27 @@ public class AiAuditService {
             content = codeBlockMatcher.group(1).trim();
         }
 
+        content = LEADING_TEXT_PATTERN.matcher(content).replaceFirst("");
+
+        int lastBrace = content.lastIndexOf('}');
+        if (lastBrace >= 0) {
+            content = content.substring(0, lastBrace + 1);
+        }
+
+        content = SINGLE_QUOTE_PATTERN.matcher(content).replaceAll("\"$1\"");
+
+        content = content.replace("'", "\"");
+
         content = TRAILING_COMMA_PATTERN.matcher(content).replaceAll("$1");
-        
+
         content = content.replace("undefined", "null");
         content = NAN_PATTERN.matcher(content).replaceAll("null");
         content = INFINITY_PATTERN.matcher(content).replaceAll("null");
         content = NEG_INFINITY_PATTERN.matcher(content).replaceAll("null");
+
+        content = content.replace("True", "true");
+        content = content.replace("False", "false");
+        content = content.replace("None", "null");
 
         return content;
     }
@@ -350,6 +587,13 @@ public class AiAuditService {
                 AuditResultDto result = buildAuditResult(rule, ruleResult, i);
                 results.add(result);
             }
+
+            if (results.size() < rules.size()) {
+                for (int i = results.size(); i < rules.size(); i++) {
+                    log.warn("结果数量不足，兜底填充规则 {}: {}", i, rules.get(i).getRuleName());
+                    results.add(buildErrorResult(rules.get(i), i, "审核结果缺失"));
+                }
+            }
             
         } catch (Exception e) {
             log.error("解析审核结果失败: {}", e.getMessage(), e);
@@ -378,7 +622,7 @@ public class AiAuditService {
                 }
             }
             
-            return AuditResultDto.builder()
+            AuditResultDto result = AuditResultDto.builder()
                     .ruleId(rule.getId() != null ? rule.getId().intValue() : index)
                     .ruleName(rule.getRuleName())
                     .severity(rule.getSeverity().name().toLowerCase())
@@ -387,9 +631,35 @@ public class AiAuditService {
                     .summary(ruleResult.path("summary").asText("审核完成"))
                     .issues(issues)
                     .build();
+
+            if (!Boolean.TRUE.equals(result.getPass()) && isKeywordMissingResult(result)) {
+                result.setSummary("未匹配关键词: " + result.getSummary());
+            }
+
+            return result;
         } else {
             return buildErrorResult(rule, index, "未找到审核结果");
         }
+    }
+
+    private boolean isKeywordMissingResult(AuditResultDto result) {
+        String summary = result.getSummary() != null ? result.getSummary() : "";
+        if (containsKeywordMissing(summary)) {
+            return true;
+        }
+        if (result.getIssues() != null) {
+            for (AuditIssueDto issue : result.getIssues()) {
+                if (issue.getProblem() != null && containsKeywordMissing(issue.getProblem())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean containsKeywordMissing(String text) {
+        return (text.contains("关键字") || text.contains("关键词"))
+                && (text.contains("未包含") || text.contains("未找到") || text.contains("缺少") || text.contains("没有") || text.contains("不存在"));
     }
 
     private AuditResultDto buildErrorResult(Rule rule, int index, String errorMessage) {

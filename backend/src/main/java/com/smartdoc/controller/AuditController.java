@@ -27,9 +27,13 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
+
+import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
@@ -121,6 +125,66 @@ public class AuditController {
             log.error("审核失败: {}", e.getMessage(), e);
             return ResponseEntity.internalServerError().body(errorMap(e.getMessage()));
         }
+    }
+
+    @PostMapping("/audit/stream")
+    public ResponseEntity<StreamingResponseBody> performAuditStream(@RequestBody AuditRequestDto request) {
+        log.info("收到流式审核请求，规则组: {}", request.getRuleGroupId());
+
+        if (request.getRuleGroupId() == null || request.getRuleGroupId().isEmpty()) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        List<Rule> rules = loadRules(request.getRuleGroupId());
+        if (rules == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        byte[] documentBytes = resolveDocument(request);
+        if (documentBytes == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        String documentType = resolveDocumentType(request, documentBytes);
+        String documentText = parseDocument(documentBytes, documentType);
+        if (documentText == null) {
+            return ResponseEntity.unprocessableEntity().build();
+        }
+
+        Map<String, Object> userData = resolveUserData(request);
+        if (userData == null) {
+            return ResponseEntity.unprocessableEntity().build();
+        }
+
+        ApiConfig apiConfig = resolveApiConfig(request.getSettings());
+
+        StreamingResponseBody streamBody = outputStream -> {
+            try {
+                aiAuditService.performAuditStreaming(
+                    rules, documentText, apiConfig, userData,
+                    isRepeatPrompt(request.getSettings()), getBatchSize(request.getSettings()),
+                    entry -> {
+                        try {
+                            int idx = entry.getKey();
+                            AuditResultDto result = entry.getValue();
+                            String json = objectMapper.writeValueAsString(Map.of("index", idx, "result", result));
+                            outputStream.write((json + "\n").getBytes(StandardCharsets.UTF_8));
+                            outputStream.flush();
+                        } catch (Exception e) {
+                            log.error("流式写入结果失败", e);
+                        }
+                    }
+                );
+
+                outputStream.flush();
+            } catch (Exception e) {
+                log.error("流式审核失败", e);
+            }
+        };
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_NDJSON)
+                .body(streamBody);
     }
 
     private List<Rule> loadRules(String groupId) {
@@ -293,7 +357,14 @@ public class AuditController {
     }
 
     private byte[] downloadFile(String url) {
-        RestTemplate restTemplate = new RestTemplate();
+        String lowerUrl = url.toLowerCase();
+        if (!lowerUrl.startsWith("http://") && !lowerUrl.startsWith("https://")) {
+            throw new RuntimeException("不支持的URL协议");
+        }
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(30000);
+        factory.setReadTimeout(120000);
+        RestTemplate restTemplate = new RestTemplate(factory);
         ResponseEntity<byte[]> response = restTemplate.getForEntity(url, byte[].class);
         return response.getBody();
     }
