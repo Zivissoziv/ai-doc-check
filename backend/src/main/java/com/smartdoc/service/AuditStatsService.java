@@ -147,7 +147,9 @@ public class AuditStatsService {
 
         result.put("totalAuditCount", totalCount);
         result.put("passRate", totalCount > 0 ? Math.round((double) passCount / totalCount * 100) : 0);
-        result.put("avgDurationMs", totalCount > 0 ? totalDuration / totalCount : 0);
+
+        long auditRuns = ruleIds.size() > 0 ? totalCount / ruleIds.size() : 0;
+        result.put("avgDurationMs", auditRuns > 0 ? totalDuration / auditRuns : 0);
 
         return result;
     }

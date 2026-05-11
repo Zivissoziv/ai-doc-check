@@ -2,6 +2,10 @@ server:
   port: 8080
 
 spring:
+  mvc:
+    async:
+      request-timeout: 1800000
+
   datasource:
     url: ${DB_URL:jdbc:mysql://localhost:3306/smartdoc?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
     username: ${DB_USERNAME:root}

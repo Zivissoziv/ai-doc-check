@@ -167,7 +167,10 @@ public class AuditController {
                         try {
                             int idx = entry.getKey();
                             AuditResultDto result = entry.getValue();
-                            String json = objectMapper.writeValueAsString(Map.of("index", idx, "result", result));
+                            Map<String, Object> entryMap = new HashMap<>();
+                            entryMap.put("index", idx);
+                            entryMap.put("result", result);
+                            String json = objectMapper.writeValueAsString(entryMap);
                             outputStream.write((json + "\n").getBytes(StandardCharsets.UTF_8));
                             outputStream.flush();
                         } catch (Exception e) {
@@ -179,6 +182,14 @@ public class AuditController {
                 outputStream.flush();
             } catch (Exception e) {
                 log.error("流式审核失败", e);
+                try {
+                    Map<String, Object> errorMap = new HashMap<>();
+                    errorMap.put("error", "流式审核失败: " + e.getMessage());
+                    String errorJson = objectMapper.writeValueAsString(errorMap);
+                    outputStream.write((errorJson + "\n").getBytes(StandardCharsets.UTF_8));
+                    outputStream.flush();
+                } catch (Exception ignored) {
+                }
             }
         };
 

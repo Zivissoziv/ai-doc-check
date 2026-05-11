@@ -1026,11 +1026,14 @@ const DocumentRenderer = {
         
         const container = document.getElementById(containerId);
         if (!container) return;
-        
-        const contentHTML = doc.tree?.length > 0 
-            ? this._renderNodes(doc.tree)
-            : (doc.html || '<div class="text-gray-500 italic">无法预览文档内容</div>');
-        
+
+        const isRichHtml = doc.html && (doc.html.includes('mammoth-output') || doc.html.includes('doc-backend-output'));
+        const contentHTML = isRichHtml
+            ? doc.html
+            : (doc.tree?.length > 0
+                ? this._renderNodes(doc.tree)
+                : (doc.html || '<div class="text-gray-500 italic">无法预览文档内容</div>'));
+
         container.innerHTML = `
             <div class="prose max-w-none">
                 <div class="border-b border-gray-200 pb-4 mb-6">

@@ -10,3 +10,5 @@ node_modules/
 .claude/
 backend/target/
 backend/logs/
+.idea/
+.vscode/

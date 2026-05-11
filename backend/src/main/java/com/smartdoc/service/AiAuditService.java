@@ -467,7 +467,25 @@ public class AiAuditService {
                 String responseBody = response.getBody();
                 log.debug("LLM响应长度: {}", responseBody != null ? responseBody.length() : 0);
                 
-                return extractContent(responseBody);
+                String content = extractContent(responseBody);
+                
+                if (!isValidJson(content)) {
+                    log.warn("LLM返回的JSON格式无效，尝试自动修复...");
+                    try {
+                        String repaired = repairByLLM(content, apiConfig, temperature);
+                        if (isValidJson(repaired)) {
+                            log.info("自动修复JSON成功");
+                            content = repaired;
+                        } else {
+                            throw new RuntimeException("LLM返回的JSON格式无效，自动修复后仍无法解析");
+                        }
+                    } catch (Exception repairEx) {
+                        log.error("自动修复JSON失败: {}", repairEx.getMessage());
+                        throw new RuntimeException("LLM返回的JSON格式无效，自动修复失败", repairEx);
+                    }
+                }
+                
+                return content;
                 
             } catch (ResourceAccessException e) {
                 attempt++;
@@ -556,6 +574,54 @@ public class AiAuditService {
         content = content.replace("None", "null");
 
         return content;
+    }
+
+    private boolean isValidJson(String content) {
+        try {
+            objectMapper.readTree(content);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private String repairByLLM(String invalidContent, ApiConfig apiConfig, double temperature) {
+        String endpoint = apiConfig.getEndpoint();
+        String apiKey = apiConfig.getApiKey();
+        String model = apiConfig.getModel();
+
+        String repairPrompt = "你是一个JSON修复专家。以下内容本应是合法的JSON格式，但解析失败。请修正为合法的标准JSON格式，只返回修正后的JSON内容，不要添加任何markdown代码块标记、解释说明文字。\n\n" + invalidContent;
+
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put("model", model);
+        requestBody.put("temperature", Math.min(temperature, 0.1));
+
+        List<Map<String, String>> messages = new ArrayList<>();
+
+        Map<String, String> systemMessage = new HashMap<>();
+        systemMessage.put("role", "system");
+        systemMessage.put("content", "你是一个JSON格式修复助手。你的任务是将不符合JSON格式的内容修正为标准JSON。只返回修正后的纯JSON内容，不输出任何其他文字。");
+        messages.add(systemMessage);
+
+        Map<String, String> userMessage = new HashMap<>();
+        userMessage.put("role", "user");
+        userMessage.put("content", repairPrompt);
+        messages.add(userMessage);
+
+        requestBody.put("messages", messages);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        if (apiKey != null && !apiKey.isEmpty()) {
+            headers.setBearerAuth(apiKey);
+        }
+
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
+        RestTemplate rt = createRestTemplate();
+        ResponseEntity<String> response = rt.exchange(endpoint, HttpMethod.POST, entity, String.class);
+        String responseBody = response.getBody();
+
+        return extractContent(responseBody);
     }
 
     private List<AuditResultDto> parseAuditResults(String content, List<Rule> rules) {

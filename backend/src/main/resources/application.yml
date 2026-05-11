@@ -7,6 +7,10 @@ spring:
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:dev}
   
+  mvc:
+    async:
+      request-timeout: 1800000
+
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
         

@@ -285,22 +285,31 @@ const DocumentParser = {
         }
 
         const result = await response.json();
-        const tree = this.buildTreeFromText(result.text);
-        const html = `<pre class="whitespace-pre-wrap">${this.escapeHtml(result.text)}</pre>`;
+        const text = result.text || '';
+        const tree = text ? this.buildTreeFromText(text) : [];
 
-        return { text: result.text, tree, html };
+        const lines = text.split('\n').filter(l => l.trim());
+        let richHtml = '<div class="doc-backend-output">';
+        lines.forEach(line => {
+            const isHeading = this.detectHeadingLevel(line) > 0;
+            richHtml += isHeading
+                ? `<p class="font-bold" style="margin:0.75rem 0 0.25rem">${this.escapeHtml(line)}</p>`
+                : `<p style="margin:0.25rem 0;line-height:1.7">${this.escapeHtml(line)}</p>`;
+        });
+        richHtml += '</div>';
+
+        return { text, tree, html: richHtml };
     },
 
     async parseDocx(arrayBuffer) {
         const zip = await JSZip.loadAsync(arrayBuffer);
         const docXml = await zip.file('word/document.xml').async('text');
-        
+
         const parser = new DOMParser();
         const doc = parser.parseFromString(docXml, 'text/xml');
-        
+
         const paragraphs = doc.querySelectorAll('p');
         let text = '';
-        let html = '';
         const flatNodes = [];
         let nodeId = 0;
 
@@ -313,7 +322,6 @@ const DocumentParser = {
 
             if (content.trim()) {
                 text += content + '\n';
-                html += `<p>${this.escapeHtml(content)}</p>`;
 
                 const level = this.detectHeadingLevel(content);
                 if (level > 0) {
@@ -339,6 +347,28 @@ const DocumentParser = {
         });
 
         const tree = this.buildHeadingTree(flatNodes);
+
+        let html = '';
+        try {
+            if (typeof mammoth !== 'undefined') {
+                const result = await mammoth.convertToHtml({arrayBuffer: arrayBuffer}, {
+                    convertImage: mammoth.images.imgElement(function(image) {
+                        return image.read("base64").then(function(imageBuffer) {
+                            return {
+                                src: "data:" + image.contentType + ";base64," + imageBuffer
+                            };
+                        });
+                    })
+                });
+                html = `<div class="mammoth-output">${result.value}</div>`;
+            } else {
+                html = `<pre class="whitespace-pre-wrap">${this.escapeHtml(text)}</pre>`;
+            }
+        } catch (e) {
+            console.error('mammoth转换失败:', e);
+            html = `<pre class="whitespace-pre-wrap">${this.escapeHtml(text)}</pre>`;
+        }
+
         return { text, tree, html };
     },
 
