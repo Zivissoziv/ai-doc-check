@@ -29,6 +29,14 @@ public interface AuditFeedbackMapper extends BaseMapper<AuditFeedback> {
     @Select("SELECT * FROM audit_feedback WHERE group_id = #{groupId} ORDER BY created_at DESC")
     List<AuditFeedback> findByGroupId(@Param("groupId") String groupId);
 
+    @Select("<script>SELECT * FROM audit_feedback WHERE group_id = #{groupId} " +
+            "<if test='startDate != null'> AND created_at &gt;= #{startDate} </if>" +
+            "<if test='endDate != null'> AND created_at &lt; #{endDate} </if>" +
+            " ORDER BY created_at DESC</script>")
+    List<AuditFeedback> findByGroupIdBetween(@Param("groupId") String groupId,
+                                              @Param("startDate") String startDate,
+                                              @Param("endDate") String endDate);
+
     @Select("SELECT * FROM audit_feedback WHERE group_id = #{groupId} AND (duration_ms IS NULL OR duration_ms = 0) ORDER BY created_at DESC LIMIT #{limit}")
     List<AuditFeedback> findLatestWithoutDurationByGroupId(@Param("groupId") String groupId, @Param("limit") int limit);
 }

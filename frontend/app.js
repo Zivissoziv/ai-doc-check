@@ -901,6 +901,7 @@ class SmartDocApp {
                     ruleName: r.ruleName,
                     severity: r.severity,
                     pass: r.pass,
+                    skipped: r.skipped,
                     confidence: r.confidence,
                     issues: r.issues || [],
                     summary: r.summary || ''
@@ -1277,6 +1278,69 @@ class SmartDocApp {
         }
     }
 
+    _getDateRange() {
+        const startEl = document.getElementById('statsStartDate');
+        const endEl = document.getElementById('statsEndDate');
+        if (startEl && endEl) {
+            return { startDate: startEl.value, endDate: endEl.value };
+        }
+        if (this._statsDateRangeCache) {
+            return { startDate: this._statsDateRangeCache.startDate, endDate: this._statsDateRangeCache.endDate };
+        }
+        return { startDate: '', endDate: '' };
+    }
+
+    _buildStatsUrl(baseUrl) {
+        const { startDate, endDate } = this._getDateRange();
+        const params = [];
+        if (startDate) params.push('startDate=' + encodeURIComponent(startDate));
+        if (endDate) params.push('endDate=' + encodeURIComponent(endDate));
+        if (params.length === 0) return baseUrl;
+        return baseUrl + '?' + params.join('&');
+    }
+
+    _refreshStats() {
+        const content = document.getElementById('statsAnalysisContent');
+        content.innerHTML = '<div class="text-center text-gray-400 py-8"><i class="fas fa-spinner fa-spin text-3xl mb-2"></i><p class="text-sm">加载中...</p></div>';
+        this.showStatsAnalysis();
+    }
+
+    _applyStatsDateFilter() {
+        const startEl = document.getElementById('statsStartDate');
+        const endEl = document.getElementById('statsEndDate');
+        this._statsDateRangeCache = {
+            startDate: startEl ? startEl.value : '',
+            endDate: endEl ? endEl.value : '',
+            _isManual: true
+        };
+        this._refreshStats();
+    }
+
+    _setQuickDate(days) {
+        const today = new Date();
+        const fmt = d => {
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return d.getFullYear() + '-' + m + '-' + day;
+        };
+        let startDate, endDate = fmt(today);
+        if (days === -1) {
+            startDate = fmt(new Date(today.getFullYear(), today.getMonth(), 1));
+            this._statsDateRangeCache = { startDate, endDate, _quick: -1, _isManual: true };
+        } else {
+            const d = new Date(today);
+            d.setDate(d.getDate() - days + 1);
+            startDate = fmt(d);
+            this._statsDateRangeCache = { startDate, endDate, _quick: days, _isManual: true };
+        }
+        this._refreshStats();
+    }
+
+    _clearStatsDate() {
+        this._statsDateRangeCache = null;
+        this._refreshStats();
+    }
+
     async showStatsAnalysis() {
         UiHelpers.toggleModal('statsAnalysisModal', true);
         const content = document.getElementById('statsAnalysisContent');
@@ -1284,8 +1348,8 @@ class SmartDocApp {
 
         try {
             const [statsRes, dailyRes, groupsRes] = await Promise.all([
-                fetch('/api/stats'),
-                fetch('/api/stats/daily'),
+                fetch(this._buildStatsUrl('/api/stats')),
+                fetch(this._buildStatsUrl('/api/stats/daily')),
                 fetch('/api/config/rules')
             ]);
 
@@ -1295,6 +1359,8 @@ class SmartDocApp {
 
             this._statsGroupData = groupData.groups || [];
 
+            const { startDate, endDate } = this._getDateRange();
+
             let groupOptionsHtml = '<option value="">-- 请选择规则组 --</option>';
             this._statsGroupData.forEach(g => {
                 groupOptionsHtml += `<option value="${g.groupId}">${g.name}</option>`;
@@ -1302,21 +1368,40 @@ class SmartDocApp {
 
             const chartHtml = this._renderDailyChart(dailyData);
 
+            const hasFilter = !!(startDate || endDate);
+
             content.innerHTML = `
+                <div class="flex items-center justify-between mb-4">
+                    <div class="text-xs text-gray-400">统计分析</div>
+                    <div class="flex items-center gap-1">
+                        <button onclick="app._setQuickDate(7)" class="px-2 py-1 text-xs rounded ${!hasFilter || (this._statsDateRangeCache && this._statsDateRangeCache._quick === 7) ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}">近7天</button>
+                        <button onclick="app._setQuickDate(30)" class="px-2 py-1 text-xs rounded ${this._statsDateRangeCache && this._statsDateRangeCache._quick === 30 ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}">近30天</button>
+                        <button onclick="app._setQuickDate(-1)" class="px-2 py-1 text-xs rounded ${this._statsDateRangeCache && this._statsDateRangeCache._quick === -1 ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}">本月</button>
+                        <span class="text-gray-300 mx-1">|</span>
+                        <label class="text-xs text-gray-500">从</label>
+                        <input type="date" id="statsStartDate" value="${startDate}"
+                            class="w-32 px-2 py-1 border border-gray-300 rounded text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <label class="text-xs text-gray-500">至</label>
+                        <input type="date" id="statsEndDate" value="${endDate}"
+                            class="w-32 px-2 py-1 border border-gray-300 rounded text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <button onclick="app._applyStatsDateFilter()" class="px-3 py-1 text-xs rounded bg-blue-500 text-white hover:bg-blue-600"><i class="fas fa-search mr-1"></i>查询</button>
+                        ${hasFilter ? '<button onclick="app._clearStatsDate()" class="px-2 py-1 text-xs rounded text-red-500 hover:bg-red-50"><i class="fas fa-times"></i></button>' : ''}
+                    </div>
+                </div>
                 <div class="bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl p-4">
-                    <h3 class="text-sm font-semibold text-gray-700 mb-3"><i class="fas fa-chart-simple text-blue-500 mr-1"></i>全局审核统计</h3>
+                    <h3 class="text-sm font-semibold text-gray-700 mb-3"><i class="fas fa-chart-simple text-blue-500 mr-1"></i>${hasFilter ? '筛选范围内审核统计' : '全局审核统计'}</h3>
                     <div class="grid grid-cols-2 gap-4 mb-4">
                         <div class="bg-white rounded-lg p-4 shadow-sm border border-blue-100">
                             <div class="flex items-center gap-2 mb-2">
                                 <i class="fas fa-chart-line text-blue-500"></i>
-                                <span class="text-sm text-gray-500">累计调用次数</span>
+                                <span class="text-sm text-gray-500">${hasFilter ? '筛选范围次数' : '累计调用次数'}</span>
                             </div>
                             <div class="text-2xl font-bold text-blue-600">${stats.totalCount || 0}</div>
                         </div>
                         <div class="bg-white rounded-lg p-4 shadow-sm border border-purple-100">
                             <div class="flex items-center gap-2 mb-2">
                                 <i class="fas fa-calendar-day text-purple-500"></i>
-                                <span class="text-sm text-gray-500">今日调用次数</span>
+                                <span class="text-sm text-gray-500">${hasFilter ? '今日调用次数' : '今日调用次数'}</span>
                             </div>
                             <div class="text-2xl font-bold text-purple-600">${stats.todayCount || 0}</div>
                         </div>
@@ -1359,7 +1444,7 @@ class SmartDocApp {
 
     _renderDailyChart(dailyData) {
         if (!dailyData || dailyData.length === 0) {
-            return '<div class="text-center text-gray-400 py-2 text-xs">暂无近7天数据</div>';
+            return '<div class="text-center text-gray-400 py-2 text-xs">暂无统计数据</div>';
         }
         const maxCount = Math.max(...dailyData.map(d => d.count), 1);
         let barsHtml = dailyData.map((d, i) => {
@@ -1376,7 +1461,7 @@ class SmartDocApp {
         }).join('');
 
         return `<div>
-            <h4 class="text-xs font-medium text-gray-600 mb-2">近7天调用量</h4>
+            <h4 class="text-xs font-medium text-gray-600 mb-2">每日调用量</h4>
             <div class="flex items-end gap-1 h-[140px] px-2">${barsHtml}</div>
         </div>`;
     }
@@ -1411,7 +1496,7 @@ class SmartDocApp {
         groupPanel.innerHTML = '<div class="text-center text-gray-400 py-4"><i class="fas fa-spinner fa-spin text-xl mb-1"></i><p class="text-xs">加载中...</p></div>';
 
         try {
-            const gsRes = await fetch(`/api/stats/group/${groupId}`);
+            const gsRes = await fetch(this._buildStatsUrl(`/api/stats/group/${groupId}`));
             if (!gsRes.ok) throw new Error('获取规则组统计失败');
             const gs = await gsRes.json();
 

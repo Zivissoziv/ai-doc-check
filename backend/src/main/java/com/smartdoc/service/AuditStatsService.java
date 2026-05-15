@@ -31,19 +31,37 @@ public class AuditStatsService {
     private final RuleMapper ruleMapper;
 
     public Map<String, Object> getStats() {
-        AuditStats stats = auditStatsMapper.selectById(1);
-        if (stats == null) {
-            stats = AuditStats.builder().totalCount(0).todayCount(0).lastDate("").build();
-        }
-        String today = getTodayDate();
-        if (!today.equals(stats.getLastDate())) {
-            stats.setTodayCount(0);
-            stats.setLastDate(today);
-            auditStatsMapper.updateById(stats);
-        }
+        return getStats(null, null);
+    }
+
+    public Map<String, Object> getStats(String startDate, String endDate) {
         Map<String, Object> result = new HashMap<>();
-        result.put("totalCount", stats.getTotalCount());
-        result.put("todayCount", stats.getTodayCount());
+
+        if (hasDateRange(startDate, endDate)) {
+            LocalDate start = LocalDate.parse(startDate);
+            LocalDate end = LocalDate.parse(endDate);
+            long totalCount = auditDailyStatsMapper.sumCountBetween(start, end);
+            long todayCount = 0;
+            LocalDate today = LocalDate.now();
+            if (!today.isBefore(start) && !today.isAfter(end)) {
+                todayCount = auditDailyStatsMapper.sumCountByDate(today);
+            }
+            result.put("totalCount", totalCount);
+            result.put("todayCount", todayCount);
+        } else {
+            AuditStats stats = auditStatsMapper.selectById(1);
+            if (stats == null) {
+                stats = AuditStats.builder().totalCount(0).todayCount(0).lastDate("").build();
+            }
+            String today = getTodayDate();
+            if (!today.equals(stats.getLastDate())) {
+                stats.setTodayCount(0);
+                stats.setLastDate(today);
+                auditStatsMapper.updateById(stats);
+            }
+            result.put("totalCount", stats.getTotalCount());
+            result.put("todayCount", stats.getTodayCount());
+        }
         return result;
     }
 
@@ -115,47 +133,80 @@ public class AuditStatsService {
         }
     }
 
-    @Transactional(readOnly = true)
     public List<Map<String, Object>> getDailyStats() {
-        LocalDate sevenDaysAgo = LocalDate.now().minusDays(6);
-        List<AuditDailyStats> dailyList = auditDailyStatsMapper.findSince(sevenDaysAgo);
+        return getDailyStats(null, null);
+    }
+
+    public List<Map<String, Object>> getDailyStats(String startDate, String endDate) {
+        List<AuditDailyStats> dailyList;
+
+        if (hasDateRange(startDate, endDate)) {
+            LocalDate start = LocalDate.parse(startDate);
+            LocalDate end = LocalDate.parse(endDate);
+            dailyList = auditDailyStatsMapper.findBetween(start, end);
+        } else {
+            LocalDate sevenDaysAgo = LocalDate.now().minusDays(6);
+            dailyList = auditDailyStatsMapper.findSince(sevenDaysAgo);
+        }
 
         Map<LocalDate, AuditDailyStats> map = dailyList.stream()
                 .collect(Collectors.toMap(AuditDailyStats::getStatDate, d -> d));
 
         List<Map<String, Object>> result = new ArrayList<>();
-        for (int i = 6; i >= 0; i--) {
-            LocalDate date = LocalDate.now().minusDays(i);
-            AuditDailyStats ds = map.get(date);
-            Map<String, Object> item = new HashMap<>();
-            item.put("date", date.format(DateTimeFormatter.ofPattern("MM-dd")));
-            item.put("count", ds != null ? ds.getCount() : 0);
-            item.put("avgDurationMs", (ds != null && ds.getCount() > 0)
-                    ? ds.getTotalDurationMs() / ds.getCount() : 0);
-            result.add(item);
+        if (hasDateRange(startDate, endDate)) {
+            LocalDate start = LocalDate.parse(startDate);
+            LocalDate end = LocalDate.parse(endDate);
+            for (LocalDate date = start; !date.isAfter(end); date = date.plusDays(1)) {
+                AuditDailyStats ds = map.get(date);
+                Map<String, Object> item = buildDailyItem(date, ds);
+                result.add(item);
+            }
+        } else {
+            for (int i = 6; i >= 0; i--) {
+                LocalDate date = LocalDate.now().minusDays(i);
+                AuditDailyStats ds = map.get(date);
+                Map<String, Object> item = buildDailyItem(date, ds);
+                result.add(item);
+            }
         }
         return result;
     }
 
-    @Transactional(readOnly = true)
+    private Map<String, Object> buildDailyItem(LocalDate date, AuditDailyStats ds) {
+        Map<String, Object> item = new HashMap<>();
+        item.put("date", date.format(DateTimeFormatter.ofPattern("MM-dd")));
+        item.put("count", ds != null ? ds.getCount() : 0);
+        item.put("avgDurationMs", (ds != null && ds.getCount() > 0)
+                ? ds.getTotalDurationMs() / ds.getCount() : 0);
+        return item;
+    }
+
     public Map<String, Object> getGroupStats(String groupId) {
+        return getGroupStats(groupId, null, null);
+    }
+
+    public Map<String, Object> getGroupStats(String groupId, String startDate, String endDate) {
         Map<String, Object> result = new HashMap<>();
         result.put("groupId", groupId);
 
         List<AuditFeedback> feedbacks;
 
-        List<AuditFeedback> groupFeedbacks = auditFeedbackMapper.findByGroupId(groupId);
-        if (!groupFeedbacks.isEmpty()) {
-            feedbacks = groupFeedbacks;
+        if (hasDateRange(startDate, endDate)) {
+            feedbacks = auditFeedbackMapper.findByGroupIdBetween(groupId, startDate, endDate + " 23:59:59");
         } else {
-            List<Long> ruleIds = ruleMapper.findIdsByGroupId(groupId);
-            if (ruleIds.isEmpty()) {
-                result.put("totalAuditCount", 0);
-                result.put("failCount", 0);
-                result.put("avgDurationMs", 0);
-                return result;
+            List<AuditFeedback> groupFeedbacks = auditFeedbackMapper.findByGroupId(groupId);
+            if (!groupFeedbacks.isEmpty()) {
+                feedbacks = groupFeedbacks;
+            } else {
+                List<Long> ruleIds = ruleMapper.findIdsByGroupId(groupId);
+                if (ruleIds.isEmpty()) {
+                    result.put("totalAuditCount", 0);
+                    result.put("failCount", 0);
+                    result.put("avgDurationMs", 0);
+                    return result;
+                }
+                feedbacks = auditFeedbackMapper.findByRuleIds(ruleIds);
             }
-            feedbacks = auditFeedbackMapper.findByRuleIds(ruleIds);
         }
 
         long totalCount = feedbacks.size();
@@ -174,6 +225,11 @@ public class AuditStatsService {
         result.put("avgDurationMs", auditRuns > 0 ? totalDuration / auditRuns : 0);
 
         return result;
+    }
+
+    private boolean hasDateRange(String startDate, String endDate) {
+        return startDate != null && !startDate.isEmpty()
+                && endDate != null && !endDate.isEmpty();
     }
 
     private String getTodayDate() {
