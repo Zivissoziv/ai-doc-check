@@ -646,13 +646,13 @@ const AiAudit = {
 };
 
 const ReportExporter = {
-    exportHtml(document, template, excelData, auditResults) {
+    exportHtml(docObj, template, excelData, auditResults) {
         const html = `
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>审核报告 - ${document?.name || '未知文档'}</title>
+    <title>审核报告 - ${docObj?.name || '未知文档'}</title>
     <style>
         body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
         h1 { color: #333; border-bottom: 2px solid #3b82f6; padding-bottom: 10px; }
@@ -664,7 +664,7 @@ const ReportExporter = {
 </head>
 <body>
     <h1>文档审核报告</h1>
-    <p><strong>文档名称:</strong> ${document?.name || '未知'}</p>
+    <p><strong>文档名称:</strong> ${docObj?.name || '未知'}</p>
     <p><strong>审核时间:</strong> ${new Date().toLocaleString()}</p>
     <p><strong>审核结果:</strong> ${auditResults?.length || 0} 条规则</p>
     <hr>
