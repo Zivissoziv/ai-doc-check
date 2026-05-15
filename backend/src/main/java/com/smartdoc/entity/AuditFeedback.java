@@ -46,6 +46,9 @@ public class AuditFeedback {
     @TableField("duration_ms")
     private Long durationMs;
 
+    @TableField("skipped")
+    private Boolean skipped;
+
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

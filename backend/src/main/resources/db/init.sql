@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS audit_feedback (
     feedback_type VARCHAR(20),
     reason VARCHAR(500),
     duration_ms BIGINT DEFAULT NULL,
+    skipped TINYINT(1) DEFAULT 0 COMMENT '是否因缺少数据被跳过',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_feedback_rule_id (rule_id),

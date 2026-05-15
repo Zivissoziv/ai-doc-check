@@ -406,6 +406,7 @@ public class AiAuditService {
         result.setRuleName(rule.getRuleName());
         result.setSeverity(rule.getSeverity().name().toLowerCase());
         result.setPass(false);
+        result.setSkipped(true);
         result.setConfidence(0);
         result.setSummary("已跳过: 缺少必要数据 " + missingStr);
         result.setIssues(null);

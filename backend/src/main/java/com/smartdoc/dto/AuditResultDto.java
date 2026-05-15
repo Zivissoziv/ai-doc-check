@@ -21,6 +21,8 @@ public class AuditResultDto {
 
     private Boolean pass;
 
+    private Boolean skipped;
+
     private Integer confidence;
 
     private List<AuditIssueDto> issues;

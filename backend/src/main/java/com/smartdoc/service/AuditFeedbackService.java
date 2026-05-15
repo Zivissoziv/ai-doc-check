@@ -48,6 +48,7 @@ public class AuditFeedbackService {
                     .ruleId(result.getRuleId() != null ? result.getRuleId().longValue() : null)
                     .groupId(groupId)
                     .pass(result.getPass())
+                    .skipped(result.getSkipped())
                     .confidence(result.getConfidence())
                     .resultsJson(resultsJson)
                     .build();

@@ -1423,9 +1423,9 @@ class SmartDocApp {
                         <div class="text-xl font-bold text-blue-600">${gs.totalAuditCount || 0}</div>
                         <div class="text-xs text-blue-500">累计审核</div>
                     </div>
-                    <div class="bg-green-50 rounded-lg p-3 text-center">
-                        <div class="text-xl font-bold text-green-600">${gs.passRate || 0}%</div>
-                        <div class="text-xs text-green-500">总通过率</div>
+                    <div class="bg-red-50 rounded-lg p-3 text-center">
+                        <div class="text-xl font-bold text-red-600">${gs.failCount || 0}</div>
+                        <div class="text-xs text-red-500">审核不通过</div>
                     </div>
                     <div class="bg-purple-50 rounded-lg p-3 text-center">
                         <div class="text-xl font-bold text-purple-600">${avgSec === '-' ? '-' : avgSec + 's'}</div>

@@ -151,7 +151,7 @@ public class AuditStatsService {
             List<Long> ruleIds = ruleMapper.findIdsByGroupId(groupId);
             if (ruleIds.isEmpty()) {
                 result.put("totalAuditCount", 0);
-                result.put("passRate", 0);
+                result.put("failCount", 0);
                 result.put("avgDurationMs", 0);
                 return result;
             }
@@ -159,13 +159,15 @@ public class AuditStatsService {
         }
 
         long totalCount = feedbacks.size();
-        long passCount = feedbacks.stream().filter(f -> Boolean.TRUE.equals(f.getPass())).count();
+        long failCount = feedbacks.stream()
+                .filter(f -> !Boolean.TRUE.equals(f.getPass()) && !Boolean.TRUE.equals(f.getSkipped()))
+                .count();
         long totalDuration = feedbacks.stream()
                 .mapToLong(f -> f.getDurationMs() != null ? f.getDurationMs() : 0)
                 .sum();
 
         result.put("totalAuditCount", totalCount);
-        result.put("passRate", totalCount > 0 ? Math.round((double) passCount / totalCount * 100) : 0);
+        result.put("failCount", failCount);
 
         long ruleCount = ruleMapper.findIdsByGroupId(groupId).size();
         long auditRuns = ruleCount > 0 ? totalCount / ruleCount : 0;
