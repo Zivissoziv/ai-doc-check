@@ -16,6 +16,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -72,6 +74,7 @@ public class RuleGroupService {
         return convertToDto(group);
     }
 
+    @Transactional
     public RuleGroupDto updateRuleGroup(String groupId, RuleGroupDto dto) {
         Optional<RuleGroup> existingGroup = ruleGroupMapper.findByGroupId(groupId);
         if (!existingGroup.isPresent()) {
@@ -90,7 +93,6 @@ public class RuleGroupService {
         ruleGroupMapper.updateById(group);
 
         if (dto.getRules() != null) {
-            ruleMapper.deleteByRuleGroupId(group.getId());
             saveRules(group.getId(), dto.getRules());
         }
 
@@ -193,8 +195,28 @@ public class RuleGroupService {
     }
 
     private void saveRules(Long ruleGroupId, List<RuleDto> ruleDtos) {
+        List<Rule> existingRules = ruleMapper.findByRuleGroupId(ruleGroupId);
+        Set<Long> existingIds = existingRules.stream()
+                .map(Rule::getId).collect(Collectors.toSet());
+        Set<Long> seenIds = new HashSet<>();
+
         for (int i = 0; i < ruleDtos.size(); i++) {
             RuleDto ruleDto = ruleDtos.get(i);
+
+            if (ruleDto.getId() != null && existingIds.contains(ruleDto.getId())) {
+                Rule rule = ruleMapper.selectById(ruleDto.getId());
+                if (rule != null) {
+                    rule.setRuleName(ruleDto.getName());
+                    rule.setPrompt(ruleDto.getPrompt());
+                    rule.setSeverity(Rule.Severity.valueOf(ruleDto.getSeverity().toUpperCase()));
+                    rule.setIsEnabled(ruleDto.getEnabled() != null ? ruleDto.getEnabled() : true);
+                    rule.setSortOrder(i);
+                    ruleMapper.updateById(rule);
+                    seenIds.add(ruleDto.getId());
+                    continue;
+                }
+            }
+
             Rule rule = Rule.builder()
                     .ruleGroupId(ruleGroupId)
                     .ruleName(ruleDto.getName())
@@ -204,6 +226,12 @@ public class RuleGroupService {
                     .sortOrder(i)
                     .build();
             ruleMapper.insert(rule);
+        }
+
+        for (Rule existing : existingRules) {
+            if (!seenIds.contains(existing.getId())) {
+                ruleMapper.deleteById(existing.getId());
+            }
         }
     }
 

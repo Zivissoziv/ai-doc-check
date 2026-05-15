@@ -80,6 +80,7 @@ const RulesManager = {
             groupId: groupId,
             name: groupName,
             rules: rules.map((r, idx) => ({
+                id: r.id,
                 name: r.name,
                 prompt: r.prompt,
                 severity: r.severity || 'warning',
@@ -97,7 +98,8 @@ const RulesManager = {
             const err = await response.json();
             throw new Error(err.error || '保存规则失败');
         }
-        return response.json();
+        const updatedGroup = await response.json();
+        return updatedGroup.rules || [];
     },
 
     async createGroup(groupId, groupName, rules) {
@@ -691,8 +693,12 @@ const ReportExporter = {
 };
 
 const FeedbackAPI = {
-    async saveAuditResults(results) {
-        const response = await fetch('/api/feedback/save', {
+    async saveAuditResults(results, groupId) {
+        let url = '/api/feedback/save';
+        if (groupId) {
+            url += '?groupId=' + encodeURIComponent(groupId);
+        }
+        const response = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(results)

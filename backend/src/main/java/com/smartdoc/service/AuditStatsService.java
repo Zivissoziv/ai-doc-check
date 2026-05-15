@@ -74,6 +74,18 @@ public class AuditStatsService {
     public void recordAuditDuration(long durationMs, String groupId) {
         upsertDailyStats(LocalDate.now(), 0, durationMs);
 
+        if (groupId != null) {
+            List<AuditFeedback> feedbacks = auditFeedbackMapper.findLatestWithoutDurationByGroupId(groupId, 10);
+            if (!feedbacks.isEmpty()) {
+                long perRule = durationMs / feedbacks.size();
+                for (AuditFeedback f : feedbacks) {
+                    f.setDurationMs(perRule);
+                    auditFeedbackMapper.updateById(f);
+                }
+                return;
+            }
+        }
+
         List<Long> ruleIds = ruleMapper.findIdsByGroupId(groupId);
         if (!ruleIds.isEmpty()) {
             List<AuditFeedback> feedbacks = auditFeedbackMapper.findLatestWithoutDuration(ruleIds, ruleIds.size());
@@ -130,15 +142,22 @@ public class AuditStatsService {
         Map<String, Object> result = new HashMap<>();
         result.put("groupId", groupId);
 
-        List<Long> ruleIds = ruleMapper.findIdsByGroupId(groupId);
-        if (ruleIds.isEmpty()) {
-            result.put("totalAuditCount", 0);
-            result.put("passRate", 0);
-            result.put("avgDurationMs", 0);
-            return result;
+        List<AuditFeedback> feedbacks;
+
+        List<AuditFeedback> groupFeedbacks = auditFeedbackMapper.findByGroupId(groupId);
+        if (!groupFeedbacks.isEmpty()) {
+            feedbacks = groupFeedbacks;
+        } else {
+            List<Long> ruleIds = ruleMapper.findIdsByGroupId(groupId);
+            if (ruleIds.isEmpty()) {
+                result.put("totalAuditCount", 0);
+                result.put("passRate", 0);
+                result.put("avgDurationMs", 0);
+                return result;
+            }
+            feedbacks = auditFeedbackMapper.findByRuleIds(ruleIds);
         }
 
-        List<AuditFeedback> feedbacks = auditFeedbackMapper.findByRuleIds(ruleIds);
         long totalCount = feedbacks.size();
         long passCount = feedbacks.stream().filter(f -> Boolean.TRUE.equals(f.getPass())).count();
         long totalDuration = feedbacks.stream()
@@ -148,7 +167,8 @@ public class AuditStatsService {
         result.put("totalAuditCount", totalCount);
         result.put("passRate", totalCount > 0 ? Math.round((double) passCount / totalCount * 100) : 0);
 
-        long auditRuns = ruleIds.size() > 0 ? totalCount / ruleIds.size() : 0;
+        long ruleCount = ruleMapper.findIdsByGroupId(groupId).size();
+        long auditRuns = ruleCount > 0 ? totalCount / ruleCount : 0;
         result.put("avgDurationMs", auditRuns > 0 ? totalDuration / auditRuns : 0);
 
         return result;

@@ -30,6 +30,11 @@ public class AuditFeedbackService {
 
     @Transactional
     public List<AuditFeedback> saveAuditResults(List<AuditResultDto> results) {
+        return saveAuditResults(results, null);
+    }
+
+    @Transactional
+    public List<AuditFeedback> saveAuditResults(List<AuditResultDto> results, String groupId) {
         List<AuditFeedback> feedbacks = new ArrayList<>();
         for (AuditResultDto result : results) {
             String resultsJson;
@@ -41,6 +46,7 @@ public class AuditFeedbackService {
             }
             AuditFeedback feedback = AuditFeedback.builder()
                     .ruleId(result.getRuleId() != null ? result.getRuleId().longValue() : null)
+                    .groupId(groupId)
                     .pass(result.getPass())
                     .confidence(result.getConfidence())
                     .resultsJson(resultsJson)

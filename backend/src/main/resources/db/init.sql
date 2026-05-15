@@ -92,13 +92,15 @@ CREATE TABLE IF NOT EXISTS audit_daily_stats (
 CREATE TABLE IF NOT EXISTS audit_feedback (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     rule_id BIGINT,
+    group_id VARCHAR(50) DEFAULT NULL COMMENT '规则组ID，用于按组统计（不依赖rule_id）',
     pass BOOLEAN,
     confidence INT,
     results_json TEXT,
     feedback_type VARCHAR(20),
     reason VARCHAR(500),
-     duration_ms BIGINT DEFAULT NULL,
+    duration_ms BIGINT DEFAULT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_feedback_rule_id (rule_id)
+    INDEX idx_feedback_rule_id (rule_id),
+    INDEX idx_feedback_group_id (group_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

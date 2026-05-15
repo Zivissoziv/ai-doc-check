@@ -114,7 +114,7 @@ public class AuditController {
                 getBatchSize(request.getSettings())
             );
 
-            auditFeedbackService.saveAuditResults(results);
+            auditFeedbackService.saveAuditResults(results, request.getRuleGroupId());
 
             Map<String, Object> successResponse = new HashMap<>();
             successResponse.put("success", true);

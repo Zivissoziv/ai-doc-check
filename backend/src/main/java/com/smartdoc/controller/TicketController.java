@@ -43,7 +43,7 @@ public class TicketController {
 
         String url = config.getTicketEndpoint().replace("{id}", ticketId);
         if (!url.contains(ticketId)) {
-            url = url + "/" + ticketId;
+            url = url.replaceAll("\\{ticketId}", ticketId);
         }
 
         log.info("获取工单信息: {}", url);

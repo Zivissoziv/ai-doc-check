@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.HashMap;
@@ -28,8 +29,10 @@ public class AuditFeedbackController {
     private final AuditFeedbackService auditFeedbackService;
 
     @PostMapping("/save")
-    public ResponseEntity<Map<String, Object>> saveAuditResults(@RequestBody List<AuditResultDto> results) {
-        List<AuditFeedback> saved = auditFeedbackService.saveAuditResults(results);
+    public ResponseEntity<Map<String, Object>> saveAuditResults(
+            @RequestBody List<AuditResultDto> results,
+            @RequestParam(required = false) String groupId) {
+        List<AuditFeedback> saved = auditFeedbackService.saveAuditResults(results, groupId);
         Map<String, Object> response = new HashMap<>();
         response.put("success", true);
         response.put("ids", saved.stream().map(AuditFeedback::getId).collect(Collectors.toList()));

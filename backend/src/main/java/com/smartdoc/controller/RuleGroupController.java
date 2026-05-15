@@ -61,16 +61,13 @@ public class RuleGroupController {
     }
 
     @PutMapping("/{groupId}")
-    public ResponseEntity<Map<String, Object>> updateRuleGroup(
+    public ResponseEntity<RuleGroupDto> updateRuleGroup(
             @PathVariable String groupId,
             @Valid @RequestBody RuleGroupDto dto) {
-        
-        ruleGroupService.updateRuleGroup(groupId, dto);
-        
-        Map<String, Object> response = new HashMap<>();
-        response.put("success", true);
-        
-        return ResponseEntity.ok(response);
+
+        RuleGroupDto updated = ruleGroupService.updateRuleGroup(groupId, dto);
+
+        return ResponseEntity.ok(updated);
     }
 
     @DeleteMapping("/{groupId}")

@@ -448,7 +448,12 @@ class SmartDocApp {
         const groupName = group ? group.name : '';
         
         try {
-            await RulesManager.saveToServer(this.currentRuleGroup, this.rules, groupName);
+            const savedRules = await RulesManager.saveToServer(this.currentRuleGroup, this.rules, groupName);
+            savedRules.forEach((sr, i) => {
+                if (this.rules[i]) {
+                    this.rules[i].id = sr.id;
+                }
+            });
             RulesManager.save(this.rules);
             UiHelpers.setStatus('规则已自动保存');
         } catch (err) {
@@ -519,7 +524,12 @@ class SmartDocApp {
             }
             
             try {
-                await RulesManager.saveToServer(groupId, this.rules, groupName);
+                const savedRules = await RulesManager.saveToServer(groupId, this.rules, groupName);
+                savedRules.forEach((sr, i) => {
+                    if (this.rules[i]) {
+                        this.rules[i].id = sr.id;
+                    }
+                });
                 const group = this.ruleGroups.find(g => g.groupId === groupId);
                 if (group) group.name = groupName;
                 RulesManager.renderGroupSelector(this.ruleGroups, groupId, 'ruleGroupSelect');
@@ -614,7 +624,12 @@ class SmartDocApp {
                 }
                 
                 this.rules = rules;
-                await RulesManager.saveToServer(this.currentRuleGroup, this.rules, group.name);
+                const savedRules = await RulesManager.saveToServer(this.currentRuleGroup, this.rules, group.name);
+                savedRules.forEach((sr, i) => {
+                    if (this.rules[i]) {
+                        this.rules[i].id = sr.id;
+                    }
+                });
                 this.renderRules();
                 
                 UiHelpers.setStatus(`已导入 ${this.rules.length} 条规则到「${group.name}」`);
@@ -890,7 +905,7 @@ class SmartDocApp {
                     issues: r.issues || [],
                     summary: r.summary || ''
                 }));
-                const saveResponse = await FeedbackAPI.saveAuditResults(saveResults);
+                const saveResponse = await FeedbackAPI.saveAuditResults(saveResults, this.currentRuleGroup);
                 const feedbackIds = saveResponse.ids || [];
                 validResults.forEach((r, i) => {
                     r._feedbackId = feedbackIds[i];

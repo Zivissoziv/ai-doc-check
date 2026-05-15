@@ -25,6 +25,9 @@ public class AuditFeedback {
     @TableField("rule_id")
     private Long ruleId;
 
+    @TableField("group_id")
+    private String groupId;
+
     @TableField("pass")
     private Boolean pass;
 

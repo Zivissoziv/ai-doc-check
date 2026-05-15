@@ -25,4 +25,10 @@ public interface AuditFeedbackMapper extends BaseMapper<AuditFeedback> {
 
     @Select("<script>SELECT * FROM audit_feedback WHERE rule_id IN <foreach collection='ruleIds' item='id' open='(' separator=',' close=')'>#{id}</foreach> AND (duration_ms IS NULL OR duration_ms = 0) ORDER BY created_at DESC LIMIT #{limit}</script>")
     List<AuditFeedback> findLatestWithoutDuration(@Param("ruleIds") List<Long> ruleIds, @Param("limit") int limit);
+
+    @Select("SELECT * FROM audit_feedback WHERE group_id = #{groupId} ORDER BY created_at DESC")
+    List<AuditFeedback> findByGroupId(@Param("groupId") String groupId);
+
+    @Select("SELECT * FROM audit_feedback WHERE group_id = #{groupId} AND (duration_ms IS NULL OR duration_ms = 0) ORDER BY created_at DESC LIMIT #{limit}")
+    List<AuditFeedback> findLatestWithoutDurationByGroupId(@Param("groupId") String groupId, @Param("limit") int limit);
 }
