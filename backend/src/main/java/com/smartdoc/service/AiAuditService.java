@@ -333,17 +333,8 @@ public class AiAuditService {
             String varPath = matcher.group(1);
             String[] parts = DOT_SPLIT_PATTERN.split(varPath);
             
-            Object value = data;
             try {
-                for (String part : parts) {
-                    if (value instanceof Map) {
-                        value = ((Map<?, ?>) value).get(part);
-                    } else {
-                        value = null;
-                        break;
-                    }
-                }
-                
+                Object value = resolveDataValue(data, parts, 0);
                 if (value == null) {
                     matcher.appendReplacement(result, matcher.group(0));
                 } else {
@@ -358,6 +349,38 @@ public class AiAuditService {
         return result.toString();
     }
 
+    private Object resolveDataValue(Object value, String[] parts, int startIndex) {
+        if (value == null) return null;
+        for (int i = startIndex; i < parts.length; i++) {
+            String part = parts[i];
+            if (value instanceof Map) {
+                value = ((Map<?, ?>) value).get(part);
+            } else if (value instanceof List) {
+                List<?> list = (List<?>) value;
+                try {
+                    int idx = Integer.parseInt(part);
+                    if (idx >= 0 && idx < list.size()) {
+                        value = list.get(idx);
+                    } else {
+                        return null;
+                    }
+                } catch (NumberFormatException e) {
+                    List<String> collected = new ArrayList<>();
+                    for (Object item : list) {
+                        Object itemResult = resolveDataValue(item, parts, i);
+                        if (itemResult != null) {
+                            collected.add(itemResult.toString());
+                        }
+                    }
+                    return collected.isEmpty() ? null : String.join(", ", collected);
+                }
+            } else {
+                return null;
+            }
+        }
+        return value;
+    }
+
     private boolean hasDataVarReference(String prompt) {
         return DATA_VAR_PATTERN.matcher(prompt).find();
     }
@@ -368,15 +391,7 @@ public class AiAuditService {
         while (matcher.find()) {
             String varPath = matcher.group(1);
             String[] parts = DOT_SPLIT_PATTERN.split(varPath);
-            Object value = data;
-            for (String part : parts) {
-                if (value instanceof Map) {
-                    value = ((Map<?, ?>) value).get(part);
-                } else {
-                    value = null;
-                    break;
-                }
-            }
+            Object value = resolveDataValue(data, parts, 0);
             if (value == null || (value instanceof String && ((String) value).isEmpty())) {
                 missing.add("{{data." + varPath + "}}");
             }
