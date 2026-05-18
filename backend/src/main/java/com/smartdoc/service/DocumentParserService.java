@@ -3,7 +3,8 @@ package com.smartdoc.service;
 import com.alibaba.excel.EasyExcel;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.hwpf.HWPFDocument;
-import org.apache.poi.hwpf.extractor.WordExtractor;
+import org.apache.poi.hwpf.usermodel.Paragraph;
+import org.apache.poi.hwpf.usermodel.Range;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -76,12 +77,21 @@ public class DocumentParserService {
 
     public String parseDoc(byte[] fileBytes) {
         try (ByteArrayInputStream bis = new ByteArrayInputStream(fileBytes);
-             HWPFDocument document = new HWPFDocument(bis);
-             WordExtractor extractor = new WordExtractor(document)) {
+             HWPFDocument document = new HWPFDocument(bis)) {
 
-            String text = extractor.getText();
-            String result = text != null ? text.trim() : "";
-            log.debug("解析DOC成功，文本长度: {}", result.length());
+            StringBuilder textBuilder = new StringBuilder();
+            Range range = document.getRange();
+            int numParagraphs = range.numParagraphs();
+            for (int i = 0; i < numParagraphs; i++) {
+                Paragraph paragraph = range.getParagraph(i);
+                String text = paragraph.text().replace("\u0007", "").trim();
+                if (!text.isEmpty()) {
+                    textBuilder.append(text).append("\n");
+                }
+            }
+
+            String result = textBuilder.toString().trim();
+            log.debug("解析DOC成功，文本长度: {}, 段落数: {}", result.length(), numParagraphs);
             return result;
 
         } catch (IOException e) {

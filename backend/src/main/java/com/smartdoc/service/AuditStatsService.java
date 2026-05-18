@@ -209,11 +209,15 @@ public class AuditStatsService {
             }
         }
 
-        long totalCount = feedbacks.size();
-        long failCount = feedbacks.stream()
-                .filter(f -> !Boolean.TRUE.equals(f.getPass()) && !Boolean.TRUE.equals(f.getSkipped()))
+        List<AuditFeedback> nonSkipped = feedbacks.stream()
+                .filter(f -> !Boolean.TRUE.equals(f.getSkipped()))
+                .collect(Collectors.toList());
+
+        long totalCount = nonSkipped.size();
+        long failCount = nonSkipped.stream()
+                .filter(f -> !Boolean.TRUE.equals(f.getPass()))
                 .count();
-        long totalDuration = feedbacks.stream()
+        long totalDuration = nonSkipped.stream()
                 .mapToLong(f -> f.getDurationMs() != null ? f.getDurationMs() : 0)
                 .sum();
 
