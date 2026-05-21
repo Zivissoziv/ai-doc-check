@@ -1047,12 +1047,13 @@ const DocumentRenderer = {
             </div>`;
     },
 
-    _renderNodes(nodes) {
+    _renderNodes(nodes, depth = 0) {
         if (!nodes || !Array.isArray(nodes)) return '';
         return nodes.map(node => {
-            const childrenHtml = this._renderNodes(node.children);
+            const childrenHtml = this._renderNodes(node.children, depth + 1);
             const isHeading = node.type === 'heading';
-            return `<div id="node-${node.id}" class="${isHeading ? 'mb-3' : 'mb-1'} p-1 rounded hover:bg-gray-50 transition-colors" ${isHeading ? `data-heading="${node.content}"` : ''}>
+            const indent = isHeading ? depth * 20 : (depth + 1) * 20;
+            return `<div id="node-${node.id}" class="${isHeading ? 'mb-3' : 'mb-1'} p-1 rounded hover:bg-gray-50 transition-colors" ${isHeading ? `data-heading="${node.content}"` : ''} style="margin-left:${indent}px">
                 ${node.html || `<p>${this._escapeHtml(node.content || '')}</p>`}
                 ${childrenHtml}
             </div>`;

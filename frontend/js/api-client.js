@@ -290,17 +290,7 @@ const DocumentParser = {
         const text = result.text || '';
         const tree = text ? this.buildTreeFromText(text) : [];
 
-        const lines = text.split('\n').filter(l => l.trim());
-        let richHtml = '<div class="doc-backend-output">';
-        lines.forEach(line => {
-            const isHeading = this.detectHeadingLevel(line) > 0;
-            richHtml += isHeading
-                ? `<p class="font-bold" style="margin:0.75rem 0 0.25rem">${this.escapeHtml(line)}</p>`
-                : `<p style="margin:0.25rem 0;line-height:1.7">${this.escapeHtml(line)}</p>`;
-        });
-        richHtml += '</div>';
-
-        return { text, tree, html: richHtml };
+        return { text, tree, html: `<div>${this.escapeHtml(text).replace(/\n/g, '<br>')}</div>` };
     },
 
     async parseDocx(arrayBuffer) {
@@ -394,6 +384,12 @@ const DocumentParser = {
         return 0;
     },
 
+    _headingHtml(content, level) {
+        const sizes = { 1: 'text-lg', 2: 'text-base', 3: 'text-sm' };
+        const cls = `font-bold ${sizes[level] || 'text-sm'}`;
+        return `<p class="${cls}" style="margin:0.75rem 0 0.25rem">${this.escapeHtml(content)}</p>`;
+    },
+
     buildHeadingTree(flatNodes) {
         const tree = [];
         const headingStack = [];
@@ -480,24 +476,28 @@ const DocumentParser = {
 
     buildTreeFromText(text) {
         const lines = text.split('\n');
-        const tree = [];
+        const flatNodes = [];
         let nodeId = 0;
 
         lines.forEach(line => {
-            if (line.trim()) {
-                const headingMatch = line.match(/^(第[一二三四五六七八九十\d]+[章节]|[一二三四五六七八九十\d]+[\.、]|\d+[\.\、])/);
-                tree.push({
+            const trimmed = line.trim();
+            if (!trimmed) return;
+
+            const level = this.detectHeadingLevel(trimmed);
+            const nodeType = level > 0 ? 'heading' : 'paragraph';
+            flatNodes.push({
                     id: 'node-' + (nodeId++),
-                    type: headingMatch ? 'heading' : 'paragraph',
-                    level: headingMatch ? 1 : 0,
-                    content: line,
-                    html: `<p${headingMatch ? ' class="font-bold"' : ''}>${this.escapeHtml(line)}</p>`,
+                    type: nodeType,
+                    level: level,
+                    content: trimmed,
+                    html: nodeType === 'heading'
+                        ? this._headingHtml(trimmed, level)
+                        : `<p>${this.escapeHtml(trimmed)}</p>`,
                     children: []
                 });
-            }
         });
 
-        return tree;
+        return this.buildHeadingTree(flatNodes);
     },
 
     escapeHtml(text) {

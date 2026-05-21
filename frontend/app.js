@@ -776,6 +776,16 @@ class SmartDocApp {
             this.toggleSettings();
             return;
         }
+
+        const freshRules = await RulesManager.loadFromServer(this.currentRuleGroup);
+        if (freshRules && freshRules.length > 0) {
+            this.rules = freshRules;
+        }
+        const syncedRules = this.rules.filter(r => r.enabled !== false);
+        if (syncedRules.length === 0) {
+            alert('请至少开启一条审核规则');
+            return;
+        }
         
         this.isAuditing = true;
         const auditStartTime = Date.now();
@@ -790,7 +800,7 @@ class SmartDocApp {
         
         try {
             const auditList = document.getElementById('auditList');
-            const placeholders = activeRules.map((rule, i) => {
+            const placeholders = syncedRules.map((rule, i) => {
                 const div = document.createElement('div');
                 div.id = 'audit-rule-' + i;
                 div.innerHTML = `
@@ -915,7 +925,7 @@ class SmartDocApp {
                 console.error('保存审核结果失败:', err);
             }
 
-            UiHelpers.setStatus(`审核完成，共检查 ${activeRules.length} 条规则`);
+            UiHelpers.setStatus(`审核完成，共检查 ${syncedRules.length} 条规则`);
             document.getElementById('auditBadge').classList.remove('hidden');
             UiHelpers.switchTab('audit');
             this.incrementAuditStats();
@@ -1138,9 +1148,8 @@ class SmartDocApp {
             
             const indent = '  '.repeat(pathPrefix.split('.').filter(p => p).length);
             const items = data.map((item, idx) => {
-                const itemPath = pathPrefix ? `${pathPrefix}[${idx}]` : `[${idx}]`;
-                const itemStr = this._formatDataForPreview(item, itemPath);
-                return `<span class="text-gray-500">${indent}  </span><span class="text-blue-500">[${idx}]</span> ${itemStr}`;
+                const itemStr = this._formatDataForPreview(item, pathPrefix);
+                return `<span class="text-gray-500">${indent}  </span>${itemStr}`;
             }).join('\n');
             return `<span class="text-gray-400">[</span>\n${items}\n<span class="text-gray-400">${indent}]</span>`;
         }
@@ -1168,6 +1177,7 @@ class SmartDocApp {
     }
     
     copyDataPath(path) {
+        path = path.replace(/\[\d+\]/g, '');
         const text = `{{data.${path}}}`;
         if (navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(text).then(() => {
