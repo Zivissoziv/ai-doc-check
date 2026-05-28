@@ -105,7 +105,29 @@ class SmartDocApp {
                 document.getElementById('excelIcon').className = 'fas fa-database text-blue-500 text-sm';
                 this._updateDataPreviewButton();
             }
-            
+
+            let templateBlob = null;
+            if (ticketInfo.templateDocUrl) {
+                const downRes = await fetch('/api/ticket/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: ticketInfo.templateDocUrl })
+                });
+                if (downRes.ok) {
+                    const buf = await downRes.arrayBuffer();
+                    templateBlob = new Blob([buf]);
+                }
+            } else if (ticketInfo.templateBase64) {
+                templateBlob = this._base64ToBlob(ticketInfo.templateBase64);
+            }
+
+            if (templateBlob) {
+                const tplName = ticketInfo.templateDocName || '手册模板.docx';
+                const tplFile = new File([templateBlob], tplName, { type: templateBlob.type || 'application/octet-stream' });
+                this.template = await DocumentParser.parse(tplFile);
+                this._onTemplateLoaded(tplName);
+            }
+
             UiHelpers.setStatus(`工单 ${ticketId} 已加载`);
         } catch (err) {
             console.error('加载工单失败:', err);

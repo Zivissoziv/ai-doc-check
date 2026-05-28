@@ -78,6 +78,15 @@ public class TicketController {
             if (root.has("data")) {
                 result.put("data", objectMapper.convertValue(root.get("data"), Map.class));
             }
+            if (root.has("templateDocUrl")) {
+                result.put("templateDocUrl", root.get("templateDocUrl").asText());
+            }
+            if (root.has("templateBase64")) {
+                result.put("templateBase64", root.get("templateBase64").asText());
+            }
+            if (root.has("templateDocName")) {
+                result.put("templateDocName", root.get("templateDocName").asText());
+            }
 
             log.info("工单 {} 加载成功", ticketId);
             return ResponseEntity.ok(result);
