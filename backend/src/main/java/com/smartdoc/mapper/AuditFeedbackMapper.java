@@ -39,4 +39,61 @@ public interface AuditFeedbackMapper extends BaseMapper<AuditFeedback> {
 
     @Select("SELECT * FROM audit_feedback WHERE group_id = #{groupId} AND (duration_ms IS NULL OR duration_ms = 0) ORDER BY created_at DESC LIMIT #{limit}")
     List<AuditFeedback> findLatestWithoutDurationByGroupId(@Param("groupId") String groupId, @Param("limit") int limit);
+
+    @Select("<script>SELECT COUNT(*) FROM audit_feedback WHERE rule_id = #{ruleId} AND (skipped IS NULL OR skipped = 0)" +
+            "<if test='startDate != null'> AND DATE(created_at) &gt;= #{startDate}</if>" +
+            "<if test='endDate != null'> AND DATE(created_at) &lt;= #{endDate}</if></script>")
+    Long countByRuleIdNonSkipped(@Param("ruleId") Long ruleId,
+                                  @Param("startDate") String startDate,
+                                  @Param("endDate") String endDate);
+
+    @Select("<script>SELECT COUNT(*) FROM audit_feedback WHERE rule_id = #{ruleId} AND pass = 1" +
+            "<if test='startDate != null'> AND DATE(created_at) &gt;= #{startDate}</if>" +
+            "<if test='endDate != null'> AND DATE(created_at) &lt;= #{endDate}</if></script>")
+    Long countByRuleIdPass(@Param("ruleId") Long ruleId,
+                            @Param("startDate") String startDate,
+                            @Param("endDate") String endDate);
+
+    @Select("<script>SELECT COALESCE(AVG(duration_ms), 0) FROM audit_feedback WHERE rule_id = #{ruleId} AND (skipped IS NULL OR skipped = 0) AND duration_ms IS NOT NULL" +
+            "<if test='startDate != null'> AND DATE(created_at) &gt;= #{startDate}</if>" +
+            "<if test='endDate != null'> AND DATE(created_at) &lt;= #{endDate}</if></script>")
+    Long avgDurationByRuleId(@Param("ruleId") Long ruleId,
+                              @Param("startDate") String startDate,
+                              @Param("endDate") String endDate);
+
+    @Select("SELECT COUNT(DISTINCT audit_batch_no) FROM audit_feedback WHERE skipped = 0")
+    Long countTotalBatches();
+
+    @Select("SELECT COUNT(DISTINCT audit_batch_no) FROM audit_feedback WHERE skipped = 0 AND DATE(created_at) = CURDATE()")
+    Long countTodayBatches();
+
+    @Select("<script>SELECT COUNT(DISTINCT audit_batch_no) FROM audit_feedback WHERE skipped = 0 " +
+            "AND DATE(created_at) &gt;= #{startDate} AND DATE(created_at) &lt;= #{endDate}</script>")
+    Long countBatchesBetween(@Param("startDate") String startDate, @Param("endDate") String endDate);
+
+    @Select("SELECT DATE(created_at) AS statDate, COUNT(DISTINCT audit_batch_no) AS count, " +
+            "COALESCE(AVG(duration_ms), 0) AS avgDurationMs " +
+            "FROM audit_feedback WHERE skipped = 0 AND DATE(created_at) >= #{startDate} " +
+            "GROUP BY DATE(created_at) ORDER BY DATE(created_at) ASC")
+    List<DailyStatsRow> findDailyStatsSince(@Param("startDate") String startDate);
+
+    @Select("SELECT DATE(created_at) AS statDate, COUNT(DISTINCT audit_batch_no) AS count, " +
+            "COALESCE(AVG(duration_ms), 0) AS avgDurationMs " +
+            "FROM audit_feedback WHERE skipped = 0 AND DATE(created_at) >= #{startDate} " +
+            "AND DATE(created_at) <= #{endDate} " +
+            "GROUP BY DATE(created_at) ORDER BY DATE(created_at) ASC")
+    List<DailyStatsRow> findDailyStatsBetween(@Param("startDate") String startDate, @Param("endDate") String endDate);
+
+    class DailyStatsRow {
+        private String statDate;
+        private Long count;
+        private Long avgDurationMs;
+        public DailyStatsRow() {}
+        public String getStatDate() { return statDate; }
+        public void setStatDate(String statDate) { this.statDate = statDate; }
+        public Long getCount() { return count; }
+        public void setCount(Long count) { this.count = count; }
+        public Long getAvgDurationMs() { return avgDurationMs; }
+        public void setAvgDurationMs(Long avgDurationMs) { this.avgDurationMs = avgDurationMs; }
+    }
 }

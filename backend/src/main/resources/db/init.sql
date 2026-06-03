@@ -65,36 +65,12 @@ CREATE TABLE IF NOT EXISTS template (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='模板表';
 
--- AI审核统计表
-CREATE TABLE IF NOT EXISTS audit_stats (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
-    total_count INT DEFAULT 0 COMMENT '累计审核调用总次数',
-    today_count INT DEFAULT 0 COMMENT '今日审核调用次数',
-    last_date VARCHAR(10) DEFAULT NULL COMMENT '最后统计日期',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='AI审核统计表';
-
--- 插入默认统计数据
-INSERT INTO audit_stats (id, total_count, today_count, last_date)
-VALUES (1, 0, 0, '')
-ON DUPLICATE KEY UPDATE total_count = VALUES(total_count);
-
--- 审核每日统计表
-CREATE TABLE IF NOT EXISTS audit_daily_stats (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
-    stat_date DATE NOT NULL UNIQUE COMMENT '统计日期',
-    count INT DEFAULT 0 COMMENT '当日审核次数',
-    total_duration_ms BIGINT DEFAULT 0 COMMENT '当日审核总耗时（毫秒）',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='审核每日统计表';
-
 -- 审核反馈表
 CREATE TABLE IF NOT EXISTS audit_feedback (
     id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
     rule_id BIGINT DEFAULT NULL COMMENT '规则ID',
     group_id VARCHAR(50) DEFAULT NULL COMMENT '规则组ID，用于按组统计（不依赖rule_id）',
+    audit_batch_no VARCHAR(32) DEFAULT NULL COMMENT '审核批次号，同一次审核的多个规则结果共享同一批次号',
     pass BOOLEAN DEFAULT NULL COMMENT '是否通过审核',
     confidence INT DEFAULT NULL COMMENT '置信度',
     results_json VARCHAR(10000) DEFAULT NULL COMMENT '审核结果JSON',
@@ -105,5 +81,6 @@ CREATE TABLE IF NOT EXISTS audit_feedback (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     INDEX idx_feedback_rule_id (rule_id),
-    INDEX idx_feedback_group_id (group_id)
+    INDEX idx_feedback_group_id (group_id),
+    INDEX idx_feedback_batch_no (audit_batch_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='审核反馈表';

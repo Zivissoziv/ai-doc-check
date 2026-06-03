@@ -1,6 +1,5 @@
 package com.smartdoc.controller;
 
-import com.smartdoc.entity.AuditStats;
 import com.smartdoc.service.AuditStatsService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -32,11 +31,9 @@ public class AuditStatsController {
 
     @PostMapping("/stats/increment")
     public ResponseEntity<Map<String, Object>> increment() {
-        AuditStats stats = auditStatsService.increment();
+        auditStatsService.increment();
         Map<String, Object> response = new HashMap<>();
         response.put("success", true);
-        response.put("totalCount", stats.getTotalCount());
-        response.put("todayCount", stats.getTodayCount());
         return ResponseEntity.ok(response);
     }
 

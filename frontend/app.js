@@ -31,6 +31,7 @@ class SmartDocApp {
         this.currentRuleGroup = null;
         this.isAuditing = false;
         this.exactMatchMode = false;
+        this._statsRequestToken = 0;
 
         this.init();
     }
@@ -810,7 +811,7 @@ class SmartDocApp {
         }
         
         this.isAuditing = true;
-        const auditStartTime = Date.now();
+        this._auditStartTime = Date.now();
         const btn = document.getElementById('runAuditBtn');
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 审核中...';
@@ -938,7 +939,8 @@ class SmartDocApp {
                     issues: r.issues || [],
                     summary: r.summary || ''
                 }));
-                const saveResponse = await FeedbackAPI.saveAuditResults(saveResults, this.currentRuleGroup);
+                const auditDuration = Date.now() - (this._auditStartTime || Date.now());
+                const saveResponse = await FeedbackAPI.saveAuditResults(saveResults, this.currentRuleGroup, auditDuration);
                 const feedbackIds = saveResponse.ids || [];
                 validResults.forEach((r, i) => {
                     r._feedbackId = feedbackIds[i];
@@ -950,18 +952,7 @@ class SmartDocApp {
             UiHelpers.setStatus(`审核完成，共检查 ${syncedRules.length} 条规则`);
             document.getElementById('auditBadge').classList.remove('hidden');
             UiHelpers.switchTab('audit');
-            this.incrementAuditStats();
 
-            const auditDuration = Date.now() - auditStartTime;
-            try {
-                await fetch('/api/stats/duration', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ durationMs: auditDuration, groupId: this.currentRuleGroup })
-                });
-            } catch (e) {
-                console.error('记录耗时失败:', e);
-            }
         } catch (err) {
             UiHelpers.setStatus('审核失败: ' + err.message);
             console.error('审核失败:', err);
@@ -1098,14 +1089,6 @@ class SmartDocApp {
         UiHelpers.toggleModal('helpModal', true);
     }
     closeHelp() { UiHelpers.toggleModal('helpModal', false); }
-    
-    async incrementAuditStats() {
-        try {
-            await fetch('/api/stats/increment', { method: 'POST' });
-        } catch (e) {
-            console.error('更新统计数据失败:', e);
-        }
-    }
     
     showImportExportModal() { UiHelpers.toggleModal('importExportModal', true); }
     closeImportExportModal() { UiHelpers.toggleModal('importExportModal', false); }
@@ -1378,6 +1361,8 @@ class SmartDocApp {
         const content = document.getElementById('statsAnalysisContent');
         content.innerHTML = '<div class="text-center text-gray-400 py-8"><i class="fas fa-spinner fa-spin text-3xl mb-2"></i><p class="text-sm">加载中...</p></div>';
 
+        const requestToken = ++this._statsRequestToken;
+
         try {
             const [statsRes, dailyRes, groupsRes] = await Promise.all([
                 fetch(this._buildStatsUrl('/api/stats')),
@@ -1401,6 +1386,9 @@ class SmartDocApp {
             const chartHtml = this._renderDailyChart(dailyData);
 
             const hasFilter = !!(startDate || endDate);
+
+            // 丢弃过期请求的结果（防止并发覆盖）
+            if (requestToken !== this._statsRequestToken) return;
 
             content.innerHTML = `
                 <div class="flex items-center justify-between mb-4">
@@ -1454,22 +1442,9 @@ class SmartDocApp {
                         </div>
                     </div>
                 </div>
-
-                <div class="bg-white rounded-xl border border-gray-200 p-4">
-                    <h3 class="text-sm font-semibold text-gray-700 mb-3"><i class="fas fa-robot text-blue-500 mr-1"></i>规则反馈统计</h3>
-                    <div class="mb-3">
-                        <select id="statsRuleSelect" onchange="app.loadSelectedRuleStats()" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" disabled>
-                            <option value="">-- 请先选择规则组 --</option>
-                        </select>
-                    </div>
-                    <div id="selectedRuleStats">
-                        <div class="text-center text-gray-400 py-4 text-sm">
-                            <i class="fas fa-hand-pointer mr-1"></i>请先选择规则组，再选择规则查看不准确反馈
-                        </div>
-                    </div>
-                </div>
             `;
         } catch (err) {
+            if (requestToken !== this._statsRequestToken) return;
             content.innerHTML = '<div class="text-center text-red-500 py-8"><i class="fas fa-exclamation-triangle text-3xl mb-2"></i><p class="text-sm">加载失败: ' + err.message + '</p></div>';
         }
     }
@@ -1481,14 +1456,12 @@ class SmartDocApp {
         const maxCount = Math.max(...dailyData.map(d => d.count), 1);
         let barsHtml = dailyData.map((d, i) => {
             const height = Math.max(Math.round(d.count / maxCount * 100), d.count > 0 ? 4 : 0);
-            const avgSec = d.avgDurationMs > 0 ? Math.round(d.avgDurationMs / 1000) : 0;
             return `<div class="flex-1 flex flex-col items-center gap-1">
                 <span class="text-xs font-medium text-gray-700">${d.count}</span>
                 <div class="w-full bg-blue-100 rounded-t-md relative" style="height:${height}px;min-width:20px">
                     <div class="absolute inset-x-0 bottom-0 bg-blue-500 rounded-t-md" style="height:${height}px"></div>
                 </div>
                 <span class="text-xs text-gray-400">${d.date}</span>
-                ${avgSec > 0 ? `<span class="text-xs text-gray-300">${avgSec}s</span>` : ''}
             </div>`;
         }).join('');
 
@@ -1500,42 +1473,64 @@ class SmartDocApp {
 
     async onStatsGroupChange() {
         const groupId = document.getElementById('statsGroupSelect').value;
-        const ruleSelect = document.getElementById('statsRuleSelect');
         const groupPanel = document.getElementById('groupStatsPanel');
 
         if (!groupId) {
-            ruleSelect.innerHTML = '<option value="">-- 请先选择规则组 --</option>';
-            ruleSelect.disabled = true;
             groupPanel.innerHTML = '<div class="text-center text-gray-400 py-4 text-sm"><i class="fas fa-hand-pointer mr-1"></i>请选择规则组查看统计信息</div>';
-            document.getElementById('selectedRuleStats').innerHTML = '<div class="text-center text-gray-400 py-4 text-sm"><i class="fas fa-hand-pointer mr-1"></i>请先选择规则组，再选择规则查看不准确反馈</div>';
             return;
         }
 
         const group = this._statsGroupData.find(g => g.groupId === groupId);
         const rules = (group && group.rules) || [];
 
-        if (rules.length === 0) {
-            ruleSelect.innerHTML = '<option value="">-- 该规则组暂无规则 --</option>';
-            ruleSelect.disabled = true;
-            document.getElementById('selectedRuleStats').innerHTML = '<div class="text-center text-gray-400 py-4 text-sm">该规则组暂无规则</div>';
-        } else {
-            ruleSelect.disabled = false;
-            ruleSelect.innerHTML = '<option value="">-- 请选择规则 --</option>' +
-                rules.map(r => `<option value="${r.id}">${r.name}</option>`).join('');
-            document.getElementById('selectedRuleStats').innerHTML = '<div class="text-center text-gray-400 py-4 text-sm"><i class="fas fa-hand-pointer mr-1"></i>请从上方下拉框选择规则查看不准确反馈</div>';
-        }
-
         groupPanel.innerHTML = '<div class="text-center text-gray-400 py-4"><i class="fas fa-spinner fa-spin text-xl mb-1"></i><p class="text-xs">加载中...</p></div>';
 
         try {
-            const gsRes = await fetch(this._buildStatsUrl(`/api/stats/group/${groupId}`));
+            const [gsRes, ...ruleStatsResults] = await Promise.all([
+                fetch(this._buildStatsUrl(`/api/stats/group/${groupId}`)),
+                ...rules.map(r => {
+                    const { startDate, endDate } = this._getDateRange();
+                    return FeedbackAPI.getRuleStats(r.id, startDate, endDate).catch(() => null);
+                })
+            ]);
+
             if (!gsRes.ok) throw new Error('获取规则组统计失败');
             const gs = await gsRes.json();
 
             const avgSec = gs.avgDurationMs > 0 ? (gs.avgDurationMs / 1000).toFixed(1) : '-';
 
+            let tableRows = '';
+            if (rules.length > 0) {
+                tableRows = rules.map((rule, i) => {
+                    const rs = ruleStatsResults[i];
+                    const auditCount = rs ? rs.totalAuditCount || 0 : 0;
+                    const passRate = rs && rs.passRate != null ? Math.round(rs.passRate) : '-';
+                    const inaccurateCount = rs ? rs.inaccurateCount || 0 : 0;
+
+                    const inaccurateList = (rs && rs.recentFeedbacks || [])
+                        .filter(f => f.feedbackType === 'INACCURATE');
+
+                    let reasonHtml = '';
+                    if (inaccurateList.length > 0) {
+                        reasonHtml = inaccurateList.map(f =>
+                            `<div class="text-xs text-red-600 leading-tight">${f.reason || '未提供原因'}</div>`
+                        ).join('');
+                    } else {
+                        reasonHtml = '<span class="text-xs text-gray-400">-</span>';
+                    }
+
+                    return `<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+                        <td class="py-2.5 px-3 text-sm text-gray-900 font-medium">${rule.name}</td>
+                        <td class="py-2.5 px-3 text-sm text-gray-700 text-center">${auditCount}</td>
+                        <td class="py-2.5 px-3 text-sm text-center ${passRate !== '-' ? (passRate >= 80 ? 'text-green-600' : passRate >= 50 ? 'text-orange-500' : 'text-red-600') : 'text-gray-400'}">${passRate}%</td>
+                        <td class="py-2.5 px-3 text-sm text-center ${inaccurateCount > 0 ? 'text-red-600 font-medium' : 'text-gray-400'}">${inaccurateCount > 0 ? inaccurateCount : 0}</td>
+                        <td class="py-2.5 px-3">${reasonHtml}</td>
+                    </tr>`;
+                }).join('');
+            }
+
             groupPanel.innerHTML = `
-                <div class="grid grid-cols-3 gap-2">
+                <div class="grid grid-cols-3 gap-2 mb-4">
                     <div class="bg-blue-50 rounded-lg p-3 text-center">
                         <div class="text-xl font-bold text-blue-600">${gs.totalAuditCount || 0}</div>
                         <div class="text-xs text-blue-500">累计审核</div>
@@ -1549,82 +1544,27 @@ class SmartDocApp {
                         <div class="text-xs text-purple-500">平均耗时</div>
                     </div>
                 </div>
+                ${rules.length > 0 ? `
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="bg-gray-50 text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                <th class="py-2.5 px-3">规则名称</th>
+                                <th class="py-2.5 px-3 text-center">累计审核</th>
+                                <th class="py-2.5 px-3 text-center">通过率</th>
+                                <th class="py-2.5 px-3 text-center">不准确反馈</th>
+                                <th class="py-2.5 px-3">最近不准确原因</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${tableRows}
+                        </tbody>
+                    </table>
+                </div>
+                ` : '<div class="text-center text-gray-400 py-4 text-sm">该规则组暂无规则</div>'}
             `;
         } catch (err) {
             groupPanel.innerHTML = '<div class="text-center text-red-500 py-4 text-sm">加载失败: ' + err.message + '</div>';
-        }
-    }
-
-    async loadSelectedRuleStats() {
-        const ruleId = document.getElementById('statsRuleSelect').value;
-        const container = document.getElementById('selectedRuleStats');
-
-        if (!ruleId) {
-            container.innerHTML = '<div class="text-center text-gray-400 py-4 text-sm"><i class="fas fa-hand-pointer mr-1"></i>请从上方下拉框选择规则查看不准确反馈</div>';
-            return;
-        }
-
-        container.innerHTML = '<div class="text-center text-gray-400 py-4"><i class="fas fa-spinner fa-spin text-xl mb-1"></i><p class="text-xs">加载中...</p></div>';
-
-        try {
-            const stats = await FeedbackAPI.getRuleStats(ruleId);
-            if (stats.totalAuditCount === 0) {
-                container.innerHTML = '<div class="text-center text-gray-400 py-4 text-sm"><i class="fas fa-chart-pie text-xl mb-1 opacity-30"></i><p class="text-xs">暂无审核数据</p></div>';
-                return;
-            }
-
-            const inaccurateOnly = (stats.recentFeedbacks || []).filter(f => f.feedbackType === 'INACCURATE');
-
-            let recentHtml = '';
-            if (inaccurateOnly.length > 0) {
-                recentHtml = `
-                    <div class="mt-3">
-                        <h4 class="text-xs font-medium text-gray-700 mb-2">不准确反馈详情与原因</h4>
-                        <div class="space-y-2">
-                            ${inaccurateOnly.map(f => `
-                                <div class="p-3 bg-red-50 rounded-lg border-l-4 border-red-400">
-                                    <div class="flex items-center gap-2 mb-1">
-                                        <span class="text-xs text-red-600"><i class="fas fa-times mr-1"></i>不准确</span>
-                                        <span class="text-xs text-gray-400">${f.createdAt ? new Date(f.createdAt).toLocaleString('zh-CN') : ''}</span>
-                                    </div>
-                                    ${f.reason ? `<div class="text-xs text-gray-700">${f.reason}</div>` : '<div class="text-xs text-gray-400">未提供原因</div>'}
-                                </div>
-                            `).join('')}
-                        </div>
-                    </div>
-                `;
-            }
-
-            container.innerHTML = `
-                <div class="text-sm font-medium text-gray-900 mb-3">${stats.ruleName || '规则'}</div>
-                <div class="grid grid-cols-2 gap-2 mb-3">
-                    <div class="bg-blue-50 rounded-lg p-2 text-center">
-                        <div class="text-lg font-bold text-blue-600">${stats.totalAuditCount}</div>
-                        <div class="text-xs text-blue-500">累计审核</div>
-                    </div>
-                    <div class="bg-green-50 rounded-lg p-2 text-center">
-                        <div class="text-lg font-bold text-green-600">${stats.passRate != null ? Math.round(stats.passRate) : 0}%</div>
-                        <div class="text-xs text-green-500">通过率</div>
-                    </div>
-                </div>
-                ${stats.inaccurateCount > 0 ? `
-                <div class="bg-red-50 rounded-lg p-3 mb-2">
-                    <div class="flex items-center justify-between">
-                        <span class="text-sm text-red-600"><i class="fas fa-times mr-1"></i>不准确反馈</span>
-                        <span class="text-sm font-bold text-red-700">${stats.inaccurateCount} 次</span>
-                    </div>
-                </div>
-                ` : `
-                <div class="bg-green-50 rounded-lg p-3 mb-2">
-                    <div class="flex items-center justify-between">
-                        <span class="text-sm text-green-600"><i class="fas fa-check-circle mr-1"></i>暂无不准确反馈</span>
-                    </div>
-                </div>
-                `}
-                ${recentHtml}
-            `;
-        } catch (err) {
-            container.innerHTML = '<div class="text-center text-red-500 py-4 text-sm"><i class="fas fa-exclamation-triangle text-xl mb-1"></i><p class="text-xs">加载失败: ' + err.message + '</p></div>';
         }
     }
 

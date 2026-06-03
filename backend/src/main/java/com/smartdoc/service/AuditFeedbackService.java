@@ -17,6 +17,7 @@ import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -30,12 +31,18 @@ public class AuditFeedbackService {
 
     @Transactional
     public List<AuditFeedback> saveAuditResults(List<AuditResultDto> results) {
-        return saveAuditResults(results, null);
+        return saveAuditResults(results, null, null);
     }
 
     @Transactional
     public List<AuditFeedback> saveAuditResults(List<AuditResultDto> results, String groupId) {
+        return saveAuditResults(results, groupId, null);
+    }
+
+    @Transactional
+    public List<AuditFeedback> saveAuditResults(List<AuditResultDto> results, String groupId, Long durationMs) {
         List<AuditFeedback> feedbacks = new ArrayList<>();
+        String batchNo = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         for (AuditResultDto result : results) {
             String resultsJson;
             try {
@@ -47,6 +54,8 @@ public class AuditFeedbackService {
             AuditFeedback feedback = AuditFeedback.builder()
                     .ruleId(result.getRuleId() != null ? result.getRuleId().longValue() : null)
                     .groupId(groupId)
+                    .auditBatchNo(batchNo)
+                    .durationMs(durationMs)
                     .pass(result.getPass())
                     .skipped(result.getSkipped())
                     .confidence(result.getConfidence())
@@ -79,12 +88,25 @@ public class AuditFeedbackService {
     }
 
     public RuleFeedbackStatsDto getRuleStats(Long ruleId) {
+        return getRuleStats(ruleId, null, null);
+    }
+
+    public RuleFeedbackStatsDto getRuleStats(Long ruleId, String startDate, String endDate) {
         AuditFeedbackMapper mapper = auditFeedbackMapper;
 
-        Long totalAuditCount = Long.valueOf(mapper.selectCount(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<AuditFeedback>()
-                        .eq(AuditFeedback::getRuleId, ruleId)));
-        Long passCount = mapper.countByRuleIdAndPass(ruleId, true);
+        Long totalAuditCount;
+        Long passCount;
+        boolean hasDate = startDate != null || endDate != null;
+        if (hasDate) {
+            totalAuditCount = mapper.countByRuleIdNonSkipped(ruleId, startDate, endDate);
+            passCount = mapper.countByRuleIdPass(ruleId, startDate, endDate);
+        } else {
+            totalAuditCount = Long.valueOf(mapper.selectCount(
+                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<AuditFeedback>()
+                            .eq(AuditFeedback::getRuleId, ruleId)
+                            .ne(AuditFeedback::getSkipped, true)));
+            passCount = mapper.countByRuleIdAndPass(ruleId, true);
+        }
 
         double passRate = 0.0;
         if (totalAuditCount != null && totalAuditCount > 0) {

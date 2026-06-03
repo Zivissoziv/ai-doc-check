@@ -693,10 +693,13 @@ const ReportExporter = {
 };
 
 const FeedbackAPI = {
-    async saveAuditResults(results, groupId) {
+    async saveAuditResults(results, groupId, durationMs) {
         let url = '/api/feedback/save';
         if (groupId) {
             url += '?groupId=' + encodeURIComponent(groupId);
+        }
+        if (durationMs != null) {
+            url += (groupId ? '&' : '?') + 'durationMs=' + durationMs;
         }
         const response = await fetch(url, {
             method: 'POST',
@@ -723,8 +726,13 @@ const FeedbackAPI = {
         return response.json();
     },
 
-    async getRuleStats(ruleId) {
-        const response = await fetch(`/api/feedback/stats/${ruleId}`);
+    async getRuleStats(ruleId, startDate, endDate) {
+        let url = `/api/feedback/stats/${ruleId}`;
+        const params = [];
+        if (startDate) params.push('startDate=' + encodeURIComponent(startDate));
+        if (endDate) params.push('endDate=' + encodeURIComponent(endDate));
+        if (params.length > 0) url += '?' + params.join('&');
+        const response = await fetch(url);
         if (!response.ok) {
             const err = await response.json();
             throw new Error(err.error || '获取统计信息失败');

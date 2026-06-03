@@ -31,8 +31,9 @@ public class AuditFeedbackController {
     @PostMapping("/save")
     public ResponseEntity<Map<String, Object>> saveAuditResults(
             @RequestBody List<AuditResultDto> results,
-            @RequestParam(required = false) String groupId) {
-        List<AuditFeedback> saved = auditFeedbackService.saveAuditResults(results, groupId);
+            @RequestParam(required = false) String groupId,
+            @RequestParam(required = false) Long durationMs) {
+        List<AuditFeedback> saved = auditFeedbackService.saveAuditResults(results, groupId, durationMs);
         Map<String, Object> response = new HashMap<>();
         response.put("success", true);
         response.put("ids", saved.stream().map(AuditFeedback::getId).collect(Collectors.toList()));
@@ -49,8 +50,11 @@ public class AuditFeedbackController {
     }
 
     @GetMapping("/stats/{ruleId}")
-    public ResponseEntity<RuleFeedbackStatsDto> getRuleStats(@PathVariable Long ruleId) {
-        RuleFeedbackStatsDto stats = auditFeedbackService.getRuleStats(ruleId);
+    public ResponseEntity<RuleFeedbackStatsDto> getRuleStats(
+            @PathVariable Long ruleId,
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String endDate) {
+        RuleFeedbackStatsDto stats = auditFeedbackService.getRuleStats(ruleId, startDate, endDate);
         return ResponseEntity.ok(stats);
     }
 }

@@ -1,11 +1,7 @@
 package com.smartdoc.service;
 
-import com.smartdoc.entity.AuditDailyStats;
 import com.smartdoc.entity.AuditFeedback;
-import com.smartdoc.entity.AuditStats;
-import com.smartdoc.mapper.AuditDailyStatsMapper;
 import com.smartdoc.mapper.AuditFeedbackMapper;
-import com.smartdoc.mapper.AuditStatsMapper;
 import com.smartdoc.mapper.RuleMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,8 +21,6 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class AuditStatsService {
 
-    private final AuditStatsMapper auditStatsMapper;
-    private final AuditDailyStatsMapper auditDailyStatsMapper;
     private final AuditFeedbackMapper auditFeedbackMapper;
     private final RuleMapper ruleMapper;
 
@@ -38,99 +32,34 @@ public class AuditStatsService {
         Map<String, Object> result = new HashMap<>();
 
         if (hasDateRange(startDate, endDate)) {
-            LocalDate start = LocalDate.parse(startDate);
-            LocalDate end = LocalDate.parse(endDate);
-            long totalCount = auditDailyStatsMapper.sumCountBetween(start, end);
-            long todayCount = 0;
+            long totalCount = auditFeedbackMapper.countBatchesBetween(startDate, endDate);
             LocalDate today = LocalDate.now();
-            if (!today.isBefore(start) && !today.isAfter(end)) {
-                todayCount = auditDailyStatsMapper.sumCountByDate(today);
+            String todayStr = today.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+            long todayCount = 0;
+            if (todayStr.compareTo(startDate) >= 0 && todayStr.compareTo(endDate) <= 0) {
+                todayCount = auditFeedbackMapper.countTodayBatches();
             }
             result.put("totalCount", totalCount);
             result.put("todayCount", todayCount);
         } else {
-            AuditStats stats = auditStatsMapper.selectById(1);
-            if (stats == null) {
-                stats = AuditStats.builder().totalCount(0).todayCount(0).lastDate("").build();
-            }
-            String today = getTodayDate();
-            if (!today.equals(stats.getLastDate())) {
-                stats.setTodayCount(0);
-                stats.setLastDate(today);
-                auditStatsMapper.updateById(stats);
-            }
-            result.put("totalCount", stats.getTotalCount());
-            result.put("todayCount", stats.getTodayCount());
+            long totalCount = auditFeedbackMapper.countTotalBatches();
+            long todayCount = auditFeedbackMapper.countTodayBatches();
+            result.put("totalCount", totalCount);
+            result.put("todayCount", todayCount);
         }
         return result;
     }
 
     @Transactional
-    public AuditStats increment() {
-        AuditStats stats = auditStatsMapper.selectById(1);
-        String today = getTodayDate();
-
-        if (stats == null) {
-            stats = AuditStats.builder().id(1L).totalCount(1).todayCount(1).lastDate(today).build();
-            auditStatsMapper.insert(stats);
-        } else {
-            if (!today.equals(stats.getLastDate())) {
-                stats.setTodayCount(0);
-                stats.setLastDate(today);
-            }
-            stats.setTotalCount(stats.getTotalCount() + 1);
-            stats.setTodayCount(stats.getTodayCount() + 1);
-            auditStatsMapper.updateById(stats);
-        }
-
-        upsertDailyStats(LocalDate.now(), 1, 0);
-
-        return stats;
+    public void increment() {
+        // 已废弃：统计全部基于 audit_feedback 的 audit_batch_no
+        // 保留空方法兼容前端遗留调用
     }
 
     @Transactional
     public void recordAuditDuration(long durationMs, String groupId) {
-        upsertDailyStats(LocalDate.now(), 0, durationMs);
-
-        if (groupId != null) {
-            List<AuditFeedback> feedbacks = auditFeedbackMapper.findLatestWithoutDurationByGroupId(groupId, 10);
-            if (!feedbacks.isEmpty()) {
-                long perRule = durationMs / feedbacks.size();
-                for (AuditFeedback f : feedbacks) {
-                    f.setDurationMs(perRule);
-                    auditFeedbackMapper.updateById(f);
-                }
-                return;
-            }
-        }
-
-        List<Long> ruleIds = ruleMapper.findIdsByGroupId(groupId);
-        if (!ruleIds.isEmpty()) {
-            List<AuditFeedback> feedbacks = auditFeedbackMapper.findLatestWithoutDuration(ruleIds, ruleIds.size());
-            if (!feedbacks.isEmpty()) {
-                long perRule = durationMs / feedbacks.size();
-                for (AuditFeedback f : feedbacks) {
-                    f.setDurationMs(perRule);
-                    auditFeedbackMapper.updateById(f);
-                }
-            }
-        }
-    }
-
-    private void upsertDailyStats(LocalDate date, int countIncr, long durationMs) {
-        AuditDailyStats daily = auditDailyStatsMapper.findByDate(date);
-        if (daily == null) {
-            daily = AuditDailyStats.builder()
-                    .statDate(date)
-                    .count(countIncr)
-                    .totalDurationMs(durationMs)
-                    .build();
-            auditDailyStatsMapper.insert(daily);
-        } else {
-            daily.setCount(daily.getCount() + countIncr);
-            daily.setTotalDurationMs((daily.getTotalDurationMs() != null ? daily.getTotalDurationMs() : 0) + durationMs);
-            auditDailyStatsMapper.updateById(daily);
-        }
+        // 已废弃：统计全部基于 audit_feedback 的 audit_batch_no
+        // 保留空方法兼容前端遗留调用
     }
 
     public List<Map<String, Object>> getDailyStats() {
@@ -138,46 +67,39 @@ public class AuditStatsService {
     }
 
     public List<Map<String, Object>> getDailyStats(String startDate, String endDate) {
-        List<AuditDailyStats> dailyList;
+        List<AuditFeedbackMapper.DailyStatsRow> rows;
 
         if (hasDateRange(startDate, endDate)) {
-            LocalDate start = LocalDate.parse(startDate);
-            LocalDate end = LocalDate.parse(endDate);
-            dailyList = auditDailyStatsMapper.findBetween(start, end);
+            rows = auditFeedbackMapper.findDailyStatsBetween(startDate, endDate);
         } else {
-            LocalDate sevenDaysAgo = LocalDate.now().minusDays(6);
-            dailyList = auditDailyStatsMapper.findSince(sevenDaysAgo);
+            String sevenDaysAgo = LocalDate.now().minusDays(6).format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+            rows = auditFeedbackMapper.findDailyStatsSince(sevenDaysAgo);
         }
 
-        Map<LocalDate, AuditDailyStats> map = dailyList.stream()
-                .collect(Collectors.toMap(AuditDailyStats::getStatDate, d -> d));
+        Map<String, AuditFeedbackMapper.DailyStatsRow> map = rows.stream()
+                .collect(Collectors.toMap(AuditFeedbackMapper.DailyStatsRow::getStatDate, r -> r));
 
         List<Map<String, Object>> result = new ArrayList<>();
         if (hasDateRange(startDate, endDate)) {
             LocalDate start = LocalDate.parse(startDate);
             LocalDate end = LocalDate.parse(endDate);
             for (LocalDate date = start; !date.isAfter(end); date = date.plusDays(1)) {
-                AuditDailyStats ds = map.get(date);
-                Map<String, Object> item = buildDailyItem(date, ds);
-                result.add(item);
+                result.add(buildDailyItem(date, map.get(date.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")))));
             }
         } else {
             for (int i = 6; i >= 0; i--) {
                 LocalDate date = LocalDate.now().minusDays(i);
-                AuditDailyStats ds = map.get(date);
-                Map<String, Object> item = buildDailyItem(date, ds);
-                result.add(item);
+                result.add(buildDailyItem(date, map.get(date.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")))));
             }
         }
         return result;
     }
 
-    private Map<String, Object> buildDailyItem(LocalDate date, AuditDailyStats ds) {
+    private Map<String, Object> buildDailyItem(LocalDate date, AuditFeedbackMapper.DailyStatsRow row) {
         Map<String, Object> item = new HashMap<>();
         item.put("date", date.format(DateTimeFormatter.ofPattern("MM-dd")));
-        item.put("count", ds != null ? ds.getCount() : 0);
-        item.put("avgDurationMs", (ds != null && ds.getCount() > 0)
-                ? ds.getTotalDurationMs() / ds.getCount() : 0);
+        item.put("count", row != null ? row.getCount() : 0L);
+        item.put("avgDurationMs", row != null ? row.getAvgDurationMs() : 0L);
         return item;
     }
 
@@ -217,15 +139,37 @@ public class AuditStatsService {
         long failCount = nonSkipped.stream()
                 .filter(f -> !Boolean.TRUE.equals(f.getPass()))
                 .count();
+
+        // 按批次去重计算总耗时（同批次多条记录 duration_ms 相同，避免重复累加）
         long totalDuration = nonSkipped.stream()
-                .mapToLong(f -> f.getDurationMs() != null ? f.getDurationMs() : 0)
+                .filter(f -> f.getAuditBatchNo() != null && f.getDurationMs() != null)
+                .collect(Collectors.groupingBy(
+                        AuditFeedback::getAuditBatchNo,
+                        Collectors.reducing(0L, AuditFeedback::getDurationMs, Long::max)
+                ))
+                .values().stream().mapToLong(Long::longValue).sum();
+
+        // 补充没有批次号的旧数据的耗时（直接累加）
+        totalDuration += nonSkipped.stream()
+                .filter(f -> f.getAuditBatchNo() == null && f.getDurationMs() != null)
+                .mapToLong(AuditFeedback::getDurationMs)
                 .sum();
 
         result.put("totalAuditCount", totalCount);
         result.put("failCount", failCount);
 
-        long ruleCount = ruleMapper.findIdsByGroupId(groupId).size();
-        long auditRuns = ruleCount > 0 ? totalCount / ruleCount : 0;
+        // 通过去重批次号计算实际审核轮次
+        long auditRuns = nonSkipped.stream()
+                .map(AuditFeedback::getAuditBatchNo)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .count();
+
+        if (auditRuns == 0) {
+            long ruleCount = ruleMapper.findIdsByGroupId(groupId).size();
+            auditRuns = ruleCount > 0 ? totalCount / ruleCount : 0;
+        }
+
         result.put("avgDurationMs", auditRuns > 0 ? totalDuration / auditRuns : 0);
 
         return result;
@@ -234,9 +178,5 @@ public class AuditStatsService {
     private boolean hasDateRange(String startDate, String endDate) {
         return startDate != null && !startDate.isEmpty()
                 && endDate != null && !endDate.isEmpty();
-    }
-
-    private String getTodayDate() {
-        return LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
     }
 }

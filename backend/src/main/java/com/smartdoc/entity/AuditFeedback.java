@@ -28,6 +28,9 @@ public class AuditFeedback {
     @TableField("group_id")
     private String groupId;
 
+    @TableField("audit_batch_no")
+    private String auditBatchNo;
+
     @TableField("pass")
     private Boolean pass;
 
