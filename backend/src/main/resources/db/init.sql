@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS rule (
     severity VARCHAR(20) DEFAULT 'WARNING' COMMENT '严重级别: ERROR/WARNING/INFO',
     is_enabled BOOLEAN DEFAULT TRUE COMMENT '是否启用',
     sort_order INT DEFAULT 0 COMMENT '排序序号',
+    trigger_condition VARCHAR(500) DEFAULT NULL COMMENT '触发条件表达式，如 {{data.状态}} == "已关闭"',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     FOREIGN KEY (rule_group_id) REFERENCES rule_group(id) ON DELETE CASCADE,

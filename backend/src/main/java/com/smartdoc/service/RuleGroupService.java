@@ -211,6 +211,7 @@ public class RuleGroupService {
                     rule.setSeverity(Rule.Severity.valueOf(ruleDto.getSeverity().toUpperCase()));
                     rule.setIsEnabled(ruleDto.getEnabled() != null ? ruleDto.getEnabled() : true);
                     rule.setSortOrder(i);
+                    rule.setTriggerCondition(ruleDto.getTriggerCondition());
                     ruleMapper.updateById(rule);
                     seenIds.add(ruleDto.getId());
                     continue;
@@ -224,6 +225,7 @@ public class RuleGroupService {
                     .severity(Rule.Severity.valueOf(ruleDto.getSeverity().toUpperCase()))
                     .isEnabled(ruleDto.getEnabled() != null ? ruleDto.getEnabled() : true)
                     .sortOrder(i)
+                    .triggerCondition(ruleDto.getTriggerCondition())
                     .build();
             ruleMapper.insert(rule);
         }
@@ -256,6 +258,7 @@ public class RuleGroupService {
                 .severity(rule.getSeverity() != null ? rule.getSeverity().name().toLowerCase() : "warning")
                 .enabled(rule.getIsEnabled())
                 .sortOrder(rule.getSortOrder())
+                .triggerCondition(rule.getTriggerCondition())
                 .build();
     }
 }

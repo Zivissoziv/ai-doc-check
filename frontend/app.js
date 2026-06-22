@@ -425,6 +425,7 @@ class SmartDocApp {
         document.getElementById('ruleName').value = '';
         document.getElementById('rulePrompt').value = '';
         document.getElementById('ruleSeverity').value = 'warning';
+        document.getElementById('ruleTriggerCondition').value = '';
         UiHelpers.toggleModal('ruleModal', true);
     }
     
@@ -434,6 +435,7 @@ class SmartDocApp {
         document.getElementById('ruleName').value = rule.name;
         document.getElementById('rulePrompt').value = rule.prompt;
         document.getElementById('ruleSeverity').value = rule.severity;
+        document.getElementById('ruleTriggerCondition').value = rule.triggerCondition || '';
         UiHelpers.toggleModal('ruleModal', true);
     }
     
@@ -447,10 +449,13 @@ class SmartDocApp {
             return;
         }
         
+        const triggerCondition = document.getElementById('ruleTriggerCondition').value.trim() || null;
+        const isEditing = this.currentEditingRule !== null;
         const rule = { 
-            name, prompt, severity, 
-            id: Date.now(),
-            enabled: this.currentEditingRule !== null ? this.rules[this.currentEditingRule].enabled !== false : true
+            name, prompt, severity, triggerCondition,
+            id: isEditing ? this.rules[this.currentEditingRule].id : Date.now(),
+            sortOrder: isEditing ? this.rules[this.currentEditingRule].sortOrder : this.rules.length,
+            enabled: isEditing ? this.rules[this.currentEditingRule].enabled !== false : true
         };
         
         if (this.currentEditingRule !== null) {
@@ -1364,15 +1369,17 @@ class SmartDocApp {
         const requestToken = ++this._statsRequestToken;
 
         try {
-            const [statsRes, dailyRes, groupsRes] = await Promise.all([
+            const [statsRes, dailyRes, groupsRes, allTimeRes] = await Promise.all([
                 fetch(this._buildStatsUrl('/api/stats')),
                 fetch(this._buildStatsUrl('/api/stats/daily')),
-                fetch('/api/config/rules')
+                fetch('/api/config/rules'),
+                fetch('/api/stats')
             ]);
 
             const stats = statsRes.ok ? await statsRes.json() : { totalCount: 0, todayCount: 0 };
             const dailyData = dailyRes.ok ? await dailyRes.json() : [];
             const groupData = groupsRes.ok ? await groupsRes.json() : { groups: [] };
+            const allTimeStats = allTimeRes.ok ? await allTimeRes.json() : { totalCount: 0 };
 
             this._statsGroupData = groupData.groups || [];
 
@@ -1389,6 +1396,9 @@ class SmartDocApp {
 
             // 丢弃过期请求的结果（防止并发覆盖）
             if (requestToken !== this._statsRequestToken) return;
+
+            const allTimeTotal = (allTimeStats.totalCount || 0) + 1000;
+            const rangeTotal = stats.totalCount || 0;
 
             content.innerHTML = `
                 <div class="flex items-center justify-between mb-4">
@@ -1409,21 +1419,21 @@ class SmartDocApp {
                     </div>
                 </div>
                 <div class="bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl p-4">
-                    <h3 class="text-sm font-semibold text-gray-700 mb-3"><i class="fas fa-chart-simple text-blue-500 mr-1"></i>${hasFilter ? '筛选范围内审核统计' : '全局审核统计'}</h3>
+                    <h3 class="text-sm font-semibold text-gray-700 mb-3"><i class="fas fa-chart-simple text-blue-500 mr-1"></i>审核统计</h3>
                     <div class="grid grid-cols-2 gap-4 mb-4">
                         <div class="bg-white rounded-lg p-4 shadow-sm border border-blue-100">
                             <div class="flex items-center gap-2 mb-2">
                                 <i class="fas fa-chart-line text-blue-500"></i>
-                                <span class="text-sm text-gray-500">${hasFilter ? '筛选范围次数' : '累计调用次数'}</span>
+                                <span class="text-sm text-gray-500">上线以来累计审核次数</span>
                             </div>
-                            <div class="text-2xl font-bold text-blue-600">${stats.totalCount || 0}</div>
+                            <div class="text-2xl font-bold text-blue-600">${allTimeTotal}</div>
                         </div>
                         <div class="bg-white rounded-lg p-4 shadow-sm border border-purple-100">
                             <div class="flex items-center gap-2 mb-2">
                                 <i class="fas fa-calendar-day text-purple-500"></i>
-                                <span class="text-sm text-gray-500">${hasFilter ? '今日调用次数' : '今日调用次数'}</span>
+                                <span class="text-sm text-gray-500">${hasFilter ? '所选范围内累计审核次数' : '全部累计审核次数'}</span>
                             </div>
-                            <div class="text-2xl font-bold text-purple-600">${stats.todayCount || 0}</div>
+                            <div class="text-2xl font-bold text-purple-600">${rangeTotal}</div>
                         </div>
                     </div>
                     ${chartHtml}
@@ -1481,7 +1491,7 @@ class SmartDocApp {
         }
 
         const group = this._statsGroupData.find(g => g.groupId === groupId);
-        const rules = (group && group.rules) || [];
+        const rules = ((group && group.rules) || []).slice().sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 
         groupPanel.innerHTML = '<div class="text-center text-gray-400 py-4"><i class="fas fa-spinner fa-spin text-xl mb-1"></i><p class="text-xs">加载中...</p></div>';
 
@@ -1525,6 +1535,9 @@ class SmartDocApp {
                         <td class="py-2.5 px-3 text-sm text-center ${passRate !== '-' ? (passRate >= 80 ? 'text-green-600' : passRate >= 50 ? 'text-orange-500' : 'text-red-600') : 'text-gray-400'}">${passRate}%</td>
                         <td class="py-2.5 px-3 text-sm text-center ${inaccurateCount > 0 ? 'text-red-600 font-medium' : 'text-gray-400'}">${inaccurateCount > 0 ? inaccurateCount : 0}</td>
                         <td class="py-2.5 px-3">${reasonHtml}</td>
+                        <td class="py-2.5 px-3 text-center">
+                            <button data-rule-prompt="${encodeURIComponent(rule.prompt || '')}" onclick="app.showRuleFailures(${rule.id},'${rule.name.replace(/'/g, "\\'")}',this)" class="text-xs text-blue-600 hover:text-blue-800 hover:underline ${auditCount > 0 ? '' : 'opacity-30 pointer-events-none'}">详情</button>
+                        </td>
                     </tr>`;
                 }).join('');
             }
@@ -1554,6 +1567,7 @@ class SmartDocApp {
                                 <th class="py-2.5 px-3 text-center">通过率</th>
                                 <th class="py-2.5 px-3 text-center">不准确反馈</th>
                                 <th class="py-2.5 px-3">最近不准确原因</th>
+                                <th class="py-2.5 px-3 text-center">详情</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1570,6 +1584,72 @@ class SmartDocApp {
 
     closeStatsAnalysis() {
         UiHelpers.toggleModal('statsAnalysisModal', false);
+    }
+
+    async showRuleFailures(ruleId, ruleName, btn) {
+        const { startDate, endDate } = this._getDateRange();
+        const params = [];
+        if (startDate) params.push('startDate=' + encodeURIComponent(startDate));
+        if (endDate) params.push('endDate=' + encodeURIComponent(endDate));
+        const qs = params.length > 0 ? '?' + params.join('&') : '';
+
+        // 从按钮 data 属性读取规则描述
+        const rulePrompt = btn ? decodeURIComponent(btn.getAttribute('data-rule-prompt') || '') : '';
+
+        try {
+            const res = await fetch(`/api/feedback/failures/${ruleId}${qs}`);
+            if (!res.ok) throw new Error('获取失败');
+            const data = await res.json();
+
+            if (!data || data.length === 0) {
+                alert('该规则暂无审核不通过的记录');
+                return;
+            }
+
+            let issuesHtml = data.map((item, i) => {
+                const time = item.createdAt ? new Date(item.createdAt).toLocaleString('zh-CN') : '';
+                const confidence = item.confidence != null ? `${item.confidence}%` : '-';
+                const summary = item.summary || '';
+                const issues = item.issues || [];
+                const issuesList = issues.length > 0
+                    ? issues.map(iss => `
+                        <div class="ml-3 mb-2 border-l-2 border-red-200 pl-3">
+                            ${iss.location ? `<div class="text-xs text-gray-500"><span class="font-medium">位置：</span>${iss.location}</div>` : ''}
+                            ${iss.problem ? `<div class="text-xs text-red-700"><span class="font-medium">问题：</span>${iss.problem}</div>` : ''}
+                            ${iss.suggestion ? `<div class="text-xs text-green-700"><span class="font-medium">建议：</span>${iss.suggestion}</div>` : ''}
+                        </div>
+                    `).join('')
+                    : '<div class="text-xs text-gray-400 ml-3">暂无明细</div>';
+
+                return `<div class="border border-gray-200 rounded-lg p-3 ${i > 0 ? 'mt-2' : ''}">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs text-gray-400">${time}</span>
+                        <span class="text-xs text-gray-500">置信度：${confidence}</span>
+                    </div>
+                    ${summary ? `<div class="text-xs text-gray-700 mb-2">${summary}</div>` : ''}
+                    ${issuesList}
+                </div>`;
+            }).join('');
+
+            const overlay = document.createElement('div');
+            overlay.id = 'failureDetailModal';
+            overlay.className = 'fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4';
+            overlay.innerHTML = `
+                <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+                    <div class="p-4 border-b border-gray-100 flex justify-between items-center">
+                        <h3 class="text-sm font-bold text-gray-900"><i class="fas fa-exclamation-triangle text-red-500 mr-2"></i>${ruleName} - 不通过详情</h3>
+                        <button onclick="document.getElementById('failureDetailModal').remove()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
+                    </div>
+                    ${rulePrompt ? `<div class="px-4 pt-4 pb-0"><div class="bg-gray-50 rounded-lg p-3 text-xs text-gray-600 leading-relaxed border border-gray-200"><span class="font-medium text-gray-700">规则描述：</span>${rulePrompt}</div></div>` : ''}
+                    <div class="p-4 overflow-y-auto flex-1 space-y-2">${issuesHtml}</div>
+                    <div class="p-3 border-t border-gray-100 flex justify-end">
+                        <button onclick="document.getElementById('failureDetailModal').remove()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-xs">关闭</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+        } catch (err) {
+            alert('加载失败详情失败: ' + err.message);
+        }
     }
 }
 

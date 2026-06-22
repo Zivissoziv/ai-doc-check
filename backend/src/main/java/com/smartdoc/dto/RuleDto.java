@@ -31,4 +31,6 @@ public class RuleDto {
 
     @Builder.Default
     private Integer sortOrder = 0;
+
+    private String triggerCondition;
 }

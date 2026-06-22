@@ -85,7 +85,8 @@ const RulesManager = {
                 prompt: r.prompt,
                 severity: r.severity || 'warning',
                 enabled: r.enabled !== false,
-                sortOrder: idx
+                sortOrder: r.sortOrder ?? idx,
+                triggerCondition: r.triggerCondition || null
             }))
         };
 
@@ -175,30 +176,34 @@ const RulesManager = {
 
         const isLocked = app.ruleGroups.find(g => g.groupId === app.currentRuleGroup)?.locked;
 
-        container.innerHTML = rules.map((rule, idx) => {
+        const sorted = rules.slice().sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+
+        container.innerHTML = sorted.map((rule, idx) => {
             const isEnabled = rule.enabled !== false;
+            const originIdx = rules.indexOf(rule);
             return `
                 <div class="p-3 border rounded-xl transition-all duration-200 group ${isEnabled ? 'bg-white border-gray-200 shadow-sm hover:shadow-md' : 'bg-gray-50 border-gray-100 opacity-70'}">
                     <div class="flex items-start justify-between mb-2">
-                        <div onclick="${isLocked ? '' : `app.editRule(${idx})`}" class="flex items-center gap-2 overflow-hidden cursor-pointer flex-1" title="${isLocked ? '规则组已上锁，无法编辑' : '点击编辑规则'}">
-                            <span class="flex-shrink-0 w-2 h-2 rounded-full ${rule.severity === 'error' ? 'bg-red-500' : rule.severity === 'warning' ? 'bg-yellow-500' : 'bg-blue-500'} shadow-sm"></span>
-                            <span class="font-medium text-sm truncate ${isEnabled ? 'text-gray-900 group-hover:text-blue-600' : 'text-gray-400'} transition-colors">${rule.name}</span>
+                        <div onclick="${isLocked ? '' : `app.editRule(${originIdx})`}" class="flex items-center gap-2 overflow-hidden cursor-pointer flex-1" title="${isLocked ? '规则组已上锁，无法编辑' : '点击编辑规则'}">
+                             <span class="flex-shrink-0 w-5 h-5 rounded-full bg-gray-100 text-xs font-bold text-gray-500 flex items-center justify-center">${idx + 1}</span>
+                             <span class="flex-shrink-0 w-2 h-2 rounded-full ${rule.severity === 'error' ? 'bg-red-500' : rule.severity === 'warning' ? 'bg-yellow-500' : 'bg-blue-500'} shadow-sm"></span>
+                             <span class="font-medium text-sm truncate ${isEnabled ? 'text-gray-900 group-hover:text-blue-600' : 'text-gray-400'} transition-colors">${rule.name}</span>
                             <i class="fas fa-edit text-xs text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity"></i>
                         </div>
                         <div class="flex items-center gap-2 flex-shrink-0">
-                            <div onclick="${isLocked ? '' : `app.toggleRuleStatus(${idx})`}" 
+                            <div onclick="${isLocked ? '' : `app.toggleRuleStatus(${originIdx})`}" 
                                 class="relative inline-flex h-5 w-9 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${isEnabled ? 'bg-blue-600' : 'bg-gray-200'} ${isLocked ? 'cursor-not-allowed opacity-60' : ''}"
                                 title="${isLocked ? '规则组已上锁' : (isEnabled ? '点击禁用' : '点击启用')}">
                                 <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${isEnabled ? 'translate-x-4' : 'translate-x-0'}"></span>
                             </div>
-                            <button onclick="${isLocked ? '' : `app.deleteRule(${idx})`}" 
+                            <button onclick="${isLocked ? '' : `app.deleteRule(${originIdx})`}" 
                                 class="w-5 h-5 flex items-center justify-center text-gray-300 hover:text-red-500 transition-colors ${isLocked ? 'cursor-not-allowed opacity-30' : ''}"
                                 title="${isLocked ? '规则组已上锁' : '删除规则'}">
                                 <i class="fas fa-trash-alt text-xs"></i>
                             </button>
                         </div>
                     </div>
-                    <p onclick="${isLocked ? '' : `app.editRule(${idx})`}" class="text-xs ${isEnabled ? 'text-gray-500' : 'text-gray-400'} line-clamp-2 leading-relaxed cursor-pointer">${rule.prompt}</p>
+                    <p onclick="${isLocked ? '' : `app.editRule(${originIdx})`}" class="text-xs ${isEnabled ? 'text-gray-500' : 'text-gray-400'} line-clamp-2 leading-relaxed cursor-pointer">${rule.prompt}</p>
                 </div>
             `;
         }).join('');
@@ -545,16 +550,19 @@ const AiAudit = {
         const div = document.createElement('div');
         div.className = 'bg-white rounded-xl border border-gray-200 p-6 fade-in';
 
-        const isSkipped = result.summary && (result.summary.startsWith('已跳过:') || result.summary.startsWith('未匹配关键词:'));
+        const isSkipped = result.summary && (result.summary.startsWith('已跳过:') || result.summary.startsWith('未匹配关键词:') || result.summary.startsWith('触发条件'));
 
         if (isSkipped) {
             div.className = 'bg-gray-50 rounded-xl border border-gray-300 p-6 fade-in opacity-75';
 
             const isKeywordMiss = result.summary && result.summary.startsWith('未匹配关键词:');
-            const skipLabel = isKeywordMiss ? '未匹配' : '已跳过';
+            const isTriggerCondition = result.summary && result.summary.startsWith('触发条件');
+            const skipLabel = isKeywordMiss ? '未匹配' : isTriggerCondition ? '条件不满足' : '已跳过';
             const skipDesc = isKeywordMiss
                 ? 'AI 已完成审核，但文档中未找到所需关键字'
-                : '此规则因缺少必要数据而被跳过，未进行实际审核';
+                : isTriggerCondition
+                    ? '此规则因触发条件不满足而被跳过，未进行实际审核'
+                    : '此规则因缺少必要数据而被跳过，未进行实际审核';
 
             div.innerHTML = `
                 <div class="flex items-center justify-between mb-4">

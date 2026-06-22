@@ -48,6 +48,9 @@ public class Rule {
     @Builder.Default
     private Integer sortOrder = 0;
 
+    @TableField("trigger_condition")
+    private String triggerCondition;
+
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

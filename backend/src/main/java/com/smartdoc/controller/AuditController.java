@@ -389,6 +389,7 @@ public class AuditController {
                         .severity(Rule.Severity.valueOf(dto.getSeverity().toUpperCase()))
                         .isEnabled(dto.getEnabled() != null ? dto.getEnabled() : true)
                         .sortOrder(dto.getSortOrder() != null ? dto.getSortOrder() : 0)
+                        .triggerCondition(dto.getTriggerCondition())
                         .build())
                 .collect(Collectors.toList());
     }

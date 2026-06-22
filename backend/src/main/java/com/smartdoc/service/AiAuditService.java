@@ -78,6 +78,32 @@ public class AiAuditService {
                     continue;
                 }
             }
+            String triggerCondition = rule.getTriggerCondition();
+            if (triggerCondition != null && !triggerCondition.trim().isEmpty()) {
+                try {
+                    String refVarPath = TriggerConditionEvaluator.getReferencedVarPath(triggerCondition);
+                    if (refVarPath != null) {
+                        String[] parts = refVarPath.split("\\.");
+                        Object refValue = resolveDataValue(safeUserData, parts, 0);
+                        if (refValue == null || (refValue instanceof String && ((String) refValue).isEmpty())) {
+                            log.info("跳过规则 '{}': 触发条件缺少数据变量 {}", rule.getRuleName(), refVarPath);
+                            skippedMap.put(i, buildTriggerConditionSkipped(rule, "触发条件缺少数据变量：data." + refVarPath));
+                            continue;
+                        }
+                    }
+                    log.debug("评估规则 '{}' 触发条件: {}", rule.getRuleName(), triggerCondition);
+                    boolean conditionMet = TriggerConditionEvaluator.evaluate(triggerCondition, safeUserData);
+                    if (!conditionMet) {
+                        log.info("跳过规则 '{}': 触发条件不满足 {}", rule.getRuleName(), triggerCondition);
+                        skippedMap.put(i, buildTriggerConditionSkipped(rule, "触发条件不满足：" + triggerCondition));
+                        continue;
+                    }
+                } catch (IllegalArgumentException e) {
+                    log.warn("规则 '{}' 触发条件评估失败: {}", rule.getRuleName(), e.getMessage());
+                    skippedMap.put(i, buildTriggerConditionSkipped(rule, "触发条件评估失败: " + e.getMessage()));
+                    continue;
+                }
+            }
             resolvableRules.add(rule);
         }
 
@@ -178,6 +204,32 @@ public class AiAuditService {
                 if (!missing.isEmpty()) {
                     log.info("跳过规则 '{}': 缺少数据变量 {}", rule.getRuleName(), missing);
                     skippedMap.put(i, buildSkippedResult(rule, missing));
+                    continue;
+                }
+            }
+            String triggerCondition = rule.getTriggerCondition();
+            if (triggerCondition != null && !triggerCondition.trim().isEmpty()) {
+                try {
+                    String refVarPath = TriggerConditionEvaluator.getReferencedVarPath(triggerCondition);
+                    if (refVarPath != null) {
+                        String[] parts = refVarPath.split("\\.");
+                        Object refValue = resolveDataValue(safeUserData, parts, 0);
+                        if (refValue == null || (refValue instanceof String && ((String) refValue).isEmpty())) {
+                            log.info("跳过规则 '{}': 触发条件缺少数据变量 {}", rule.getRuleName(), refVarPath);
+                            skippedMap.put(i, buildTriggerConditionSkipped(rule, "触发条件缺少数据变量：data." + refVarPath));
+                            continue;
+                        }
+                    }
+                    log.debug("评估规则 '{}' 触发条件: {}", rule.getRuleName(), triggerCondition);
+                    boolean conditionMet = TriggerConditionEvaluator.evaluate(triggerCondition, safeUserData);
+                    if (!conditionMet) {
+                        log.info("跳过规则 '{}': 触发条件不满足 {}", rule.getRuleName(), triggerCondition);
+                        skippedMap.put(i, buildTriggerConditionSkipped(rule, "触发条件不满足：" + triggerCondition));
+                        continue;
+                    }
+                } catch (IllegalArgumentException e) {
+                    log.warn("规则 '{}' 触发条件评估失败: {}", rule.getRuleName(), e.getMessage());
+                    skippedMap.put(i, buildTriggerConditionSkipped(rule, "触发条件评估失败: " + e.getMessage()));
                     continue;
                 }
             }
@@ -397,6 +449,19 @@ public class AiAuditService {
             }
         }
         return missing;
+    }
+
+    private AuditResultDto buildTriggerConditionSkipped(Rule rule, String summary) {
+        AuditResultDto result = new AuditResultDto();
+        result.setRuleId(rule.getId() != null ? rule.getId().intValue() : 0);
+        result.setRuleName(rule.getRuleName());
+        result.setSeverity(rule.getSeverity().name().toLowerCase());
+        result.setPass(false);
+        result.setSkipped(true);
+        result.setConfidence(0);
+        result.setSummary(summary);
+        result.setIssues(null);
+        return result;
     }
 
     private AuditResultDto buildSkippedResult(Rule rule, List<String> missingVars) {
