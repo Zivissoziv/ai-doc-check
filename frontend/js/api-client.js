@@ -746,5 +746,15 @@ const FeedbackAPI = {
             throw new Error(err.error || '获取统计信息失败');
         }
         return response.json();
+    },
+
+    async getAuditRecordByTicketIdAndTs(ticketId, ts) {
+        const url = `/api/ticket/audit-record?ticketId=${encodeURIComponent(ticketId)}&ts=${encodeURIComponent(ts)}`;
+        const response = await fetch(url);
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || '查询历史审核记录失败');
+        }
+        return response.json();
     }
 };

@@ -32,6 +32,8 @@ class SmartDocApp {
         this.isAuditing = false;
         this.exactMatchMode = false;
         this._statsRequestToken = 0;
+        this.ticketId = null;
+        this.ts = null;
 
         this.init();
     }
@@ -49,7 +51,7 @@ class SmartDocApp {
         
         const params = this.getUrlParams();
         if (params.ticketId) {
-            await this.loadFromTicket(params.ticketId);
+            await this.loadFromTicket(params.ticketId, params.ts);
         }
     }
     
@@ -62,8 +64,10 @@ class SmartDocApp {
         return new Blob([bytes]);
     }
     
-    async loadFromTicket(ticketId) {
+    async loadFromTicket(ticketId, ts) {
         UiHelpers.setStatus(`正在加载工单 ${ticketId}...`, true);
+        this.ticketId = ticketId;
+        this.ts = ts || null;
         
         try {
             const ticketRes = await fetch(`/api/ticket/${ticketId}`);
@@ -130,11 +134,60 @@ class SmartDocApp {
             }
 
             UiHelpers.setStatus(`工单 ${ticketId} 已加载`);
+
+            // 如果有 ts 参数，查询历史审核结果
+            if (ts) {
+                try {
+                    const record = await FeedbackAPI.getAuditRecordByTicketIdAndTs(ticketId, ts);
+                    if (record.exists && record.results && record.results.length > 0) {
+                        this._displayHistoricalResults(record);
+                    }
+                } catch (err) {
+                    console.error('查询历史审核记录失败:', err);
+                }
+            }
         } catch (err) {
             console.error('加载工单失败:', err);
             UiHelpers.setStatus(`工单加载失败: ${err.message}`);
             alert(`加载工单失败: ${err.message}`);
         }
+    }
+
+    _displayHistoricalResults(record) {
+        // 切换到审核结果 tab
+        UiHelpers.switchTab('audit');
+
+        const resultsContainer = document.getElementById('auditResults');
+        const auditList = document.createElement('div');
+        auditList.id = 'auditList';
+        auditList.className = 'space-y-4';
+        resultsContainer.innerHTML = '';
+
+        // 添加历史审核提示横幅
+        const auditedAt = record.auditedAt ? new Date(record.auditedAt).toLocaleString() : '未知时间';
+        const banner = document.createElement('div');
+        banner.className = 'bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4 flex items-center justify-between';
+        banner.innerHTML = `
+            <div class="flex items-center gap-2 text-blue-700">
+                <i class="fas fa-history"></i>
+                <span>此工单已有 AI 审核结果（审核时间：${auditedAt}），如需重新审核请点击"重新审核"按钮</span>
+            </div>
+        `;
+        resultsContainer.appendChild(banner);
+
+        // 渲染历史结果
+        this.auditResults = record.results || [];
+        this.auditResults.forEach((result, i) => {
+            const placeholder = document.createElement('div');
+            placeholder.id = 'audit-rule-' + i;
+            auditList.appendChild(placeholder);
+            AiAudit.renderResult(result, placeholder, i);
+        });
+        resultsContainer.appendChild(auditList);
+
+        // 修改按钮文案
+        const btn = document.getElementById('runAuditBtn');
+        btn.innerHTML = '<i class="fas fa-redo"></i> 重新审核';
     }
     
     async loadRuleGroups() {
@@ -805,6 +858,13 @@ class SmartDocApp {
             return;
         }
 
+        // 如果已有历史审核结果（从 ticket 加载的），确认是否重新审核
+        if (this.ticketId && this.auditResults && this.auditResults.length > 0) {
+            if (!confirm('该工单已有审核结果，重新审核将覆盖历史记录，是否继续？')) {
+                return;
+            }
+        }
+
         const freshRules = await RulesManager.loadFromServer(this.currentRuleGroup);
         if (freshRules && freshRules.length > 0) {
             this.rules = freshRules;
@@ -859,6 +919,8 @@ class SmartDocApp {
                 documentBase64: btoa(unescape(encodeURIComponent(this.document.text))),
                 documentType: 'txt',
                 data: this.ticketData,
+                ticketId: this.ticketId,
+                ts: this.ts,
                 settings: {
                     endpoint: this.settings.endpoint,
                     model: this.settings.model,

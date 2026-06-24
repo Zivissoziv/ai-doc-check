@@ -11,9 +11,12 @@ import com.smartdoc.entity.Rule;
 import com.smartdoc.service.AiAuditService;
 import com.smartdoc.service.ApiConfigService;
 import com.smartdoc.service.AuditFeedbackService;
+import com.smartdoc.service.AuditTicketRecordService;
 import com.smartdoc.service.DocumentParserService;
 import com.smartdoc.service.RuleGroupService;
+
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -52,6 +55,10 @@ public class AuditController {
     private final AiAuditService aiAuditService;
     private final ApiConfigService apiConfigService;
     private final AuditFeedbackService auditFeedbackService;
+    
+    @Autowired
+    private AuditTicketRecordService auditTicketRecordService;
+    
     private final ObjectMapper objectMapper;
 
     private static final Pattern[] SECTION_TITLE_PATTERNS = {
@@ -114,7 +121,19 @@ public class AuditController {
                 getBatchSize(request.getSettings())
             );
 
-            auditFeedbackService.saveAuditResults(results, request.getRuleGroupId());
+            List<com.smartdoc.entity.AuditFeedback> savedFeedbacks = auditFeedbackService.saveAuditResults(results, request.getRuleGroupId());
+
+            // 如果请求携带了 ticketId 和 ts，保存映射关系
+            if (request.getTicketId() != null && request.getTs() != null
+                    && !request.getTicketId().isEmpty() && !request.getTs().isEmpty()) {
+                String batchNo = savedFeedbacks != null && !savedFeedbacks.isEmpty()
+                        ? savedFeedbacks.get(0).getAuditBatchNo()
+                        : java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+                auditTicketRecordService.saveRecord(
+                        request.getTicketId(), request.getTs(),
+                        batchNo,
+                        "ticket_" + request.getTicketId());
+            }
 
             Map<String, Object> successResponse = new HashMap<>();
             successResponse.put("success", true);

@@ -85,3 +85,19 @@ CREATE TABLE IF NOT EXISTS audit_feedback (
     INDEX idx_feedback_group_id (group_id),
     INDEX idx_feedback_batch_no (audit_batch_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='审核反馈表';
+
+-- 工单审核记录表
+CREATE TABLE IF NOT EXISTS audit_ticket_record (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
+    ticket_id VARCHAR(100) NOT NULL COMMENT '工单ID',
+    ts VARCHAR(20) NOT NULL COMMENT '时间戳，如 20250622120000',
+    audit_batch_no VARCHAR(32) DEFAULT NULL COMMENT '审核批次号，异步任务完成前为null',
+    document_name VARCHAR(200) DEFAULT NULL COMMENT '文档名称',
+    task_id VARCHAR(36) DEFAULT NULL COMMENT '异步任务ID（UUID）',
+    status VARCHAR(20) DEFAULT NULL COMMENT '任务状态: PENDING/RUNNING/COMPLETED/FAILED，null=同步审核',
+    error_message VARCHAR(1000) DEFAULT NULL COMMENT '失败原因',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE INDEX idx_ticket_ts (ticket_id, ts),
+    INDEX idx_task_id (task_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='工单审核记录表';

@@ -28,4 +28,8 @@ public class AuditResultDto {
     private List<AuditIssueDto> issues;
 
     private String summary;
+
+    private Long _feedbackId;
+
+    private String _feedbackType;
 }

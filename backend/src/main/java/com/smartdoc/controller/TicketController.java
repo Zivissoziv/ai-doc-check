@@ -4,6 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartdoc.entity.ApiConfig;
 import com.smartdoc.service.ApiConfigService;
+import com.smartdoc.dto.AuditTicketRecordDto;
+import com.smartdoc.dto.AsyncTaskStatusDto;
+import com.smartdoc.service.AsyncAuditService;
+import com.smartdoc.service.AuditTicketRecordService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpEntity;
@@ -18,6 +22,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestTemplate;
 
@@ -32,6 +37,8 @@ public class TicketController {
 
     private final ApiConfigService apiConfigService;
     private final ObjectMapper objectMapper;
+    private final AuditTicketRecordService auditTicketRecordService;
+    private final AsyncAuditService asyncAuditService;
 
     @GetMapping("/{ticketId}")
     public ResponseEntity<Map<String, Object>> getTicket(@PathVariable String ticketId) {
@@ -136,9 +143,48 @@ public class TicketController {
         return new RestTemplate(factory);
     }
 
+    @GetMapping("/audit-record")
+    public ResponseEntity<AuditTicketRecordDto> getAuditRecord(
+            @RequestParam String ticketId,
+            @RequestParam String ts,
+            @RequestParam(required = false, defaultValue = "false") Boolean summaryOnly) {
+        log.info("查询工单审核记录: ticketId={}, ts={}, summaryOnly={}", ticketId, ts, summaryOnly);
+        AuditTicketRecordDto dto = auditTicketRecordService.getAuditResultsByTicketIdAndTs(
+                ticketId, ts, summaryOnly);
+        return ResponseEntity.ok(dto);
+    }
+
     private Map<String, Object> errorMap(String message) {
         Map<String, Object> map = new HashMap<>();
         map.put("error", message);
         return map;
+    }
+
+    @PostMapping("/async-audit")
+    public ResponseEntity<Map<String, Object>> submitAsyncAudit(@RequestBody Map<String, String> body) {
+        String ticketId = body.get("ticketId");
+        String ts = body.get("ts");
+        String ruleGroupId = body.get("ruleGroupId");
+
+        if (ticketId == null || ts == null || ruleGroupId == null) {
+            return ResponseEntity.badRequest().body(errorMap("缺少必填参数: ticketId, ts, ruleGroupId"));
+        }
+
+        log.info("提交异步审核: ticketId={}, ts={}, ruleGroupId={}", ticketId, ts, ruleGroupId);
+        String taskId = asyncAuditService.createAsyncTask(ticketId, ts, ruleGroupId);
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("taskId", taskId);
+        response.put("status", "PENDING");
+        return ResponseEntity.accepted().body(response);
+    }
+
+    @GetMapping("/async-task/{taskId}")
+    public ResponseEntity<?> getAsyncTaskStatus(@PathVariable String taskId) {
+        AsyncTaskStatusDto status = asyncAuditService.getTaskStatus(taskId);
+        if (status == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(status);
     }
 }

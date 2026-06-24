@@ -1,0 +1,132 @@
+package com.smartdoc.service;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartdoc.dto.AuditIssueDto;
+import com.smartdoc.dto.AuditResultDto;
+import com.smartdoc.dto.AuditTicketRecordDto;
+import com.smartdoc.entity.AuditFeedback;
+import com.smartdoc.entity.AuditTicketRecord;
+import com.smartdoc.mapper.AuditFeedbackMapper;
+import com.smartdoc.mapper.AuditTicketRecordMapper;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class AuditTicketRecordService {
+
+    private final AuditTicketRecordMapper auditTicketRecordMapper;
+    private final AuditFeedbackMapper auditFeedbackMapper;
+    private final ObjectMapper objectMapper;
+
+    @Transactional
+    public void saveRecord(String ticketId, String ts, String auditBatchNo, String documentName) {
+        AuditTicketRecord existing = auditTicketRecordMapper.findByTicketIdAndTs(ticketId, ts);
+        if (existing != null) {
+            existing.setAuditBatchNo(auditBatchNo);
+            existing.setDocumentName(documentName);
+            auditTicketRecordMapper.updateById(existing);
+            log.info("更新工单审核记录: ticketId={}, ts={}, batchNo={}", ticketId, ts, auditBatchNo);
+        } else {
+            AuditTicketRecord record = AuditTicketRecord.builder()
+                    .ticketId(ticketId)
+                    .ts(ts)
+                    .auditBatchNo(auditBatchNo)
+                    .documentName(documentName)
+                    .build();
+            auditTicketRecordMapper.insert(record);
+            log.info("创建工单审核记录: ticketId={}, ts={}, batchNo={}", ticketId, ts, auditBatchNo);
+        }
+    }
+
+    public AuditTicketRecord getByTicketIdAndTs(String ticketId, String ts) {
+        return auditTicketRecordMapper.findByTicketIdAndTs(ticketId, ts);
+    }
+
+    public AuditTicketRecordDto getAuditResultsByTicketIdAndTs(String ticketId, String ts) {
+        return getAuditResultsByTicketIdAndTs(ticketId, ts, false);
+    }
+
+    public AuditTicketRecordDto getAuditResultsByTicketIdAndTs(String ticketId, String ts,
+                                                                Boolean summaryOnly) {
+        AuditTicketRecord record = auditTicketRecordMapper.findByTicketIdAndTs(ticketId, ts);
+        if (record == null) {
+            AuditTicketRecordDto dto = new AuditTicketRecordDto();
+            dto.setExists(false);
+            return dto;
+        }
+
+        List<AuditFeedback> feedbacks = auditFeedbackMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<AuditFeedback>()
+                        .eq(AuditFeedback::getAuditBatchNo, record.getAuditBatchNo())
+        );
+
+        int totalCount = 0, passCount = 0, skippedCount = 0, failCount = 0;
+        List<AuditTicketRecordDto.FailureItem> failures = new ArrayList<>();
+        List<AuditResultDto> results = new ArrayList<>();
+
+        for (AuditFeedback feedback : feedbacks) {
+            totalCount++;
+            if (feedback.getSkipped() != null && feedback.getSkipped()) {
+                skippedCount++;
+            } else if (feedback.getPass() != null && feedback.getPass()) {
+                passCount++;
+            } else {
+                failCount++;
+            }
+
+            try {
+                if (feedback.getResultsJson() != null) {
+                    AuditResultDto result = objectMapper.readValue(feedback.getResultsJson(), AuditResultDto.class);
+                    result.setRuleId(feedback.getRuleId() != null ? feedback.getRuleId().intValue() : null);
+                    result.setPass(feedback.getPass());
+                    result.setSkipped(feedback.getSkipped());
+                    if (feedback.getConfidence() != null) {
+                        result.setConfidence(feedback.getConfidence());
+                    }
+                    result.set_feedbackId(feedback.getId());
+                    result.set_feedbackType(feedback.getFeedbackType());
+
+                    // 收集不通过的原因
+                    boolean isFail = (feedback.getSkipped() == null || !feedback.getSkipped())
+                            && (feedback.getPass() == null || !feedback.getPass());
+                    if (isFail) {
+                        AuditTicketRecordDto.FailureItem failure = new AuditTicketRecordDto.FailureItem();
+                        failure.setRuleName(result.getRuleName());
+                        failure.setSummary(result.getSummary());
+                        failure.setIssues(result.getIssues());
+                        failures.add(failure);
+                    }
+
+                    if (!summaryOnly) {
+                        results.add(result);
+                    }
+                }
+            } catch (Exception e) {
+                log.error("反序列化审核结果失败: {}", e.getMessage(), e);
+            }
+        }
+
+        AuditTicketRecordDto dto = new AuditTicketRecordDto();
+        dto.setExists(true);
+        dto.setAuditBatchNo(record.getAuditBatchNo());
+        dto.setDocumentName(record.getDocumentName());
+        dto.setAuditedAt(record.getCreatedAt());
+        dto.setTotalCount(totalCount);
+        dto.setPassCount(passCount);
+        dto.setSkippedCount(skippedCount);
+        dto.setFailCount(failCount);
+        dto.setFailures(failures);
+        if (!summaryOnly) {
+            dto.setResults(results);
+        }
+        return dto;
+    }
+}

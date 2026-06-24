@@ -26,5 +26,9 @@ public class AuditRequestDto {
 
     private Object data;
 
+    private String ticketId;
+
+    private String ts;
+
     private AuditSettingsDto settings;
 }
