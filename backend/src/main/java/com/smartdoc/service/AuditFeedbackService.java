@@ -147,4 +147,8 @@ public class AuditFeedbackService {
                 .recentFeedbacks(feedbackItems)
                 .build();
     }
+
+    public List<AuditFeedback> getRuleFailures(Long ruleId, String startDate, String endDate, int limit) {
+        return auditFeedbackMapper.findFailuresByRuleId(ruleId, startDate, endDate, limit);
+    }
 }

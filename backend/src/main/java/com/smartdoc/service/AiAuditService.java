@@ -3,6 +3,7 @@ package com.smartdoc.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartdoc.template.PromptTemplate;
 import com.smartdoc.dto.AuditResultDto;
 import com.smartdoc.dto.AuditIssueDto;
 import com.smartdoc.entity.ApiConfig;
@@ -18,6 +19,9 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
+
+import java.net.HttpURLConnection;
+import java.io.IOException;
 
 import java.util.AbstractMap;
 import java.util.ArrayList;
@@ -315,50 +319,14 @@ public class AiAuditService {
         }
 
         String docContent = documentText.substring(0, Math.min(documentText.length(), 10000));
-        
-        String basePrompt = "你需要对以下文档进行批量审核，按照给定的规则逐一检查。\n\n" +
-            "文档内容：\n" + docContent + "\n\n" +
-            "审核规则列表：\n" + rulesList.toString() + "\n" +
-            "=== 输出格式要求 ===\n" +
-            "你必须返回一个合法的JSON对象，格式如下：\n" +
-            "{\n" +
-            "  \"results\": [\n" +
-            "    {\n" +
-            "      \"ruleId\": 0,\n" +
-            "      \"pass\": true,\n" +
-            "      \"confidence\": 95,\n" +
-            "      \"issues\": [],\n" +
-            "      \"summary\": \"文档格式规范，符合要求\"\n" +
-            "    },\n" +
-            "    {\n" +
-            "      \"ruleId\": 1,\n" +
-            "      \"pass\": false,\n" +
-            "      \"confidence\": 85,\n" +
-            "      \"issues\": [\n" +
-            "        {\n" +
-            "          \"location\": \"第3章第2节\",\n" +
-            "          \"problem\": \"缺少必要的参数说明\",\n" +
-            "          \"suggestion\": \"建议补充参数列表和类型定义\"\n" +
-            "        }\n" +
-            "      ],\n" +
-            "      \"summary\": \"发现1处问题，建议修改\"\n" +
-            "    }\n" +
-            "  ]\n" +
-            "}\n\n" +
-            "=== 字段说明 ===\n" +
-            "- ruleId: 规则序号，对应规则列表中的序号(0-" + (rules.size() - 1) + ")\n" +
-            "- pass: 是否通过，true或false\n" +
-            "- confidence: 置信度，0-100的整数\n" +
-            "- issues: 问题列表，通过时为[]，不通过时包含具体对象\n" +
-            "- summary: 总体评价，简短描述\n\n" +
-            "=== 重要约束 ===\n" +
-            "1. 必须返回合法JSON，不要添加markdown代码块标记\n" +
-            "2. results数组长度必须等于" + rules.size() + "\n" +
-            "3. 每个规则都要有对应的result对象\n" +
-            "4. issues数组为空时写成 [] 而不是 null\n" +
-            "5. 字符串使用双引号，不要使用单引号\n" +
-            "6. 最后一个元素后面不要加逗号\n" +
-            "7. 不要包含任何解释说明文字，只返回JSON";
+
+        Map<String, String> promptParams = new HashMap<>();
+        promptParams.put("documentContent", docContent);
+        promptParams.put("rulesList", rulesList.toString());
+        promptParams.put("ruleCount", String.valueOf(rules.size()));
+        promptParams.put("ruleCountMinusOne", String.valueOf(rules.size() - 1));
+
+        String basePrompt = PromptTemplate.format("audit-user", promptParams);
 
         if (repeatPrompt) {
             return basePrompt + "\n\n--- 重复提示（请仔细阅读以上内容）---\n\n" + basePrompt;
@@ -493,11 +461,40 @@ public class AiAuditService {
         return merged;
     }
 
+    /**
+     * 可中止请求的 RequestFactory，用于超时重试前主动断开底层 HttpURLConnection。
+     */
+    private static class AbortableRequestFactory extends SimpleClientHttpRequestFactory {
+        private volatile HttpURLConnection connection;
+
+        AbortableRequestFactory(int connectTimeout, int readTimeout) {
+            setConnectTimeout(connectTimeout);
+            setReadTimeout(readTimeout);
+        }
+
+        @Override
+        protected void prepareConnection(HttpURLConnection connection, String httpMethod) throws IOException {
+            super.prepareConnection(connection, httpMethod);
+            this.connection = connection;
+        }
+
+        void abortRequest() {
+            HttpURLConnection conn = this.connection;
+            if (conn != null) {
+                try {
+                    conn.disconnect();
+                } catch (Exception ignored) {
+                }
+            }
+        }
+    }
+
+    private AbortableRequestFactory createAbortableFactory() {
+        return new AbortableRequestFactory(timeout * 1000, timeout * 1000);
+    }
+
     private RestTemplate createRestTemplate() {
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(timeout * 1000);
-        factory.setReadTimeout(timeout * 1000);
-        return new RestTemplate(factory);
+        return new RestTemplate(createAbortableFactory());
     }
 
     private String callLLM(String prompt, ApiConfig apiConfig, double temperature) {
@@ -518,7 +515,8 @@ public class AiAuditService {
         
         Map<String, String> systemMessage = new HashMap<>();
         systemMessage.put("role", "system");
-        systemMessage.put("content", auditRole + "，你擅长发现文档中的结构、逻辑和合规问题。请严格按照要求的JSON格式返回结果，不要添加任何额外说明。");
+        systemMessage.put("content", PromptTemplate.format("audit-system",
+                java.util.Collections.singletonMap("auditRole", auditRole)));
         messages.add(systemMessage);
         
         Map<String, String> userMessage = new HashMap<>();
@@ -538,9 +536,11 @@ public class AiAuditService {
 
         int maxRetries = 1;
         int attempt = 0;
+        AbortableRequestFactory requestFactory = null;
         while (attempt <= maxRetries) {
             try {
-                RestTemplate rt = createRestTemplate();
+                requestFactory = createAbortableFactory();
+                RestTemplate rt = new RestTemplate(requestFactory);
                 ResponseEntity<String> response = rt.exchange(
                     endpoint, HttpMethod.POST, entity, String.class
                 );
@@ -570,6 +570,11 @@ public class AiAuditService {
                 
             } catch (ResourceAccessException e) {
                 attempt++;
+                // 重试前关闭之前的请求连接
+                if (requestFactory != null) {
+                    requestFactory.abortRequest();
+                    requestFactory = null;
+                }
                 if (attempt > maxRetries) {
                     log.error("调用LLM超时(已重试{}次): {}", maxRetries, e.getMessage(), e);
                     throw new RuntimeException("调用AI服务超时，请稍后重试", e);
@@ -579,8 +584,13 @@ public class AiAuditService {
                     Thread.sleep(2000);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
+                    break;
                 }
             } catch (Exception e) {
+                // 非超时异常也需关闭连接
+                if (requestFactory != null) {
+                    requestFactory.abortRequest();
+                }
                 log.error("调用LLM失败: {}", e.getMessage(), e);
                 throw new RuntimeException("调用AI服务失败: " + e.getMessage(), e);
             }
@@ -671,7 +681,8 @@ public class AiAuditService {
         String apiKey = apiConfig.getApiKey();
         String model = apiConfig.getModel();
 
-        String repairPrompt = "你是一个JSON修复专家。以下内容本应是合法的JSON格式，但解析失败。请修正为合法的标准JSON格式，只返回修正后的JSON内容，不要添加任何markdown代码块标记、解释说明文字。\n\n" + invalidContent;
+        String repairPrompt = PromptTemplate.format("repair-user",
+                java.util.Collections.singletonMap("invalidContent", invalidContent));
 
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("model", model);
@@ -681,7 +692,7 @@ public class AiAuditService {
 
         Map<String, String> systemMessage = new HashMap<>();
         systemMessage.put("role", "system");
-        systemMessage.put("content", "你是一个JSON格式修复助手。你的任务是将不符合JSON格式的内容修正为标准JSON。只返回修正后的纯JSON内容，不输出任何其他文字。");
+        systemMessage.put("content", PromptTemplate.format("repair-system", null));
         messages.add(systemMessage);
 
         Map<String, String> userMessage = new HashMap<>();
@@ -698,11 +709,15 @@ public class AiAuditService {
         }
 
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
-        RestTemplate rt = createRestTemplate();
-        ResponseEntity<String> response = rt.exchange(endpoint, HttpMethod.POST, entity, String.class);
-        String responseBody = response.getBody();
-
-        return extractContent(responseBody);
+        AbortableRequestFactory factory = createAbortableFactory();
+        try {
+            RestTemplate rt = new RestTemplate(factory);
+            ResponseEntity<String> response = rt.exchange(endpoint, HttpMethod.POST, entity, String.class);
+            String responseBody = response.getBody();
+            return extractContent(responseBody);
+        } finally {
+            factory.abortRequest();
+        }
     }
 
     private List<AuditResultDto> parseAuditResults(String content, List<Rule> rules) {

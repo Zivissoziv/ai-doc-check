@@ -55,10 +55,7 @@ public class AuditController {
     private final AiAuditService aiAuditService;
     private final ApiConfigService apiConfigService;
     private final AuditFeedbackService auditFeedbackService;
-    
-    @Autowired
-    private AuditTicketRecordService auditTicketRecordService;
-    
+    private final AuditTicketRecordService auditTicketRecordService;
     private final ObjectMapper objectMapper;
 
     private static final Pattern[] SECTION_TITLE_PATTERNS = {

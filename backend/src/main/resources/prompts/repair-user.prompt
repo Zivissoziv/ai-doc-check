@@ -1,0 +1,3 @@
+你是一个JSON修复专家。以下内容本应是合法的JSON格式，但解析失败。请修正为合法的标准JSON格式，只返回修正后的JSON内容，不要添加任何markdown代码块标记、解释说明文字。
+
+{invalidContent}

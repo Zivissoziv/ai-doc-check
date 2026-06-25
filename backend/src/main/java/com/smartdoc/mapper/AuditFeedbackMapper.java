@@ -61,6 +61,15 @@ public interface AuditFeedbackMapper extends BaseMapper<AuditFeedback> {
                               @Param("startDate") String startDate,
                               @Param("endDate") String endDate);
 
+    @Select("<script>SELECT * FROM audit_feedback WHERE rule_id = #{ruleId} AND pass = 0 AND (skipped IS NULL OR skipped = 0)" +
+            "<if test='startDate != null'> AND DATE(created_at) &gt;= #{startDate}</if>" +
+            "<if test='endDate != null'> AND DATE(created_at) &lt;= #{endDate}</if>" +
+            " ORDER BY created_at DESC LIMIT #{limit}</script>")
+    List<AuditFeedback> findFailuresByRuleId(@Param("ruleId") Long ruleId,
+                                              @Param("startDate") String startDate,
+                                              @Param("endDate") String endDate,
+                                              @Param("limit") int limit);
+
     @Select("SELECT COUNT(DISTINCT audit_batch_no) FROM audit_feedback WHERE skipped = 0")
     Long countTotalBatches();
 

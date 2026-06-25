@@ -1,0 +1,50 @@
+你需要对以下文档进行批量审核，按照给定的规则逐一检查。
+
+文档内容：
+{documentContent}
+
+审核规则列表：
+{rulesList}
+
+=== 输出格式要求 ===
+你必须返回一个合法的JSON对象，格式如下：
+{
+  "results": [
+    {
+      "ruleId": 0,
+      "pass": true,
+      "confidence": 95,
+      "issues": [],
+      "summary": "文档格式规范，符合要求"
+    },
+    {
+      "ruleId": 1,
+      "pass": false,
+      "confidence": 85,
+      "issues": [
+        {
+          "location": "第3章第2节",
+          "problem": "缺少必要的参数说明",
+          "suggestion": "建议补充参数列表和类型定义"
+        }
+      ],
+      "summary": "发现1处问题，建议修改"
+    }
+  ]
+}
+
+=== 字段说明 ===
+- ruleId: 规则序号，对应规则列表中的序号(0-{ruleCountMinusOne})
+- pass: 是否通过，true或false
+- confidence: 置信度，0-100的整数
+- issues: 问题列表，通过时为[]，不通过时包含具体对象
+- summary: 总体评价，简短描述
+
+=== 重要约束 ===
+1. 必须返回合法JSON，不要添加markdown代码块标记
+2. results数组长度必须等于{ruleCount}
+3. 每个规则都要有对应的result对象
+4. issues数组为空时写成 [] 而不是 null
+5. 字符串使用双引号，不要使用单引号
+6. 最后一个元素后面不要加逗号
+7. 不要包含任何解释说明文字，只返回JSON
