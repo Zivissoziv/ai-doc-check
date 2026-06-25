@@ -564,6 +564,10 @@ class SmartDocApp {
     
     showCreateGroupModal() { this._setupGroupModal('create'); }
     showEditGroupModal() {
+        if (this._isCurrentGroupLocked()) {
+            alert('规则组已上锁，无法编辑');
+            return;
+        }
         if (!this.currentRuleGroup) {
             alert('请先选择规则组');
             return;
@@ -623,6 +627,10 @@ class SmartDocApp {
     }
     
     async deleteCurrentGroup() {
+        if (this._isCurrentGroupLocked()) {
+            alert('规则组已上锁，无法删除');
+            return;
+        }
         if (!this.currentRuleGroup) {
             alert('请先选择规则组');
             return;
@@ -672,6 +680,10 @@ class SmartDocApp {
     }
     
     importRules() {
+        if (this._isCurrentGroupLocked()) {
+            alert('规则组已上锁，无法导入规则');
+            return;
+        }
         const group = this.ruleGroups.find(g => g.groupId === this.currentRuleGroup);
         if (!group) {
             alert('请先选择规则组');
@@ -736,6 +748,11 @@ class SmartDocApp {
             };
             setTimeout(() => document.addEventListener('click', hideDropdown), 0);
         }
+    }
+
+    _isCurrentGroupLocked() {
+        const group = this.ruleGroups.find(g => g.groupId === this.currentRuleGroup);
+        return group?.locked === true;
     }
 
     updateGroupLockUI() {
@@ -1431,17 +1448,19 @@ class SmartDocApp {
         const requestToken = ++this._statsRequestToken;
 
         try {
-            const [statsRes, dailyRes, groupsRes, allTimeRes] = await Promise.all([
+            const [statsRes, dailyRes, groupsRes, allTimeRes, sourceRes] = await Promise.all([
                 fetch(this._buildStatsUrl('/api/stats')),
                 fetch(this._buildStatsUrl('/api/stats/daily')),
                 fetch('/api/config/rules'),
-                fetch('/api/stats')
+                fetch('/api/stats'),
+                fetch(this._buildStatsUrl('/api/stats/sources'))
             ]);
 
             const stats = statsRes.ok ? await statsRes.json() : { totalCount: 0, todayCount: 0 };
             const dailyData = dailyRes.ok ? await dailyRes.json() : [];
             const groupData = groupsRes.ok ? await groupsRes.json() : { groups: [] };
             const allTimeStats = allTimeRes.ok ? await allTimeRes.json() : { totalCount: 0 };
+            const sourceStats = sourceRes.ok ? await sourceRes.json() : {};
 
             this._statsGroupData = groupData.groups || [];
 
@@ -1482,20 +1501,34 @@ class SmartDocApp {
                 </div>
                 <div class="bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl p-4">
                     <h3 class="text-sm font-semibold text-gray-700 mb-3"><i class="fas fa-chart-simple text-blue-500 mr-1"></i>审核统计</h3>
-                    <div class="grid grid-cols-2 gap-4 mb-4">
-                        <div class="bg-white rounded-lg p-4 shadow-sm border border-blue-100">
-                            <div class="flex items-center gap-2 mb-2">
-                                <i class="fas fa-chart-line text-blue-500"></i>
-                                <span class="text-sm text-gray-500">上线以来累计审核次数</span>
+                    <div class="grid grid-cols-4 gap-3 mb-3">
+                        <div class="bg-white rounded-lg p-3 shadow-sm border border-blue-100">
+                            <div class="flex items-center gap-1.5 mb-1">
+                                <i class="fas fa-chart-line text-blue-500 text-xs"></i>
+                                <span class="text-xs text-gray-500">上线以来累计审核次数</span>
                             </div>
-                            <div class="text-2xl font-bold text-blue-600">${allTimeTotal}</div>
+                            <div class="text-xl font-bold text-blue-600">${allTimeTotal}</div>
                         </div>
-                        <div class="bg-white rounded-lg p-4 shadow-sm border border-purple-100">
-                            <div class="flex items-center gap-2 mb-2">
-                                <i class="fas fa-calendar-day text-purple-500"></i>
-                                <span class="text-sm text-gray-500">${hasFilter ? '所选范围内累计审核次数' : '全部累计审核次数'}</span>
+                        <div class="bg-white rounded-lg p-3 shadow-sm border border-purple-100">
+                            <div class="flex items-center gap-1.5 mb-1">
+                                <i class="fas fa-calendar-day text-purple-500 text-xs"></i>
+                                <span class="text-xs text-gray-500">审核次数</span>
                             </div>
-                            <div class="text-2xl font-bold text-purple-600">${rangeTotal}</div>
+                            <div class="text-xl font-bold text-purple-600">${rangeTotal}</div>
+                        </div>
+                        <div class="bg-white rounded-lg p-3 shadow-sm border border-green-100">
+                            <div class="flex items-center gap-1.5 mb-1">
+                                <i class="fas fa-mouse-pointer text-green-500 text-xs"></i>
+                                <span class="text-xs text-gray-500">页面点击</span>
+                            </div>
+                            <div class="text-xl font-bold text-green-600">${sourceStats.clickCount || 0}</div>
+                        </div>
+                        <div class="bg-white rounded-lg p-3 shadow-sm border border-orange-100">
+                            <div class="flex items-center gap-1.5 mb-1">
+                                <i class="fas fa-cloud-upload-alt text-orange-500 text-xs"></i>
+                                <span class="text-xs text-gray-500">异步工单</span>
+                            </div>
+                            <div class="text-xl font-bold text-orange-600">${sourceStats.asyncCount || 0}</div>
                         </div>
                     </div>
                     ${chartHtml}

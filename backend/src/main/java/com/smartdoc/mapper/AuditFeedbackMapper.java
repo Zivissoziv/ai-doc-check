@@ -93,6 +93,22 @@ public interface AuditFeedbackMapper extends BaseMapper<AuditFeedback> {
             "GROUP BY DATE(created_at) ORDER BY DATE(created_at) ASC")
     List<DailyStatsRow> findDailyStatsBetween(@Param("startDate") String startDate, @Param("endDate") String endDate);
 
+    @Select("SELECT COUNT(DISTINCT audit_batch_no) FROM audit_feedback WHERE skipped = 0 AND audit_batch_no LIKE '%\\_async'")
+    Long countAsyncBatches();
+
+    @Select("SELECT COUNT(DISTINCT audit_batch_no) FROM audit_feedback WHERE skipped = 0 AND audit_batch_no NOT LIKE '%\\_async'")
+    Long countClickBatches();
+
+    @Select("<script>SELECT COUNT(DISTINCT audit_batch_no) FROM audit_feedback WHERE skipped = 0 AND audit_batch_no LIKE '%\\_async'" +
+            "<if test='startDate != null'> AND DATE(created_at) &gt;= #{startDate}</if>" +
+            "<if test='endDate != null'> AND DATE(created_at) &lt;= #{endDate}</if></script>")
+    Long countAsyncBatchesBetween(@Param("startDate") String startDate, @Param("endDate") String endDate);
+
+    @Select("<script>SELECT COUNT(DISTINCT audit_batch_no) FROM audit_feedback WHERE skipped = 0 AND audit_batch_no NOT LIKE '%\\_async'" +
+            "<if test='startDate != null'> AND DATE(created_at) &gt;= #{startDate}</if>" +
+            "<if test='endDate != null'> AND DATE(created_at) &lt;= #{endDate}</if></script>")
+    Long countClickBatchesBetween(@Param("startDate") String startDate, @Param("endDate") String endDate);
+
     class DailyStatsRow {
         private String statDate;
         private Long count;

@@ -41,8 +41,15 @@ public class AuditFeedbackService {
 
     @Transactional
     public List<AuditFeedback> saveAuditResults(List<AuditResultDto> results, String groupId, Long durationMs) {
+        return saveAuditResults(results, groupId, durationMs, null);
+    }
+
+    @Transactional
+    public List<AuditFeedback> saveAuditResults(List<AuditResultDto> results, String groupId, Long durationMs, String source) {
         List<AuditFeedback> feedbacks = new ArrayList<>();
-        String batchNo = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+        String uuid = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+        // 仅异步审核在批次号后加 _async 标记，页面点击和存量数据保持纯 UUID
+        String batchNo = "async".equals(source) ? uuid + "_async" : uuid;
         for (AuditResultDto result : results) {
             String resultsJson;
             try {

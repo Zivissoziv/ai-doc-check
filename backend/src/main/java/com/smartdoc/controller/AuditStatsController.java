@@ -54,6 +54,13 @@ public class AuditStatsController {
         return ResponseEntity.ok(auditStatsService.getDailyStats(startDate, endDate));
     }
 
+    @GetMapping("/stats/sources")
+    public ResponseEntity<Map<String, Object>> getSourceStats(
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String endDate) {
+        return ResponseEntity.ok(auditStatsService.getSourceStats(startDate, endDate));
+    }
+
     @GetMapping("/stats/group/{groupId}")
     public ResponseEntity<Map<String, Object>> getGroupStats(
             @PathVariable String groupId,

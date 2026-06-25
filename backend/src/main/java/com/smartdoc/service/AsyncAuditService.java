@@ -165,9 +165,9 @@ public class AsyncAuditService {
             List<AuditResultDto> results = aiAuditService.performAudit(
                     rules, documentText, auditConfig, userData, true, 0);
 
-            // 7. 保存结果到 audit_feedback
+            // 7. 保存结果到 audit_feedback（异步来源标记为 async）
             List<com.smartdoc.entity.AuditFeedback> savedFeedbacks =
-                    auditFeedbackService.saveAuditResults(results, ruleGroupId);
+                    auditFeedbackService.saveAuditResults(results, ruleGroupId, null, "async");
 
             // 8. 保存 (ticketId, ts) 映射并标记 COMPLETED
             String batchNo = savedFeedbacks != null && !savedFeedbacks.isEmpty()

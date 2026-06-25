@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<properties>
+  <!-- 只启用需要的解析器，抑制 OCR/音视频等外部工具缺失的报错 -->
+  <parsers>
+    <parser class="org.apache.tika.parser.microsoft.OfficeParser"/>
+    <parser class="org.apache.tika.parser.microsoft.ooxml.OOXMLParser"/>
+    <parser class="org.apache.tika.parser.pdf.PDFParser"/>
+    <parser class="org.apache.tika.parser.txt.TXTParser"/>
+  </parsers>
+</properties>

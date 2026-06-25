@@ -2,18 +2,13 @@ package com.smartdoc.service;
 
 import com.alibaba.excel.EasyExcel;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.poi.hwpf.HWPFDocument;
-import org.apache.poi.hwpf.usermodel.Paragraph;
-import org.apache.poi.hwpf.usermodel.Range;
-import org.apache.poi.xwpf.usermodel.XWPFDocument;
-import org.apache.poi.xwpf.usermodel.XWPFParagraph;
-import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.text.PDFTextStripper;
+import org.apache.tika.Tika;
+import org.apache.tika.config.TikaConfig;
 import org.springframework.stereotype.Service;
 
+import javax.annotation.PostConstruct;
 import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -22,25 +17,38 @@ import java.util.Map;
 @Service
 public class DocumentParserService {
 
+    private Tika tika;
+
+    @PostConstruct
+    void init() {
+        try {
+            InputStream configStream = getClass().getResourceAsStream("/tika-config.xml");
+            if (configStream != null) {
+                TikaConfig config = new TikaConfig(configStream);
+                tika = new Tika(config);
+                log.info("Tika已加载自定义配置 (tika-config.xml)");
+            } else {
+                tika = new Tika();
+                log.warn("未找到 tika-config.xml，使用默认配置");
+            }
+        } catch (Exception e) {
+            log.warn("加载 Tika 配置失败，使用默认配置: {}", e.getMessage());
+            tika = new Tika();
+        }
+    }
+
     public String parseDocument(byte[] fileBytes, String fileType) {
         if (fileBytes == null || fileBytes.length == 0) {
             throw new IllegalArgumentException("文件内容为空");
         }
 
-        String detectedType = detectFileType(fileBytes, fileType);
-        log.debug("检测到文件类型: {}", detectedType);
-
-        switch (detectedType) {
-            case "docx":
-                return parseDocx(fileBytes);
-            case "doc":
-                return parseDoc(fileBytes);
-            case "pdf":
-                return parsePdf(fileBytes);
-            case "txt":
-                return parseTxt(fileBytes);
-            default:
-                throw new IllegalArgumentException("不支持的文件类型: " + detectedType);
+        try (InputStream is = new ByteArrayInputStream(fileBytes)) {
+            String text = tika.parseToString(is);
+            log.debug("Tika解析成功，文本长度: {}", text.length());
+            return text.trim();
+        } catch (Exception e) {
+            log.error("Tika解析失败: {}", e.getMessage(), e);
+            throw new RuntimeException("解析文档失败: " + e.getMessage(), e);
         }
     }
 
@@ -49,6 +57,7 @@ public class DocumentParserService {
             return providedType;
         }
 
+        // 魔数检测
         if (fileBytes.length >= 8) {
             if (fileBytes[0] == (byte) 0xD0 && fileBytes[1] == (byte) 0xCF && 
                 fileBytes[2] == (byte) 0x11 && fileBytes[3] == (byte) 0xE0 &&
@@ -68,92 +77,10 @@ public class DocumentParserService {
         }
 
         try {
-            new String(fileBytes, StandardCharsets.UTF_8);
+            new String(fileBytes, java.nio.charset.StandardCharsets.UTF_8);
             return "txt";
         } catch (Exception e) {
             return null;
-        }
-    }
-
-    public String parseDoc(byte[] fileBytes) {
-        try (ByteArrayInputStream bis = new ByteArrayInputStream(fileBytes);
-             HWPFDocument document = new HWPFDocument(bis)) {
-
-            StringBuilder textBuilder = new StringBuilder();
-            Range range = document.getRange();
-            int numParagraphs = range.numParagraphs();
-            for (int i = 0; i < numParagraphs; i++) {
-                Paragraph paragraph = range.getParagraph(i);
-                String text = paragraph.text().replace("\u0007", "").trim();
-                if (!text.isEmpty()) {
-                    textBuilder.append(text).append("\n");
-                }
-            }
-
-            String result = textBuilder.toString().trim();
-            log.debug("解析DOC成功，文本长度: {}, 段落数: {}", result.length(), numParagraphs);
-            return result;
-
-        } catch (IOException e) {
-            log.error("解析DOC失败: {}", e.getMessage(), e);
-            throw new RuntimeException("解析DOC文件失败: " + e.getMessage(), e);
-        }
-    }
-
-    public String parseDocx(byte[] fileBytes) {
-        try (ByteArrayInputStream bis = new ByteArrayInputStream(fileBytes);
-             XWPFDocument document = new XWPFDocument(bis)) {
-
-            List<XWPFParagraph> paragraphs = document.getParagraphs();
-            StringBuilder textBuilder = new StringBuilder();
-
-            for (XWPFParagraph paragraph : paragraphs) {
-                String text = paragraph.getText();
-                if (text != null && !text.trim().isEmpty()) {
-                    textBuilder.append(text).append("\n");
-                }
-            }
-
-            String result = textBuilder.toString().trim();
-            log.debug("解析DOCX成功，文本长度: {}", result.length());
-            return result;
-
-        } catch (IOException e) {
-            log.error("解析DOCX失败: {}", e.getMessage(), e);
-            throw new RuntimeException("解析DOCX文件失败: " + e.getMessage(), e);
-        }
-    }
-
-    public String parsePdf(byte[] fileBytes) {
-        try (ByteArrayInputStream bis = new ByteArrayInputStream(fileBytes);
-             PDDocument document = PDDocument.load(bis)) {
-
-            PDFTextStripper stripper = new PDFTextStripper();
-            String text = stripper.getText(document);
-
-            log.debug("解析PDF成功，文本长度: {}", text.length());
-            return text.trim();
-
-        } catch (IOException e) {
-            log.error("解析PDF失败: {}", e.getMessage(), e);
-            throw new RuntimeException("解析PDF文件失败: " + e.getMessage(), e);
-        }
-    }
-
-    public String parseTxt(byte[] fileBytes) {
-        try {
-            String text = new String(fileBytes, StandardCharsets.UTF_8);
-            log.debug("解析TXT成功，文本长度: {}", text.length());
-            return text.trim();
-        } catch (Exception e) {
-            try {
-                String text = new String(fileBytes, "GBK");
-                log.debug("解析TXT(GBK)成功，文本长度: {}", text.length());
-                return text.trim();
-            } catch (Exception ex) {
-                log.error("解析TXT失败: {}", ex.getMessage(), ex);
-                throw new RuntimeException("解析TXT文件失败: " + ex.getMessage(), ex);
-            }
         }
     }
 

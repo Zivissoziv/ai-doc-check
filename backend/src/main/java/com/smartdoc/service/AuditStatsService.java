@@ -175,6 +175,18 @@ public class AuditStatsService {
         return result;
     }
 
+    public Map<String, Object> getSourceStats(String startDate, String endDate) {
+        Map<String, Object> result = new HashMap<>();
+        if (hasDateRange(startDate, endDate)) {
+            result.put("asyncCount", auditFeedbackMapper.countAsyncBatchesBetween(startDate, endDate));
+            result.put("clickCount", auditFeedbackMapper.countClickBatchesBetween(startDate, endDate));
+        } else {
+            result.put("asyncCount", auditFeedbackMapper.countAsyncBatches());
+            result.put("clickCount", auditFeedbackMapper.countClickBatches());
+        }
+        return result;
+    }
+
     private boolean hasDateRange(String startDate, String endDate) {
         return startDate != null && !startDate.isEmpty()
                 && endDate != null && !endDate.isEmpty();
