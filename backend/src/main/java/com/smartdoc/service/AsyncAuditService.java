@@ -69,9 +69,9 @@ public class AsyncAuditService {
 
         if (existing != null) {
             // 已有记录（同步审核或已完成/失败的异步任务），更新为新的异步任务
+            // 注意：不覆盖 auditBatchNo，保留历史审核结果，直到新异步任务完成
             existing.setTaskId(taskId);
             existing.setStatus(AuditTicketRecord.STATUS_PENDING);
-            existing.setAuditBatchNo(null);
             existing.setErrorMessage(null);
             auditTicketRecordMapper.updateById(existing);
         } else {
