@@ -174,6 +174,9 @@ public class AuditController {
 
         StreamingResponseBody streamBody = outputStream -> {
             try {
+                // 收集所有流式结果，用于后续落库
+                List<AuditResultDto> collectedResults = new java.util.ArrayList<>();
+
                 aiAuditService.performAuditStreaming(
                     rules, documentText, apiConfig, userData,
                     isRepeatPrompt(request.getSettings()), getBatchSize(request.getSettings()),
@@ -187,6 +190,14 @@ public class AuditController {
                             String json = objectMapper.writeValueAsString(entryMap);
                             outputStream.write((json + "\n").getBytes(StandardCharsets.UTF_8));
                             outputStream.flush();
+
+                            // 收集结果用于落库
+                            synchronized (collectedResults) {
+                                if (collectedResults.size() <= idx) {
+                                    for (int i = collectedResults.size(); i <= idx; i++) collectedResults.add(null);
+                                }
+                                collectedResults.set(idx, result);
+                            }
                         } catch (Exception e) {
                             log.error("流式写入结果失败", e);
                         }
@@ -194,6 +205,27 @@ public class AuditController {
                 );
 
                 outputStream.flush();
+
+                // 流式结束后落库（仅在携带 ticketId/ts 时）
+                if (request.getTicketId() != null && request.getTs() != null
+                        && !request.getTicketId().isEmpty() && !request.getTs().isEmpty()) {
+                    try {
+                        java.util.List<AuditResultDto> validResults = collectedResults.stream()
+                                .filter(r -> r != null).collect(java.util.stream.Collectors.toList());
+                        if (!validResults.isEmpty()) {
+                            List<com.smartdoc.entity.AuditFeedback> savedFeedbacks = auditFeedbackService.saveAuditResults(
+                                    validResults, request.getRuleGroupId());
+                            String batchNo = savedFeedbacks != null && !savedFeedbacks.isEmpty()
+                                    ? savedFeedbacks.get(0).getAuditBatchNo()
+                                    : java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+                            auditTicketRecordService.saveRecord(
+                                    request.getTicketId(), request.getTs(),
+                                    batchNo, "ticket_" + request.getTicketId());
+                        }
+                    } catch (Exception e) {
+                        log.error("流式审核结果落库失败: {}", e.getMessage(), e);
+                    }
+                }
             } catch (Exception e) {
                 log.error("流式审核失败", e);
                 try {
