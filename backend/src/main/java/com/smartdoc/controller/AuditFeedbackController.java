@@ -8,6 +8,7 @@ import com.smartdoc.dto.AuditResultDto;
 import com.smartdoc.dto.RuleFeedbackStatsDto;
 import com.smartdoc.entity.AuditFeedback;
 import com.smartdoc.service.AuditFeedbackService;
+import com.smartdoc.service.AuditTicketRecordService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -33,14 +34,27 @@ import java.util.stream.Collectors;
 public class AuditFeedbackController {
 
     private final AuditFeedbackService auditFeedbackService;
+    private final AuditTicketRecordService auditTicketRecordService;
     private final ObjectMapper objectMapper;
 
     @PostMapping("/save")
     public ResponseEntity<Map<String, Object>> saveAuditResults(
             @RequestBody List<AuditResultDto> results,
             @RequestParam(required = false) String groupId,
-            @RequestParam(required = false) Long durationMs) {
+            @RequestParam(required = false) Long durationMs,
+            @RequestParam(required = false) String ticketId,
+            @RequestParam(required = false) String ts) {
         List<AuditFeedback> saved = auditFeedbackService.saveAuditResults(results, groupId, durationMs);
+        // 如果传入了 ticketId 和 ts，同步保存到 audit_ticket_record
+        if (ticketId != null && ts != null && !ticketId.isEmpty() && !ts.isEmpty()) {
+            String batchNo = saved != null && !saved.isEmpty()
+                    ? saved.get(0).getAuditBatchNo()
+                    : java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+            log.info("保存审核结果时同步保存工单记录: ticketId={}, ts={}, batchNo={}", ticketId, ts, batchNo);
+            auditTicketRecordService.saveRecord(ticketId, ts, batchNo, "ticket_" + ticketId);
+        } else {
+            log.warn("跳过保存工单记录: ticketId={}, ts={}", ticketId, ts);
+        }
         Map<String, Object> response = new HashMap<>();
         response.put("success", true);
         response.put("ids", saved.stream().map(AuditFeedback::getId).collect(Collectors.toList()));

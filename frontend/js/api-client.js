@@ -701,13 +701,23 @@ const ReportExporter = {
 };
 
 const FeedbackAPI = {
-    async saveAuditResults(results, groupId, durationMs) {
+    async saveAuditResults(results, groupId, durationMs, ticketId, ts) {
         let url = '/api/feedback/save';
+        const params = [];
         if (groupId) {
-            url += '?groupId=' + encodeURIComponent(groupId);
+            params.push('groupId=' + encodeURIComponent(groupId));
         }
         if (durationMs != null) {
-            url += (groupId ? '&' : '?') + 'durationMs=' + durationMs;
+            params.push('durationMs=' + durationMs);
+        }
+        if (ticketId) {
+            params.push('ticketId=' + encodeURIComponent(ticketId));
+        }
+        if (ts) {
+            params.push('ts=' + encodeURIComponent(ts));
+        }
+        if (params.length > 0) {
+            url += '?' + params.join('&');
         }
         const response = await fetch(url, {
             method: 'POST',

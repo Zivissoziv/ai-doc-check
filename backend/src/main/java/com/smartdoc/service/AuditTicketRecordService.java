@@ -32,6 +32,8 @@ public class AuditTicketRecordService {
         if (existing != null) {
             existing.setAuditBatchNo(auditBatchNo);
             existing.setDocumentName(documentName);
+            existing.setStatus(AuditTicketRecord.STATUS_COMPLETED);
+            existing.setErrorMessage(null);
             auditTicketRecordMapper.updateById(existing);
             log.info("更新工单审核记录: ticketId={}, ts={}, batchNo={}", ticketId, ts, auditBatchNo);
         } else {
@@ -40,6 +42,7 @@ public class AuditTicketRecordService {
                     .ts(ts)
                     .auditBatchNo(auditBatchNo)
                     .documentName(documentName)
+                    .status(AuditTicketRecord.STATUS_COMPLETED)
                     .build();
             auditTicketRecordMapper.insert(record);
             log.info("创建工单审核记录: ticketId={}, ts={}, batchNo={}", ticketId, ts, auditBatchNo);

@@ -1024,7 +1024,10 @@ class SmartDocApp {
                     summary: r.summary || ''
                 }));
                 const auditDuration = Date.now() - (this._auditStartTime || Date.now());
-                const saveResponse = await FeedbackAPI.saveAuditResults(saveResults, this.currentRuleGroup, auditDuration);
+                const saveResponse = await FeedbackAPI.saveAuditResults(
+                    saveResults, this.currentRuleGroup, auditDuration,
+                    this.ticketId, this.ts
+                );
                 const feedbackIds = saveResponse.ids || [];
                 validResults.forEach((r, i) => {
                     r._feedbackId = feedbackIds[i];

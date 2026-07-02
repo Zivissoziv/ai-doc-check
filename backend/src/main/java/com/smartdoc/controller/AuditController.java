@@ -124,10 +124,15 @@ public class AuditController {
                 String batchNo = savedFeedbacks != null && !savedFeedbacks.isEmpty()
                         ? savedFeedbacks.get(0).getAuditBatchNo()
                         : java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+                log.info("非流式审核保存工单记录: ticketId={}, ts={}, batchNo={}",
+                        request.getTicketId(), request.getTs(), batchNo);
                 auditTicketRecordService.saveRecord(
                         request.getTicketId(), request.getTs(),
                         batchNo,
                         "ticket_" + request.getTicketId());
+            } else {
+                log.warn("非流式审核跳过保存工单记录: ticketId={}, ts={}",
+                        request.getTicketId(), request.getTs());
             }
 
             Map<String, Object> successResponse = new HashMap<>();
