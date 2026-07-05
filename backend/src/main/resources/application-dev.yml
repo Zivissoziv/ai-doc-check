@@ -32,3 +32,8 @@ smartdoc:
     timeout: 120
     temperature: 0.1
     max-file-size: 52428800
+  async-audit:
+    core-pool-size: 4
+    max-pool-size: 8
+    queue-capacity: 100
+    await-termination-seconds: 30

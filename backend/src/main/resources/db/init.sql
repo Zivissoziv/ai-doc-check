@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS audit_ticket_record (
     error_message VARCHAR(1000) DEFAULT NULL COMMENT '失败原因',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    UNIQUE INDEX idx_ticket_ts (ticket_id, ts),
-    INDEX idx_task_id (task_id)
+    INDEX idx_ticket_ts_created_at (ticket_id, ts, created_at),
+    UNIQUE INDEX uk_task_id (task_id),
+    INDEX idx_audit_ticket_batch_no (audit_batch_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='工单审核记录表';

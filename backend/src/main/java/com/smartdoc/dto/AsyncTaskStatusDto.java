@@ -5,6 +5,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDateTime;
+
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -13,10 +15,19 @@ public class AsyncTaskStatusDto {
 
     private String taskId;
 
+    private String ticketId;
+
+    private String ts;
+
     private String status;
 
     private String errorMessage;
 
-    /** 审核完成后的批次号，status=COMPLETED 时有值 */
     private String auditBatchNo;
+
+    private String documentName;
+
+    private LocalDateTime createdAt;
+
+    private LocalDateTime updatedAt;
 }

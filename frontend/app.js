@@ -877,7 +877,7 @@ class SmartDocApp {
 
         // 如果已有历史审核结果（从 ticket 加载的），确认是否重新审核
         if (this.ticketId && this.auditResults && this.auditResults.length > 0) {
-            if (!confirm('该工单已有审核结果，重新审核将覆盖历史记录，是否继续？')) {
+            if (!confirm('该工单已有审核结果，重新审核将生成新的审核记录，并默认展示最新一次，是否继续？')) {
                 return;
             }
         }
@@ -1013,25 +1013,28 @@ class SmartDocApp {
 
             try {
                 const validResults = allResults.filter(Boolean);
-                const saveResults = validResults.map(r => ({
-                    ruleId: r.ruleId,
-                    ruleName: r.ruleName,
-                    severity: r.severity,
-                    pass: r.pass,
-                    skipped: r.skipped,
-                    confidence: r.confidence,
-                    issues: r.issues || [],
-                    summary: r.summary || ''
-                }));
-                const auditDuration = Date.now() - (this._auditStartTime || Date.now());
-                const saveResponse = await FeedbackAPI.saveAuditResults(
-                    saveResults, this.currentRuleGroup, auditDuration,
-                    this.ticketId, this.ts
-                );
-                const feedbackIds = saveResponse.ids || [];
-                validResults.forEach((r, i) => {
-                    r._feedbackId = feedbackIds[i];
-                });
+                const needsSave = validResults.some(r => !r._feedbackId);
+                if (needsSave) {
+                    const saveResults = validResults.map(r => ({
+                        ruleId: r.ruleId,
+                        ruleName: r.ruleName,
+                        severity: r.severity,
+                        pass: r.pass,
+                        skipped: r.skipped,
+                        confidence: r.confidence,
+                        issues: r.issues || [],
+                        summary: r.summary || ''
+                    }));
+                    const auditDuration = Date.now() - (this._auditStartTime || Date.now());
+                    const saveResponse = await FeedbackAPI.saveAuditResults(
+                        saveResults, this.currentRuleGroup, auditDuration,
+                        this.ticketId, this.ts
+                    );
+                    const feedbackIds = saveResponse.ids || [];
+                    validResults.forEach((r, i) => {
+                        r._feedbackId = feedbackIds[i];
+                    });
+                }
             } catch (err) {
                 console.error('保存审核结果失败:', err);
             }

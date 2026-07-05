@@ -117,6 +117,9 @@ public class AuditController {
             );
 
             List<com.smartdoc.entity.AuditFeedback> savedFeedbacks = auditFeedbackService.saveAuditResults(results, request.getRuleGroupId());
+            for (int i = 0; savedFeedbacks != null && i < savedFeedbacks.size() && i < results.size(); i++) {
+                results.get(i).set_feedbackId(savedFeedbacks.get(i).getId());
+            }
 
             // 如果请求携带了 ticketId 和 ts，保存映射关系
             if (request.getTicketId() != null && request.getTs() != null
@@ -211,26 +214,7 @@ public class AuditController {
 
                 outputStream.flush();
 
-                // 流式结束后落库（仅在携带 ticketId/ts 时）
-                if (request.getTicketId() != null && request.getTs() != null
-                        && !request.getTicketId().isEmpty() && !request.getTs().isEmpty()) {
-                    try {
-                        java.util.List<AuditResultDto> validResults = collectedResults.stream()
-                                .filter(r -> r != null).collect(java.util.stream.Collectors.toList());
-                        if (!validResults.isEmpty()) {
-                            List<com.smartdoc.entity.AuditFeedback> savedFeedbacks = auditFeedbackService.saveAuditResults(
-                                    validResults, request.getRuleGroupId());
-                            String batchNo = savedFeedbacks != null && !savedFeedbacks.isEmpty()
-                                    ? savedFeedbacks.get(0).getAuditBatchNo()
-                                    : java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16);
-                            auditTicketRecordService.saveRecord(
-                                    request.getTicketId(), request.getTs(),
-                                    batchNo, "ticket_" + request.getTicketId());
-                        }
-                    } catch (Exception e) {
-                        log.error("流式审核结果落库失败: {}", e.getMessage(), e);
-                    }
-                }
+                // 流式结果由前端在接收完成后统一保存，避免后端和前端重复落库。
             } catch (Exception e) {
                 log.error("流式审核失败", e);
                 try {

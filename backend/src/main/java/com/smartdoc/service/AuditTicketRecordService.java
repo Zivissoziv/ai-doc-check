@@ -1,7 +1,6 @@
 package com.smartdoc.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.smartdoc.dto.AuditIssueDto;
 import com.smartdoc.dto.AuditResultDto;
 import com.smartdoc.dto.AuditTicketRecordDto;
 import com.smartdoc.entity.AuditFeedback;
@@ -15,7 +14,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -28,25 +26,15 @@ public class AuditTicketRecordService {
 
     @Transactional
     public void saveRecord(String ticketId, String ts, String auditBatchNo, String documentName) {
-        AuditTicketRecord existing = auditTicketRecordMapper.findByTicketIdAndTs(ticketId, ts);
-        if (existing != null) {
-            existing.setAuditBatchNo(auditBatchNo);
-            existing.setDocumentName(documentName);
-            existing.setStatus(AuditTicketRecord.STATUS_COMPLETED);
-            existing.setErrorMessage(null);
-            auditTicketRecordMapper.updateById(existing);
-            log.info("更新工单审核记录: ticketId={}, ts={}, batchNo={}", ticketId, ts, auditBatchNo);
-        } else {
-            AuditTicketRecord record = AuditTicketRecord.builder()
-                    .ticketId(ticketId)
-                    .ts(ts)
-                    .auditBatchNo(auditBatchNo)
-                    .documentName(documentName)
-                    .status(AuditTicketRecord.STATUS_COMPLETED)
-                    .build();
-            auditTicketRecordMapper.insert(record);
-            log.info("创建工单审核记录: ticketId={}, ts={}, batchNo={}", ticketId, ts, auditBatchNo);
-        }
+        AuditTicketRecord record = AuditTicketRecord.builder()
+                .ticketId(ticketId)
+                .ts(ts)
+                .auditBatchNo(auditBatchNo)
+                .documentName(documentName)
+                .status(AuditTicketRecord.STATUS_COMPLETED)
+                .build();
+        auditTicketRecordMapper.insert(record);
+        log.info("Created audit ticket detail: ticketId={}, ts={}, batchNo={}", ticketId, ts, auditBatchNo);
     }
 
     public AuditTicketRecord getByTicketIdAndTs(String ticketId, String ts) {
@@ -66,10 +54,13 @@ public class AuditTicketRecordService {
             return dto;
         }
 
-        List<AuditFeedback> feedbacks = auditFeedbackMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<AuditFeedback>()
-                        .eq(AuditFeedback::getAuditBatchNo, record.getAuditBatchNo())
-        );
+        List<AuditFeedback> feedbacks = new ArrayList<>();
+        if (record.getAuditBatchNo() != null && !record.getAuditBatchNo().isEmpty()) {
+            feedbacks = auditFeedbackMapper.selectList(
+                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<AuditFeedback>()
+                            .eq(AuditFeedback::getAuditBatchNo, record.getAuditBatchNo())
+            );
+        }
 
         int totalCount = 0, passCount = 0, skippedCount = 0, failCount = 0;
         List<AuditTicketRecordDto.FailureItem> failures = new ArrayList<>();
@@ -97,7 +88,6 @@ public class AuditTicketRecordService {
                     result.set_feedbackId(feedback.getId());
                     result.set_feedbackType(feedback.getFeedbackType());
 
-                    // 收集不通过的原因
                     boolean isFail = (feedback.getSkipped() == null || !feedback.getSkipped())
                             && (feedback.getPass() == null || !feedback.getPass());
                     if (isFail) {
@@ -113,7 +103,7 @@ public class AuditTicketRecordService {
                     }
                 }
             } catch (Exception e) {
-                log.error("反序列化审核结果失败: {}", e.getMessage(), e);
+                log.error("Failed to deserialize audit result: {}", e.getMessage(), e);
             }
         }
 
@@ -127,6 +117,8 @@ public class AuditTicketRecordService {
         dto.setSkippedCount(skippedCount);
         dto.setFailCount(failCount);
         dto.setFailures(failures);
+        dto.setTaskStatus(record.getStatus());
+        dto.setErrorMessage(record.getErrorMessage());
         if (!summaryOnly) {
             dto.setResults(results);
         }
