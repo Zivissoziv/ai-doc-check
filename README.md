@@ -25,22 +25,11 @@
 
 ![AI审核结果界面](screenshots/audit-results.png)
 
-### 规则组管理
-- 新建、编辑、删除规则组
-- 导入/导出规则（JSON 格式）
-- 密码上锁保护，防止误修改
-
-![规则组管理](screenshots/rule-group.png)
-
 ### 统计分析
 全局调用统计，按规则组/规则筛选不准确反馈详情及原因。
 
 ![统计分析弹窗](screenshots/stats-analysis.png)
 
-### 审核结果反馈
-每条审核结果可标记"准确/不准确"，帮助持续优化审核规则。
-
-![审核反馈弹窗](screenshots/feedback-modal.png)
 
 ## 项目结构
 
