@@ -424,7 +424,7 @@
 <div id="ruleModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
     <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh]">
         <div class="p-6 border-b border-gray-100 flex justify-between items-center">
-            <h2 class="text-lg font-bold text-gray-900">编辑审核规则</h2>
+            <h2 id="ruleModalTitle" class="text-lg font-bold text-gray-900">编辑审核规则</h2>
             <button onclick="app.closeRuleModal()" class="text-gray-400 hover:text-gray-600">
                 <i class="fas fa-times text-xl"></i>
             </button>
@@ -471,8 +471,8 @@
         </div>
         
         <div class="p-6 border-t border-gray-100 flex justify-end gap-3">
-            <button onclick="app.closeRuleModal()" class="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg text-sm">取消</button>
-            <button onclick="app.saveRule()" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">保存规则</button>
+            <button id="ruleModalCancelBtn" onclick="app.closeRuleModal()" class="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg text-sm">取消</button>
+            <button id="ruleModalSaveBtn" onclick="app.saveRule()" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">保存规则</button>
         </div>
     </div>
 </div>

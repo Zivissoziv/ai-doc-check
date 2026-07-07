@@ -12,3 +12,5 @@ backend/target/
 backend/logs/
 .idea/
 .vscode/
+logs/
+*.log

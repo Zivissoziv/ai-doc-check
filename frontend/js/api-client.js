@@ -184,11 +184,11 @@ const RulesManager = {
             return `
                 <div class="p-3 border rounded-xl transition-all duration-200 group ${isEnabled ? 'bg-white border-gray-200 shadow-sm hover:shadow-md' : 'bg-gray-50 border-gray-100 opacity-70'}">
                     <div class="flex items-start justify-between mb-2">
-                        <div onclick="${isLocked ? '' : `app.editRule(${originIdx})`}" class="flex items-center gap-2 overflow-hidden cursor-pointer flex-1" title="${isLocked ? '规则组已上锁，无法编辑' : '点击编辑规则'}">
+                        <div onclick="${isLocked ? `app.viewRule(${originIdx})` : `app.editRule(${originIdx})`}" class="flex items-center gap-2 overflow-hidden cursor-pointer flex-1" title="${isLocked ? '规则组已上锁，仅查看详情' : '点击编辑规则'}">
                              <span class="flex-shrink-0 w-5 h-5 rounded-full bg-gray-100 text-xs font-bold text-gray-500 flex items-center justify-center">${idx + 1}</span>
                              <span class="flex-shrink-0 w-2 h-2 rounded-full ${rule.severity === 'error' ? 'bg-red-500' : rule.severity === 'warning' ? 'bg-yellow-500' : 'bg-blue-500'} shadow-sm"></span>
                              <span class="font-medium text-sm truncate ${isEnabled ? 'text-gray-900 group-hover:text-blue-600' : 'text-gray-400'} transition-colors">${rule.name}</span>
-                            <i class="fas fa-edit text-xs text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity"></i>
+                            <i class="fas ${isLocked ? 'fa-eye' : 'fa-edit'} text-xs text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity"></i>
                         </div>
                         <div class="flex items-center gap-2 flex-shrink-0">
                             <div onclick="${isLocked ? '' : `app.toggleRuleStatus(${originIdx})`}" 
@@ -203,7 +203,7 @@ const RulesManager = {
                             </button>
                         </div>
                     </div>
-                    <p onclick="${isLocked ? '' : `app.editRule(${originIdx})`}" class="text-xs ${isEnabled ? 'text-gray-500' : 'text-gray-400'} line-clamp-2 leading-relaxed cursor-pointer">${rule.prompt}</p>
+                    <p onclick="${isLocked ? `app.viewRule(${originIdx})` : `app.editRule(${originIdx})`}" class="text-xs ${isEnabled ? 'text-gray-500' : 'text-gray-400'} line-clamp-2 leading-relaxed cursor-pointer" title="${isLocked ? '规则组已上锁，仅查看详情' : '点击编辑规则'}">${rule.prompt}</p>
                 </div>
             `;
         }).join('');

@@ -21,6 +21,17 @@ public interface AuditTicketRecordMapper extends BaseMapper<AuditTicketRecord> {
     @Select("SELECT * FROM audit_ticket_record WHERE task_id = #{taskId} LIMIT 1")
     AuditTicketRecord findByTaskId(@Param("taskId") String taskId);
 
+    @Select({
+            "<script>",
+            "SELECT * FROM audit_ticket_record WHERE audit_batch_no IN",
+            "<foreach collection='batchNos' item='batchNo' open='(' separator=',' close=')'>",
+            "#{batchNo}",
+            "</foreach>",
+            "ORDER BY created_at DESC, id DESC",
+            "</script>"
+    })
+    List<AuditTicketRecord> findByBatchNos(@Param("batchNos") List<String> batchNos);
+
     @Select("SELECT * FROM audit_ticket_record WHERE status IN ('PENDING', 'RUNNING') AND task_id IS NOT NULL")
     List<AuditTicketRecord> findUnfinishedAsyncTasks();
 

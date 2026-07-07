@@ -3,15 +3,24 @@ package com.smartdoc.service;
 import com.alibaba.excel.EasyExcel;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.tika.Tika;
-import org.apache.tika.config.TikaConfig;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.PostConstruct;
+import javax.xml.namespace.NamespaceContext;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.xpath.XPath;
+import javax.xml.xpath.XPathConstants;
+import javax.xml.xpath.XPathFactory;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 @Slf4j
 @Service
@@ -21,20 +30,8 @@ public class DocumentParserService {
 
     @PostConstruct
     void init() {
-        try {
-            InputStream configStream = getClass().getResourceAsStream("/tika-config.xml");
-            if (configStream != null) {
-                TikaConfig config = new TikaConfig(configStream);
-                tika = new Tika(config);
-                log.info("Tika已加载自定义配置 (tika-config.xml)");
-            } else {
-                tika = new Tika();
-                log.warn("未找到 tika-config.xml，使用默认配置");
-            }
-        } catch (Exception e) {
-            log.warn("加载 Tika 配置失败，使用默认配置: {}", e.getMessage());
-            tika = new Tika();
-        }
+        tika = new Tika();
+        log.info("Tika使用默认配置");
     }
 
     public String parseDocument(byte[] fileBytes, String fileType) {
@@ -42,14 +39,104 @@ public class DocumentParserService {
             throw new IllegalArgumentException("文件内容为空");
         }
 
+        // DOCX：优先从 word/document.xml 提取正文，效果与前端 Mammoth.js 一致
+        if ("docx".equals(fileType)) {
+            String bodyText = extractDocxBody(fileBytes);
+            if (bodyText != null && !bodyText.trim().isEmpty()) {
+                log.debug("DOCX正文提取成功，文本长度: {}", bodyText.length());
+                return bodyText.trim();
+            }
+            log.warn("DOCX正文提取失败或为空，回退到Tika");
+        }
+
+        // 其他类型或 DOCX 回退：使用 Tika
         try (InputStream is = new ByteArrayInputStream(fileBytes)) {
             String text = tika.parseToString(is);
             log.debug("Tika解析成功，文本长度: {}", text.length());
+            if (text.trim().isEmpty()) {
+                log.warn("Tika解析结果为空，fileType={}, fileBytes长度={}", fileType, fileBytes.length);
+            }
             return text.trim();
         } catch (Exception e) {
             log.error("Tika解析失败: {}", e.getMessage(), e);
             throw new RuntimeException("解析文档失败: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * 从 DOCX 的 word/document.xml 中提取正文文本（与前端 Mammoth.js 方式一致）。
+     * 只提取 <w:p> 段落中 <w:t> 元素的文本，排除页眉/页脚/批注等。
+     */
+    private String extractDocxBody(byte[] fileBytes) {
+        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(fileBytes))) {
+            ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                if ("word/document.xml".equals(entry.getName())) {
+                    byte[] xmlBytes = readStream(zip);
+                    return parseDocxXml(xmlBytes);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("DOCX解压失败: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private String parseDocxXml(byte[] xmlBytes) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setFeature(javax.xml.XMLConstants.FEATURE_SECURE_PROCESSING, true);
+        factory.setNamespaceAware(true);
+        DocumentBuilder builder = factory.newDocumentBuilder();
+        org.w3c.dom.Document doc = builder.parse(new ByteArrayInputStream(xmlBytes));
+
+        XPath xpath = XPathFactory.newInstance().newXPath();
+        xpath.setNamespaceContext(new NamespaceContext() {
+            @Override
+            public String getNamespaceURI(String prefix) {
+                return "w".equals(prefix)
+                        ? "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                        : null;
+            }
+            @Override
+            public String getPrefix(String namespaceURI) { return null; }
+            @Override
+            public Iterator getPrefixes(String namespaceURI) { return null; }
+        });
+
+        org.w3c.dom.NodeList paragraphs = (org.w3c.dom.NodeList)
+                xpath.evaluate("//w:p", doc, XPathConstants.NODESET);
+
+        StringBuilder result = new StringBuilder();
+        for (int i = 0; i < paragraphs.getLength(); i++) {
+            org.w3c.dom.Node p = paragraphs.item(i);
+            org.w3c.dom.NodeList tNodes = (org.w3c.dom.NodeList)
+                    xpath.evaluate(".//w:t", p, XPathConstants.NODESET);
+
+            StringBuilder paraText = new StringBuilder();
+            for (int j = 0; j < tNodes.getLength(); j++) {
+                paraText.append(tNodes.item(j).getTextContent());
+            }
+
+            String trimmed = paraText.toString().trim();
+            if (!trimmed.isEmpty()) {
+                if (result.length() > 0) {
+                    result.append("\n");
+                }
+                result.append(trimmed);
+            }
+        }
+
+        return result.toString();
+    }
+
+    private byte[] readStream(InputStream in) throws Exception {
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        byte[] buf = new byte[4096];
+        int n;
+        while ((n = in.read(buf)) != -1) {
+            bos.write(buf, 0, n);
+        }
+        return bos.toByteArray();
     }
 
     public String detectFileType(byte[] fileBytes, String providedType) {

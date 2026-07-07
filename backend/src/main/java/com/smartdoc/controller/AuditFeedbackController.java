@@ -7,6 +7,8 @@ import com.smartdoc.dto.AuditIssueDto;
 import com.smartdoc.dto.AuditResultDto;
 import com.smartdoc.dto.RuleFeedbackStatsDto;
 import com.smartdoc.entity.AuditFeedback;
+import com.smartdoc.entity.AuditTicketRecord;
+import com.smartdoc.mapper.AuditTicketRecordMapper;
 import com.smartdoc.service.AuditFeedbackService;
 import com.smartdoc.service.AuditTicketRecordService;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +37,7 @@ public class AuditFeedbackController {
 
     private final AuditFeedbackService auditFeedbackService;
     private final AuditTicketRecordService auditTicketRecordService;
+    private final AuditTicketRecordMapper auditTicketRecordMapper;
     private final ObjectMapper objectMapper;
 
     @PostMapping("/save")
@@ -85,11 +88,29 @@ public class AuditFeedbackController {
             @RequestParam(required = false) String startDate,
             @RequestParam(required = false) String endDate) {
         List<AuditFeedback> feedbacks = auditFeedbackService.getRuleFailures(ruleId, startDate, endDate, 30);
+        List<String> batchNos = feedbacks.stream()
+                .map(AuditFeedback::getAuditBatchNo)
+                .filter(batchNo -> batchNo != null && !batchNo.isEmpty())
+                .distinct()
+                .collect(Collectors.toList());
+        Map<String, AuditTicketRecord> ticketRecordByBatchNo = new HashMap<>();
+        if (!batchNos.isEmpty()) {
+            for (AuditTicketRecord record : auditTicketRecordMapper.findByBatchNos(batchNos)) {
+                if (record.getAuditBatchNo() != null && !ticketRecordByBatchNo.containsKey(record.getAuditBatchNo())) {
+                    ticketRecordByBatchNo.put(record.getAuditBatchNo(), record);
+                }
+            }
+        }
+
         List<Map<String, Object>> result = new ArrayList<>();
         for (AuditFeedback f : feedbacks) {
             Map<String, Object> item = new HashMap<>();
             item.put("id", f.getId());
             item.put("createdAt", f.getCreatedAt());
+            item.put("auditBatchNo", f.getAuditBatchNo());
+            AuditTicketRecord ticketRecord = ticketRecordByBatchNo.get(f.getAuditBatchNo());
+            item.put("ticketId", ticketRecord != null ? ticketRecord.getTicketId() : null);
+            item.put("ts", ticketRecord != null ? ticketRecord.getTs() : null);
             try {
                 AuditResultDto dto = objectMapper.readValue(f.getResultsJson(), AuditResultDto.class);
                 item.put("summary", dto.getSummary());

@@ -284,7 +284,10 @@ class SmartDocApp {
     
     showTemplateModal() { this._handleModal(true, 'templateModal'); }
     closeTemplateModal() { this._handleModal(false, 'templateModal'); }
-    closeRuleModal() { this._handleModal(false, 'ruleModal'); }
+    closeRuleModal() {
+        this._setRuleModalReadonly(false);
+        this._handleModal(false, 'ruleModal');
+    }
     closeGroupModal() { this._handleModal(false, 'groupModal'); }
     
     async selectPresetTemplate(fileName) {
@@ -473,26 +476,72 @@ class SmartDocApp {
         UiHelpers.setStatus('规则已删除');
     }
     
+    _setRuleModalReadonly(readonly) {
+        ['ruleName', 'rulePrompt', 'ruleSeverity', 'ruleTriggerCondition'].forEach(id => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.disabled = readonly;
+            el.classList.toggle('bg-gray-50', readonly);
+            el.classList.toggle('text-gray-600', readonly);
+            el.classList.toggle('cursor-not-allowed', readonly);
+        });
+
+        const title = document.getElementById('ruleModalTitle');
+        if (title) title.textContent = readonly ? '查看审核规则' : '编辑审核规则';
+
+        const cancelBtn = document.getElementById('ruleModalCancelBtn');
+        if (cancelBtn) cancelBtn.textContent = readonly ? '关闭' : '取消';
+
+        const saveBtn = document.getElementById('ruleModalSaveBtn');
+        if (saveBtn) saveBtn.classList.toggle('hidden', readonly);
+
+        this._ruleModalReadonly = readonly;
+    }
+
+    _fillRuleModal(rule) {
+        document.getElementById('ruleName').value = rule.name || '';
+        document.getElementById('rulePrompt').value = rule.prompt || '';
+        document.getElementById('ruleSeverity').value = rule.severity || 'warning';
+        document.getElementById('ruleTriggerCondition').value = rule.triggerCondition || '';
+    }
+
     addRule() {
+        if (this._isCurrentGroupLocked()) {
+            alert('规则组已上锁，无法新增规则');
+            return;
+        }
+        this._setRuleModalReadonly(false);
         this.currentEditingRule = null;
-        document.getElementById('ruleName').value = '';
-        document.getElementById('rulePrompt').value = '';
-        document.getElementById('ruleSeverity').value = 'warning';
-        document.getElementById('ruleTriggerCondition').value = '';
+        this._fillRuleModal({ severity: 'warning' });
         UiHelpers.toggleModal('ruleModal', true);
     }
     
     editRule(idx) {
+        if (this._isCurrentGroupLocked()) {
+            this.viewRule(idx);
+            return;
+        }
+        this._setRuleModalReadonly(false);
         this.currentEditingRule = idx;
         const rule = this.rules[idx];
-        document.getElementById('ruleName').value = rule.name;
-        document.getElementById('rulePrompt').value = rule.prompt;
-        document.getElementById('ruleSeverity').value = rule.severity;
-        document.getElementById('ruleTriggerCondition').value = rule.triggerCondition || '';
+        this._fillRuleModal(rule);
+        UiHelpers.toggleModal('ruleModal', true);
+    }
+
+    viewRule(idx) {
+        this.currentEditingRule = null;
+        const rule = this.rules[idx];
+        if (!rule) return;
+        this._fillRuleModal(rule);
+        this._setRuleModalReadonly(true);
         UiHelpers.toggleModal('ruleModal', true);
     }
     
     async saveRule() {
+        if (this._ruleModalReadonly || this._isCurrentGroupLocked()) {
+            alert('规则组已上锁，无法编辑规则');
+            return;
+        }
         const name = document.getElementById('ruleName').value.trim();
         const prompt = document.getElementById('rulePrompt').value.trim();
         const severity = document.getElementById('ruleSeverity').value;
@@ -1712,6 +1761,9 @@ class SmartDocApp {
                 const confidence = item.confidence != null ? `${item.confidence}%` : '-';
                 const summary = item.summary || '';
                 const issues = item.issues || [];
+                const ticketId = item.ticketId || '-';
+                const ts = item.ts || '-';
+                const auditBatchNo = item.auditBatchNo || '-';
                 const issuesList = issues.length > 0
                     ? issues.map(iss => `
                         <div class="ml-3 mb-2 border-l-2 border-red-200 pl-3">
@@ -1726,6 +1778,11 @@ class SmartDocApp {
                     <div class="flex items-center justify-between mb-2">
                         <span class="text-xs text-gray-400">${time}</span>
                         <span class="text-xs text-gray-500">置信度：${confidence}</span>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-1 mb-2 text-xs text-gray-500 bg-gray-50 rounded p-2">
+                        <div><span class="font-medium text-gray-600">ticketId:</span> ${ticketId}</div>
+                        <div><span class="font-medium text-gray-600">ts:</span> ${ts}</div>
+                        <div><span class="font-medium text-gray-600">batch:</span> ${auditBatchNo}</div>
                     </div>
                     ${summary ? `<div class="text-xs text-gray-700 mb-2">${summary}</div>` : ''}
                     ${issuesList}

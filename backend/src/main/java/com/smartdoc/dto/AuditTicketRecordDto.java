@@ -39,6 +39,12 @@ public class AuditTicketRecordDto {
     /** 不通过的具体原因列表 */
     private List<FailureItem> failures;
 
+    /** 异步任务状态：PENDING / RUNNING / COMPLETED / FAILED */
+    private String taskStatus;
+
+    /** 任务失败时的错误信息 */
+    private String errorMessage;
+
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
