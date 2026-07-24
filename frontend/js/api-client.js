@@ -305,10 +305,17 @@ const DocumentParser = {
         const parser = new DOMParser();
         const doc = parser.parseFromString(docXml, 'text/xml');
 
+        // 解析 numbering.xml 以支持自动编号（用于文本提取和结构树）
+        const numberingDefs = await this._parseNumbering(zip);
+
         const paragraphs = doc.querySelectorAll('p');
         let text = '';
         const flatNodes = [];
         let nodeId = 0;
+        // 跟踪每个 (numId, ilvl) 组合的当前编号
+        const numCounters = {};
+        // 记录带自动编号的标题段落，用于 mammoth HTML 后处理
+        const headingNumbering = [];
 
         paragraphs.forEach(p => {
             const runs = p.querySelectorAll('t');
@@ -317,17 +324,53 @@ const DocumentParser = {
                 content += t.textContent;
             });
 
-            if (content.trim()) {
-                text += content + '\n';
+            // 检查段落是否有自动编号 (w:numPr)
+            let numPrefix = '';
+            let numFmt = 'decimal';
+            const numPr = p.querySelector('numPr');
+            if (numPr && numberingDefs) {
+                const numIdEl = numPr.querySelector('numId');
+                if (numIdEl) {
+                    const numId = this._getAttr(numIdEl, 'val');
+                    const ilvlEl = numPr.querySelector('ilvl');
+                    const ilvl = ilvlEl ? (this._getAttr(ilvlEl, 'val') || '0') : '0';
+                    const key = numId + '-' + ilvl;
+                    
+                    // 获取编号定义
+                    const def = numberingDefs[numId];
+                    const lvlDef = def && def.levels ? def.levels[ilvl] : null;
+                    
+                    // 初始化计数器
+                    if (!numCounters[key]) {
+                        const startVal = lvlDef ? (parseInt(lvlDef.start) || 1) : 1;
+                        numCounters[key] = startVal;
+                    }
+                    
+                    const currentNum = numCounters[key];
+                    const lvlText = lvlDef ? lvlDef.lvlText : '%1.';
+                    numFmt = lvlDef ? lvlDef.numFmt : 'decimal';
+                    // numFmt=none 表示不显示编号，bullet 项目符号由 mammoth 处理
+                    if (numFmt !== 'none' && numFmt !== 'bullet') {
+                        numPrefix = this._formatNumbering(lvlText, currentNum, ilvl);
+                    }
+                    
+                    numCounters[key]++;
+                }
+            }
 
-                const level = this.detectHeadingLevel(content);
+            const fullContent = numPrefix + content;
+
+            if (fullContent.trim()) {
+                text += fullContent + '\n';
+
+                const level = this.detectHeadingLevel(fullContent);
                 if (level > 0) {
                     flatNodes.push({
                         id: 'node-' + (nodeId++),
                         type: 'heading',
                         level: level,
-                        content: content,
-                        html: `<p class="font-bold">${this.escapeHtml(content)}</p>`,
+                        content: fullContent,
+                        html: `<p class="font-bold">${this.escapeHtml(fullContent)}</p>`,
                         children: []
                     });
                 } else {
@@ -335,9 +378,17 @@ const DocumentParser = {
                         id: 'node-' + (nodeId++),
                         type: 'paragraph',
                         level: 0,
-                        content: content,
-                        html: `<p>${this.escapeHtml(content)}</p>`,
+                        content: fullContent,
+                        html: `<p>${this.escapeHtml(fullContent)}</p>`,
                         children: []
+                    });
+                }
+
+                // 记录带编号的标题段落（用于 mammoth HTML 后处理）
+                if (numPrefix && level > 0) {
+                    headingNumbering.push({
+                        originalText: content.trim(),
+                        numPrefix: numPrefix.trim()
                     });
                 }
             }
@@ -357,7 +408,18 @@ const DocumentParser = {
                         });
                     })
                 });
-                html = `<div class="mammoth-output">${result.value}</div>`;
+                let mammothHtml = result.value;
+                // 后处理 mammoth HTML：在标题标签中插入自动编号
+                // 只匹配 <h1>~<h6>，避免影响其他内容
+                for (const hd of headingNumbering) {
+                    const escapedText = this._escapeRegex(hd.originalText);
+                    // 匹配 <hN...>...(任意嵌套内容)...原始文本...</hN>
+                    const regex = new RegExp(
+                        '(<h[1-6][^>]*>)([\\s\\S]*?)(' + escapedText + ')([\\s\\S]*?<\\/h[1-6]>)', 'g'
+                    );
+                    mammothHtml = mammothHtml.replace(regex, '$1$2' + hd.numPrefix + ' $3$4');
+                }
+                html = `<div class="mammoth-output">${mammothHtml}</div>`;
             } else {
                 html = `<pre class="whitespace-pre-wrap">${this.escapeHtml(text)}</pre>`;
             }
@@ -367,6 +429,89 @@ const DocumentParser = {
         }
 
         return { text, tree, html };
+    },
+
+    // 获取 XML 元素的属性值，兼容命名空间前缀
+    _getAttr(el, name) {
+        const val = el.getAttribute(name);
+        if (val !== null && val !== undefined) return val;
+        // 尝试带命名空间前缀的方式
+        const nsVal = el.getAttribute('w:' + name);
+        if (nsVal !== null && nsVal !== undefined) return nsVal;
+        return null;
+    },
+
+    // 解析 numbering.xml，返回 { numId: { abstractNumId, levels: { ilvl: { start, numFmt, lvlText } } } }
+    // 使用文本解析避免 DOMParser 命名空间兼容性问题
+    async _parseNumbering(zip) {
+        const numFile = zip.file('word/numbering.xml');
+        if (!numFile) return null;
+        try {
+            const numXml = await numFile.async('text');
+            
+            const map = {};
+            const numToAbstract = {};
+            
+            // 解析 <w:num w:numId="N"> -> child <w:abstractNumId w:val="M"/>
+            // 注意: numId 是 <w:num> 标签的属性，不是子元素
+            const numRegex = /<w:num[^>]*\s+w:numId="(\d+)"[^>]*>[\s\S]*?<w:abstractNumId\s+w:val="(\d+)"\s*\/>[\s\S]*?<\/w:num>/g;
+            let match;
+            while ((match = numRegex.exec(numXml)) !== null) {
+                numToAbstract[match[1]] = match[2];
+            }
+            
+            // 解析 <w:abstractNum w:abstractNumId="N"> -> levels
+            const abstractNumRegex = /<w:abstractNum[^>]*w:abstractNumId="(\d+)"[^>]*>([\s\S]*?)<\/w:abstractNum>/g;
+            const abstractMap = {};
+            while ((match = abstractNumRegex.exec(numXml)) !== null) {
+                const anId = match[1];
+                const anContent = match[2];
+                const levels = {};
+                
+                // 解析每个 <w:lvl w:ilvl="N"> 内的 start, numFmt, lvlText
+                const lvlRegex = /<w:lvl[^>]*w:ilvl="(\d+)"[^>]*>([\s\S]*?)<\/w:lvl>/g;
+                let lvlMatch;
+                while ((lvlMatch = lvlRegex.exec(anContent)) !== null) {
+                    const ilvl = lvlMatch[1];
+                    const lvlContent = lvlMatch[2];
+                    
+                    const startMatch = /<w:start w:val="(\d+)"/.exec(lvlContent);
+                    const numFmtMatch = /<w:numFmt w:val="([^"]+)"/.exec(lvlContent);
+                    const lvlTextMatch = /<w:lvlText w:val="([^"]*)"/.exec(lvlContent);
+                    
+                    levels[ilvl] = {
+                        start: startMatch ? startMatch[1] : '1',
+                        numFmt: numFmtMatch ? numFmtMatch[1] : 'decimal',
+                        lvlText: lvlTextMatch ? lvlTextMatch[1] : '%1.'
+                    };
+                }
+                abstractMap[anId] = { levels };
+            }
+            
+            // 合并成最终 map
+            Object.keys(numToAbstract).forEach(numId => {
+                const abstractNumId = numToAbstract[numId];
+                map[numId] = abstractMap[abstractNumId] || { levels: {} };
+            });
+            
+            console.log('_parseNumbering result:', JSON.stringify(map));
+            return map;
+        } catch (e) {
+            console.error('解析 numbering.xml 失败:', e);
+            return null;
+        }
+    },
+
+    // 根据 lvlText 格式化编号，如 "%1." + 数字5 = "5."
+    _formatNumbering(lvlText, currentNum, ilvl) {
+        if (!lvlText) return currentNum + '. ';
+        // 替换 %1, %2 等为对应级别的数字（简化处理：所有级别都用当前值）
+        let result = lvlText.replace(/%(\d+)/g, currentNum.toString());
+        return result + ' ';
+    },
+
+    _escapeRegex(str) {
+        return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     },
 
     detectHeadingLevel(content) {
