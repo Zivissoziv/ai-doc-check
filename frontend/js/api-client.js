@@ -301,76 +301,44 @@ const DocumentParser = {
     async parseDocx(arrayBuffer) {
         const zip = await JSZip.loadAsync(arrayBuffer);
         const docXml = await zip.file('word/document.xml').async('text');
+        const numberingXml = zip.file('word/numbering.xml')
+            ? await zip.file('word/numbering.xml').async('text')
+            : '';
+        const stylesXml = zip.file('word/styles.xml')
+            ? await zip.file('word/styles.xml').async('text')
+            : '';
 
         const parser = new DOMParser();
         const doc = parser.parseFromString(docXml, 'text/xml');
+        const numberingDoc = numberingXml ? parser.parseFromString(numberingXml, 'text/xml') : null;
+        const stylesDoc = stylesXml ? parser.parseFromString(stylesXml, 'text/xml') : null;
+        const numbering = this._parseDocxNumbering(numberingDoc, stylesDoc);
+        const counters = {};
 
-        // 解析 numbering.xml 以支持自动编号（用于文本提取和结构树）
-        const numberingDefs = await this._parseNumbering(zip);
-
-        const paragraphs = doc.querySelectorAll('p');
+        const paragraphs = this._xmlDescendants(doc, 'p');
         let text = '';
         const flatNodes = [];
+        const paragraphInfos = [];
         let nodeId = 0;
-        // 跟踪每个 (numId, ilvl) 组合的当前编号
-        const numCounters = {};
-        // 记录带自动编号的标题段落，用于 mammoth HTML 后处理
-        const headingNumbering = [];
 
         paragraphs.forEach(p => {
-            const runs = p.querySelectorAll('t');
-            let content = '';
-            runs.forEach(t => {
-                content += t.textContent;
-            });
+            const rawContent = this._readDocxParagraphText(p);
+            const numPr = this._getDocxParagraphNumbering(p, numbering);
+            const prefix = this._formatDocxNumberPrefix(numbering, numPr, counters);
+            const content = this._joinDocxNumberPrefix(prefix, rawContent);
 
-            // 检查段落是否有自动编号 (w:numPr)
-            let numPrefix = '';
-            let numFmt = 'decimal';
-            const numPr = p.querySelector('numPr');
-            if (numPr && numberingDefs) {
-                const numIdEl = numPr.querySelector('numId');
-                if (numIdEl) {
-                    const numId = this._getAttr(numIdEl, 'val');
-                    const ilvlEl = numPr.querySelector('ilvl');
-                    const ilvl = ilvlEl ? (this._getAttr(ilvlEl, 'val') || '0') : '0';
-                    const key = numId + '-' + ilvl;
-                    
-                    // 获取编号定义
-                    const def = numberingDefs[numId];
-                    const lvlDef = def && def.levels ? def.levels[ilvl] : null;
-                    
-                    // 初始化计数器
-                    if (!numCounters[key]) {
-                        const startVal = lvlDef ? (parseInt(lvlDef.start) || 1) : 1;
-                        numCounters[key] = startVal;
-                    }
-                    
-                    const currentNum = numCounters[key];
-                    const lvlText = lvlDef ? lvlDef.lvlText : '%1.';
-                    numFmt = lvlDef ? lvlDef.numFmt : 'decimal';
-                    // numFmt=none 表示不显示编号，bullet 项目符号由 mammoth 处理
-                    if (numFmt !== 'none' && numFmt !== 'bullet') {
-                        numPrefix = this._formatNumbering(lvlText, currentNum, ilvl);
-                    }
-                    
-                    numCounters[key]++;
-                }
-            }
+            if (content.trim()) {
+                text += content + '\n';
+                paragraphInfos.push({ rawContent, content, prefix });
 
-            const fullContent = numPrefix + content;
-
-            if (fullContent.trim()) {
-                text += fullContent + '\n';
-
-                const level = this.detectHeadingLevel(fullContent);
+                const level = this.detectHeadingLevel(content);
                 if (level > 0) {
                     flatNodes.push({
                         id: 'node-' + (nodeId++),
                         type: 'heading',
                         level: level,
-                        content: fullContent,
-                        html: `<p class="font-bold">${this.escapeHtml(fullContent)}</p>`,
+                        content: content,
+                        html: `<p class="font-bold">${this.escapeHtml(content)}</p>`,
                         children: []
                     });
                 } else {
@@ -378,17 +346,9 @@ const DocumentParser = {
                         id: 'node-' + (nodeId++),
                         type: 'paragraph',
                         level: 0,
-                        content: fullContent,
-                        html: `<p>${this.escapeHtml(fullContent)}</p>`,
+                        content: content,
+                        html: `<p>${this.escapeHtml(content)}</p>`,
                         children: []
-                    });
-                }
-
-                // 记录带编号的标题段落（用于 mammoth HTML 后处理）
-                if (numPrefix && level > 0) {
-                    headingNumbering.push({
-                        originalText: content.trim(),
-                        numPrefix: numPrefix.trim()
                     });
                 }
             }
@@ -408,18 +368,8 @@ const DocumentParser = {
                         });
                     })
                 });
-                let mammothHtml = result.value;
-                // 后处理 mammoth HTML：在标题标签中插入自动编号
-                // 只匹配 <h1>~<h6>，避免影响其他内容
-                for (const hd of headingNumbering) {
-                    const escapedText = this._escapeRegex(hd.originalText);
-                    // 匹配 <hN...>...(任意嵌套内容)...原始文本...</hN>
-                    const regex = new RegExp(
-                        '(<h[1-6][^>]*>)([\\s\\S]*?)(' + escapedText + ')([\\s\\S]*?<\\/h[1-6]>)', 'g'
-                    );
-                    mammothHtml = mammothHtml.replace(regex, '$1$2' + hd.numPrefix + ' $3$4');
-                }
-                html = `<div class="mammoth-output">${mammothHtml}</div>`;
+                const numberedHtml = this._applyDocxNumberPrefixesToHtml(result.value, paragraphInfos);
+                html = `<div class="mammoth-output">${numberedHtml}</div>`;
             } else {
                 html = `<pre class="whitespace-pre-wrap">${this.escapeHtml(text)}</pre>`;
             }
@@ -431,87 +381,263 @@ const DocumentParser = {
         return { text, tree, html };
     },
 
-    // 获取 XML 元素的属性值，兼容命名空间前缀
-    _getAttr(el, name) {
-        const val = el.getAttribute(name);
-        if (val !== null && val !== undefined) return val;
-        // 尝试带命名空间前缀的方式
-        const nsVal = el.getAttribute('w:' + name);
-        if (nsVal !== null && nsVal !== undefined) return nsVal;
-        return null;
-    },
+    _parseDocxNumbering(numberingDoc, stylesDoc) {
+        const numbering = {
+            abstractNums: {},
+            nums: {},
+            styleNumbering: {},
+            styleRules: {}
+        };
 
-    // 解析 numbering.xml，返回 { numId: { abstractNumId, levels: { ilvl: { start, numFmt, lvlText } } } }
-    // 使用文本解析避免 DOMParser 命名空间兼容性问题
-    async _parseNumbering(zip) {
-        const numFile = zip.file('word/numbering.xml');
-        if (!numFile) return null;
-        try {
-            const numXml = await numFile.async('text');
-            
-            const map = {};
-            const numToAbstract = {};
-            
-            // 解析 <w:num w:numId="N"> -> child <w:abstractNumId w:val="M"/>
-            // 注意: numId 是 <w:num> 标签的属性，不是子元素
-            const numRegex = /<w:num[^>]*\s+w:numId="(\d+)"[^>]*>[\s\S]*?<w:abstractNumId\s+w:val="(\d+)"\s*\/>[\s\S]*?<\/w:num>/g;
-            let match;
-            while ((match = numRegex.exec(numXml)) !== null) {
-                numToAbstract[match[1]] = match[2];
-            }
-            
-            // 解析 <w:abstractNum w:abstractNumId="N"> -> levels
-            const abstractNumRegex = /<w:abstractNum[^>]*w:abstractNumId="(\d+)"[^>]*>([\s\S]*?)<\/w:abstractNum>/g;
-            const abstractMap = {};
-            while ((match = abstractNumRegex.exec(numXml)) !== null) {
-                const anId = match[1];
-                const anContent = match[2];
+        if (numberingDoc) {
+            this._xmlDescendants(numberingDoc, 'abstractNum').forEach(abstractNum => {
+                const abstractId = this._xmlAttr(abstractNum, 'abstractNumId');
+                if (!abstractId) return;
+
                 const levels = {};
-                
-                // 解析每个 <w:lvl w:ilvl="N"> 内的 start, numFmt, lvlText
-                const lvlRegex = /<w:lvl[^>]*w:ilvl="(\d+)"[^>]*>([\s\S]*?)<\/w:lvl>/g;
-                let lvlMatch;
-                while ((lvlMatch = lvlRegex.exec(anContent)) !== null) {
-                    const ilvl = lvlMatch[1];
-                    const lvlContent = lvlMatch[2];
-                    
-                    const startMatch = /<w:start w:val="(\d+)"/.exec(lvlContent);
-                    const numFmtMatch = /<w:numFmt w:val="([^"]+)"/.exec(lvlContent);
-                    const lvlTextMatch = /<w:lvlText w:val="([^"]*)"/.exec(lvlContent);
-                    
+                this._xmlChildren(abstractNum, 'lvl').forEach(lvl => {
+                    const ilvl = this._xmlAttr(lvl, 'ilvl') || '0';
                     levels[ilvl] = {
-                        start: startMatch ? startMatch[1] : '1',
-                        numFmt: numFmtMatch ? numFmtMatch[1] : 'decimal',
-                        lvlText: lvlTextMatch ? lvlTextMatch[1] : '%1.'
+                        ilvl,
+                        start: parseInt(this._xmlAttr(this._xmlFirst(lvl, 'start'), 'val') || '1', 10),
+                        numFmt: this._xmlAttr(this._xmlFirst(lvl, 'numFmt'), 'val') || 'decimal',
+                        lvlText: this._xmlAttr(this._xmlFirst(lvl, 'lvlText'), 'val') || `%${Number(ilvl) + 1}.`,
+                        pStyle: this._xmlAttr(this._xmlFirst(lvl, 'pStyle'), 'val') || ''
                     };
-                }
-                abstractMap[anId] = { levels };
-            }
-            
-            // 合并成最终 map
-            Object.keys(numToAbstract).forEach(numId => {
-                const abstractNumId = numToAbstract[numId];
-                map[numId] = abstractMap[abstractNumId] || { levels: {} };
+                });
+                numbering.abstractNums[abstractId] = { abstractId, levels };
             });
-            
-            console.log('_parseNumbering result:', JSON.stringify(map));
-            return map;
-        } catch (e) {
-            console.error('解析 numbering.xml 失败:', e);
-            return null;
+
+            this._xmlChildren(numberingDoc.documentElement, 'num').forEach(num => {
+                const numId = this._xmlAttr(num, 'numId');
+                const abstractId = this._xmlAttr(this._xmlFirst(num, 'abstractNumId'), 'val');
+                if (numId && abstractId) {
+                    numbering.nums[numId] = { numId, abstractId };
+                }
+            });
+
+            Object.keys(numbering.nums).forEach(numId => {
+                const abstractNum = numbering.abstractNums[numbering.nums[numId].abstractId];
+                if (!abstractNum) return;
+                Object.keys(abstractNum.levels).forEach(ilvl => {
+                    const level = abstractNum.levels[ilvl];
+                    if (level.pStyle && !numbering.styleNumbering[level.pStyle]) {
+                        numbering.styleNumbering[level.pStyle] = { numId, ilvl };
+                    }
+                });
+            });
         }
+
+        if (stylesDoc) {
+            this._xmlDescendants(stylesDoc, 'style').forEach(style => {
+                if (this._xmlAttr(style, 'type') !== 'paragraph') return;
+                const styleId = this._xmlAttr(style, 'styleId');
+                const pPr = this._xmlFirst(style, 'pPr');
+                const numPr = pPr ? this._xmlFirst(pPr, 'numPr') : null;
+                if (!styleId) return;
+
+                numbering.styleRules[styleId] = {
+                    numId: numPr ? this._xmlAttr(this._xmlFirst(numPr, 'numId'), 'val') : '',
+                    ilvl: numPr ? this._xmlAttr(this._xmlFirst(numPr, 'ilvl'), 'val') : '',
+                    basedOn: this._xmlAttr(this._xmlFirst(style, 'basedOn'), 'val') || ''
+                };
+            });
+        }
+
+        return numbering;
     },
 
-    // 根据 lvlText 格式化编号，如 "%1." + 数字5 = "5."
-    _formatNumbering(lvlText, currentNum, ilvl) {
-        if (!lvlText) return currentNum + '. ';
-        // 替换 %1, %2 等为对应级别的数字（简化处理：所有级别都用当前值）
-        let result = lvlText.replace(/%(\d+)/g, currentNum.toString());
-        return result + ' ';
+    _getDocxParagraphNumbering(paragraph, numbering) {
+        const pPr = this._xmlFirst(paragraph, 'pPr');
+        const styleId = this._xmlAttr(this._xmlFirst(pPr, 'pStyle'), 'val');
+        const numPr = this._xmlFirst(pPr, 'numPr');
+        let numId = this._xmlAttr(this._xmlFirst(numPr, 'numId'), 'val');
+        let ilvl = this._xmlAttr(this._xmlFirst(numPr, 'ilvl'), 'val');
+
+        if (!numId && styleId) {
+            const styleRule = this._resolveDocxStyleNumbering(numbering, styleId);
+            if (styleRule) {
+                numId = styleRule.numId;
+                ilvl = styleRule.ilvl;
+            }
+        }
+
+        if (!numId && styleId && numbering.styleNumbering[styleId]) {
+            numId = numbering.styleNumbering[styleId].numId;
+            ilvl = numbering.styleNumbering[styleId].ilvl;
+        }
+
+        if (numId && (ilvl === '' || ilvl == null) && styleId) {
+            ilvl = this._inferDocxNumberLevel(numbering, numId, styleId);
+        }
+
+        if (!numId) return null;
+        return { numId, ilvl: ilvl === '' || ilvl == null ? '0' : String(ilvl) };
     },
 
-    _escapeRegex(str) {
-        return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    _resolveDocxStyleNumbering(numbering, styleId, seen = {}) {
+        if (!styleId || seen[styleId]) return null;
+        seen[styleId] = true;
+
+        const rule = numbering.styleRules[styleId];
+        if (!rule) return null;
+        if (rule.numId) {
+            return {
+                numId: rule.numId,
+                ilvl: rule.ilvl || this._inferDocxNumberLevel(numbering, rule.numId, styleId) || '0'
+            };
+        }
+
+        return this._resolveDocxStyleNumbering(numbering, rule.basedOn, seen);
+    },
+
+    _inferDocxNumberLevel(numbering, numId, styleId) {
+        const num = numbering.nums[numId];
+        const abstractNum = num ? numbering.abstractNums[num.abstractId] : null;
+        if (!abstractNum) return '0';
+
+        const matched = Object.keys(abstractNum.levels).find(ilvl => {
+            return abstractNum.levels[ilvl].pStyle === styleId;
+        });
+        return matched || '0';
+    },
+
+    _formatDocxNumberPrefix(numbering, numPr, counters) {
+        if (!numPr) return '';
+
+        const num = numbering.nums[numPr.numId];
+        const abstractNum = num ? numbering.abstractNums[num.abstractId] : null;
+        if (!abstractNum) return '';
+
+        const ilvl = parseInt(numPr.ilvl || '0', 10);
+        const level = abstractNum.levels[String(ilvl)];
+        if (!level) return '';
+
+        const key = numPr.numId;
+        counters[key] = counters[key] || [];
+        for (let i = 0; i <= ilvl; i++) {
+            if (counters[key][i] == null) {
+                const start = abstractNum.levels[String(i)]?.start || 1;
+                counters[key][i] = start - 1;
+            }
+        }
+        counters[key][ilvl] += 1;
+        counters[key].length = ilvl + 1;
+
+        const prefix = level.lvlText.replace(/%([1-9])/g, (_, levelIndex) => {
+            const index = Number(levelIndex) - 1;
+            const value = counters[key][index];
+            const refLevel = abstractNum.levels[String(index)] || level;
+            return value == null ? '' : this._formatDocxNumberValue(value, refLevel.numFmt);
+        });
+
+        return prefix && !/\s$/.test(prefix) ? prefix + ' ' : prefix;
+    },
+
+    _formatDocxNumberValue(value, numFmt) {
+        if (numFmt === 'upperLetter' || numFmt === 'lowerLetter') {
+            let n = value;
+            let text = '';
+            while (n > 0) {
+                n -= 1;
+                text = String.fromCharCode(65 + (n % 26)) + text;
+                n = Math.floor(n / 26);
+            }
+            return numFmt === 'lowerLetter' ? text.toLowerCase() : text;
+        }
+
+        if (numFmt === 'upperRoman' || numFmt === 'lowerRoman') {
+            const roman = this._toRoman(value);
+            return numFmt === 'lowerRoman' ? roman.toLowerCase() : roman;
+        }
+
+        return String(value);
+    },
+
+    _toRoman(value) {
+        const pairs = [
+            [1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'],
+            [100, 'C'], [90, 'XC'], [50, 'L'], [40, 'XL'],
+            [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']
+        ];
+        let n = value;
+        let result = '';
+        pairs.forEach(([amount, symbol]) => {
+            while (n >= amount) {
+                result += symbol;
+                n -= amount;
+            }
+        });
+        return result;
+    },
+
+    _joinDocxNumberPrefix(prefix, content) {
+        if (!prefix) return content;
+        const trimmedPrefix = prefix.trim();
+        const trimmedContent = content.trimStart();
+        return trimmedContent.startsWith(trimmedPrefix) ? content : prefix + content;
+    },
+
+    _readDocxParagraphText(paragraph) {
+        let content = '';
+        this._xmlDescendants(paragraph, '*').forEach(node => {
+            if (node.localName === 't') {
+                content += node.textContent || '';
+            } else if (node.localName === 'tab') {
+                content += '\t';
+            } else if (node.localName === 'br' || node.localName === 'cr') {
+                content += '\n';
+            }
+        });
+        return content;
+    },
+
+    _applyDocxNumberPrefixesToHtml(html, paragraphInfos) {
+        if (!html || !paragraphInfos.some(p => p.prefix)) return html;
+
+        const doc = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html');
+        const blocks = Array.from(doc.body.firstElementChild.querySelectorAll('p,h1,h2,h3,h4,h5,h6,li'));
+        let index = 0;
+
+        blocks.forEach(block => {
+            while (index < paragraphInfos.length && !paragraphInfos[index].rawContent.trim()) {
+                index += 1;
+            }
+            if (index >= paragraphInfos.length) return;
+
+            const info = paragraphInfos[index];
+            index += 1;
+            if (!info.prefix) return;
+
+            const blockText = (block.textContent || '').trim();
+            if (blockText === info.rawContent.trim() || blockText.endsWith(info.rawContent.trim())) {
+                block.insertBefore(doc.createTextNode(info.prefix), block.firstChild);
+            }
+        });
+
+        return doc.body.firstElementChild.innerHTML;
+    },
+
+    _xmlDescendants(node, localName) {
+        if (!node) return [];
+        if (localName === '*') {
+            return Array.from(node.getElementsByTagName('*'));
+        }
+        return Array.from(node.getElementsByTagName('*')).filter(child => child.localName === localName);
+    },
+
+    _xmlChildren(node, localName) {
+        if (!node) return [];
+        return Array.from(node.childNodes).filter(child => child.nodeType === 1 && child.localName === localName);
+    },
+
+    _xmlFirst(node, localName) {
+        return this._xmlChildren(node, localName)[0] || null;
+    },
+
+    _xmlAttr(node, name) {
+        if (!node) return '';
+        return node.getAttribute(`w:${name}`) || node.getAttribute(name) || '';
     },
 
     detectHeadingLevel(content) {

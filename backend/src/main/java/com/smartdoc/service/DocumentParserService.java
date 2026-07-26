@@ -15,7 +15,11 @@ import javax.xml.xpath.XPathFactory;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -31,18 +35,6 @@ public class DocumentParserService {
         log.info("Tika使用默认配置");
     }
 
-    // 编号定义内部类
-    private static class NumberingLevelDef {
-        int start;
-        String numFmt;
-        String lvlText;
-        NumberingLevelDef(int start, String numFmt, String lvlText) {
-            this.start = start;
-            this.numFmt = numFmt;
-            this.lvlText = lvlText;
-        }
-    }
-
     public String parseDocument(byte[] fileBytes, String fileType) {
         if (fileBytes == null || fileBytes.length == 0) {
             throw new IllegalArgumentException("文件内容为空");
@@ -50,7 +42,7 @@ public class DocumentParserService {
 
         // DOCX：优先从 word/document.xml 提取正文，效果与前端 Mammoth.js 一致
         if ("docx".equals(fileType)) {
-            String bodyText = extractDocxBody(fileBytes);
+            String bodyText = extractDocxBodyWithNumbering(fileBytes);
             if (bodyText != null && !bodyText.trim().isEmpty()) {
                 log.debug("DOCX正文提取成功，文本长度: {}", bodyText.length());
                 return bodyText.trim();
@@ -73,125 +65,25 @@ public class DocumentParserService {
     }
 
     /**
-     * 从 DOCX 的 word/document.xml 中提取正文文本，支持自动编号。
+     * 从 DOCX 的 word/document.xml 中提取正文文本（与前端 Mammoth.js 方式一致）。
+     * 只提取 <w:p> 段落中 <w:t> 元素的文本，排除页眉/页脚/批注等。
      */
     private String extractDocxBody(byte[] fileBytes) {
-        Map<String, byte[]> zipEntries = new HashMap<>();
-        // 先遍历 ZIP，收集需要的文件
         try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(fileBytes))) {
             ZipEntry entry;
             while ((entry = zip.getNextEntry()) != null) {
-                zipEntries.put(entry.getName(), readStream(zip));
+                if ("word/document.xml".equals(entry.getName())) {
+                    byte[] xmlBytes = readStream(zip);
+                    return parseDocxXml(xmlBytes);
+                }
             }
         } catch (Exception e) {
             log.warn("DOCX解压失败: {}", e.getMessage());
-            return null;
         }
-
-        byte[] docXmlBytes = zipEntries.get("word/document.xml");
-        if (docXmlBytes == null) return null;
-
-        byte[] numXmlBytes = zipEntries.get("word/numbering.xml");
-        Map<String, Map<String, NumberingLevelDef>> numberingMap = null;
-        if (numXmlBytes != null) {
-            numberingMap = parseNumbering(numXmlBytes);
-        }
-
-        try {
-            return parseDocxXml(docXmlBytes, numberingMap);
-        } catch (Exception e) {
-            log.warn("DOCX XML 解析失败: {}", e.getMessage());
-            return null;
-        }
+        return null;
     }
 
-    /**
-     * 解析 numbering.xml，返回 numId -> { ilvl -> NumberingLevelDef } 的映射
-     */
-    private Map<String, Map<String, NumberingLevelDef>> parseNumbering(byte[] numXmlBytes) {
-        try {
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            factory.setFeature(javax.xml.XMLConstants.FEATURE_SECURE_PROCESSING, true);
-            factory.setNamespaceAware(true);
-            DocumentBuilder builder = factory.newDocumentBuilder();
-            org.w3c.dom.Document doc = builder.parse(new ByteArrayInputStream(numXmlBytes));
-
-            XPath xpath = XPathFactory.newInstance().newXPath();
-            xpath.setNamespaceContext(new NamespaceContext() {
-                @Override
-                public String getNamespaceURI(String prefix) {
-                    return "w".equals(prefix)
-                            ? "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-                            : null;
-                }
-                @Override
-                public String getPrefix(String namespaceURI) { return null; }
-                @Override
-                public Iterator getPrefixes(String namespaceURI) { return null; }
-            });
-
-            // 解析 <w:num> 映射 numId -> abstractNumId
-            org.w3c.dom.NodeList numNodes = (org.w3c.dom.NodeList)
-                    xpath.evaluate("//w:num", doc, XPathConstants.NODESET);
-            Map<String, String> numToAbstract = new HashMap<>();
-            for (int i = 0; i < numNodes.getLength(); i++) {
-                org.w3c.dom.Node num = numNodes.item(i);
-                String numId = xpath.evaluate("w:numId/@w:val", num);
-                String abstractNumId = xpath.evaluate("w:abstractNumId/@w:val", num);
-                if (numId != null && abstractNumId != null) {
-                    numToAbstract.put(numId, abstractNumId);
-                }
-            }
-
-            // 解析 <w:abstractNum> 获取 level 定义
-            org.w3c.dom.NodeList abstractNumNodes = (org.w3c.dom.NodeList)
-                    xpath.evaluate("//w:abstractNum", doc, XPathConstants.NODESET);
-            Map<String, Map<String, NumberingLevelDef>> abstractMap = new HashMap<>();
-            for (int i = 0; i < abstractNumNodes.getLength(); i++) {
-                org.w3c.dom.Node an = abstractNumNodes.item(i);
-                String anId = xpath.evaluate("@w:abstractNumId", an);
-                if (anId == null || anId.isEmpty()) continue;
-
-                Map<String, NumberingLevelDef> levels = new HashMap<>();
-                org.w3c.dom.NodeList lvlNodes = (org.w3c.dom.NodeList)
-                        xpath.evaluate("w:lvl", an, XPathConstants.NODESET);
-                for (int j = 0; j < lvlNodes.getLength(); j++) {
-                    org.w3c.dom.Node lvl = lvlNodes.item(j);
-                    String ilvl = xpath.evaluate("@w:ilvl", lvl);
-                    if (ilvl == null) ilvl = "0";
-
-                    String startStr = xpath.evaluate("w:start/@w:val", lvl);
-                    int start = 1;
-                    if (startStr != null && !startStr.isEmpty()) {
-                        try { start = Integer.parseInt(startStr); } catch (NumberFormatException e) { start = 1; }
-                    }
-                    String numFmt = xpath.evaluate("w:numFmt/@w:val", lvl);
-                    if (numFmt == null) numFmt = "decimal";
-                    String lvlText = xpath.evaluate("w:lvlText/@w:val", lvl);
-                    if (lvlText == null) lvlText = "%1.";
-
-                    levels.put(ilvl, new NumberingLevelDef(start, numFmt, lvlText));
-                }
-                abstractMap.put(anId, levels);
-            }
-
-            // 合并成最终 map
-            Map<String, Map<String, NumberingLevelDef>> result = new HashMap<>();
-            for (Map.Entry<String, String> entry : numToAbstract.entrySet()) {
-                Map<String, NumberingLevelDef> levels = abstractMap.get(entry.getValue());
-                if (levels != null) {
-                    result.put(entry.getKey(), levels);
-                }
-            }
-            return result;
-        } catch (Exception e) {
-            log.warn("解析 numbering.xml 失败: {}", e.getMessage());
-            return null;
-        }
-    }
-
-    private String parseDocxXml(byte[] xmlBytes,
-                                Map<String, Map<String, NumberingLevelDef>> numberingMap) throws Exception {
+    private String parseDocxXml(byte[] xmlBytes) throws Exception {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         factory.setFeature(javax.xml.XMLConstants.FEATURE_SECURE_PROCESSING, true);
         factory.setNamespaceAware(true);
@@ -215,9 +107,6 @@ public class DocumentParserService {
         org.w3c.dom.NodeList paragraphs = (org.w3c.dom.NodeList)
                 xpath.evaluate("//w:p", doc, XPathConstants.NODESET);
 
-        // 跟踪每个 (numId, ilvl) 组合的当前编号
-        Map<String, Integer> numCounters = new HashMap<>();
-
         StringBuilder result = new StringBuilder();
         for (int i = 0; i < paragraphs.getLength(); i++) {
             org.w3c.dom.Node p = paragraphs.item(i);
@@ -229,59 +118,417 @@ public class DocumentParserService {
                 paraText.append(tNodes.item(j).getTextContent());
             }
 
-            // 检查自动编号
-            String numPrefix = "";
-            if (numberingMap != null) {
-                org.w3c.dom.Node numPr = (org.w3c.dom.Node)
-                        xpath.evaluate("w:pPr/w:numPr", p, XPathConstants.NODE);
-                if (numPr != null) {
-                    String numId = xpath.evaluate("w:numId/@w:val", numPr);
-                    String ilvl = xpath.evaluate("w:ilvl/@w:val", numPr);
-                    if (ilvl == null || ilvl.isEmpty()) ilvl = "0";
-
-                    if (numId != null && !numId.isEmpty()) {
-                        String key = numId + "-" + ilvl;
-                        Map<String, NumberingLevelDef> levels = numberingMap.get(numId);
-                        NumberingLevelDef lvlDef = (levels != null) ? levels.get(ilvl) : null;
-
-                        if (lvlDef != null && !"none".equals(lvlDef.numFmt) && !"bullet".equals(lvlDef.numFmt)) {
-                            // 初始化计数器
-                            if (!numCounters.containsKey(key)) {
-                                numCounters.put(key, lvlDef.start);
-                            }
-                            int currentNum = numCounters.get(key);
-                            numCounters.put(key, currentNum + 1);
-
-                            // 格式化编号
-                            String lvlText = (lvlDef.lvlText != null) ? lvlDef.lvlText : "%1.";
-                            numPrefix = formatNumbering(lvlText, currentNum);
-                        } else {
-                            // 即使不显示编号，也要计数以保持序列正确
-                            if (!numCounters.containsKey(key)) {
-                                numCounters.put(key, 1);
-                            } else {
-                                numCounters.put(key, numCounters.get(key) + 1);
-                            }
-                        }
-                    }
-                }
-            }
-
             String trimmed = paraText.toString().trim();
             if (!trimmed.isEmpty()) {
                 if (result.length() > 0) {
                     result.append("\n");
                 }
-                result.append(numPrefix).append(trimmed);
+                result.append(trimmed);
             }
         }
 
         return result.toString();
     }
 
-    private String formatNumbering(String lvlText, int currentNum) {
-        // 替换 %1, %2 等为当前值
-        return lvlText.replaceAll("%\\d+", String.valueOf(currentNum)) + " ";
+    private String extractDocxBodyWithNumbering(byte[] fileBytes) {
+        Map<String, byte[]> entries = new HashMap<>();
+        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(fileBytes))) {
+            ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                String name = entry.getName();
+                if ("word/document.xml".equals(name)
+                        || "word/numbering.xml".equals(name)
+                        || "word/styles.xml".equals(name)) {
+                    entries.put(name, readStream(zip));
+                }
+            }
+
+            byte[] documentXml = entries.get("word/document.xml");
+            if (documentXml != null) {
+                return parseDocxXmlWithNumbering(
+                        documentXml,
+                        entries.get("word/numbering.xml"),
+                        entries.get("word/styles.xml"));
+            }
+        } catch (Exception e) {
+            log.warn("DOCX编号正文提取失败: {}", e.getMessage());
+        }
+        return extractDocxBody(fileBytes);
+    }
+
+    private String parseDocxXmlWithNumbering(byte[] documentXmlBytes, byte[] numberingXmlBytes, byte[] stylesXmlBytes) throws Exception {
+        org.w3c.dom.Document doc = parseXml(documentXmlBytes);
+        XPath xpath = createWordXPath();
+        NumberingData numbering = parseNumbering(numberingXmlBytes, stylesXmlBytes);
+
+        org.w3c.dom.NodeList paragraphs = (org.w3c.dom.NodeList)
+                xpath.evaluate("//w:p", doc, XPathConstants.NODESET);
+
+        StringBuilder result = new StringBuilder();
+        Map<String, List<Integer>> counters = new HashMap<>();
+        for (int i = 0; i < paragraphs.getLength(); i++) {
+            org.w3c.dom.Node p = paragraphs.item(i);
+            String paraText = readParagraphText(p);
+            NumberingRef numberingRef = getParagraphNumbering(p, xpath, numbering);
+            String content = joinNumberPrefix(formatNumberPrefix(numbering, numberingRef, counters), paraText);
+
+            String trimmed = content.trim();
+            if (!trimmed.isEmpty()) {
+                if (result.length() > 0) {
+                    result.append("\n");
+                }
+                result.append(trimmed);
+            }
+        }
+        return result.toString();
+    }
+
+    private org.w3c.dom.Document parseXml(byte[] xmlBytes) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setFeature(javax.xml.XMLConstants.FEATURE_SECURE_PROCESSING, true);
+        factory.setNamespaceAware(true);
+        DocumentBuilder builder = factory.newDocumentBuilder();
+        return builder.parse(new ByteArrayInputStream(xmlBytes));
+    }
+
+    private XPath createWordXPath() {
+        XPath xpath = XPathFactory.newInstance().newXPath();
+        xpath.setNamespaceContext(new NamespaceContext() {
+            @Override
+            public String getNamespaceURI(String prefix) {
+                return "w".equals(prefix)
+                        ? "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                        : null;
+            }
+            @Override
+            public String getPrefix(String namespaceURI) { return null; }
+            @Override
+            public Iterator getPrefixes(String namespaceURI) { return null; }
+        });
+        return xpath;
+    }
+
+    private NumberingData parseNumbering(byte[] numberingXmlBytes, byte[] stylesXmlBytes) throws Exception {
+        NumberingData data = new NumberingData();
+        XPath xpath = createWordXPath();
+
+        if (numberingXmlBytes != null) {
+            org.w3c.dom.Document numberingDoc = parseXml(numberingXmlBytes);
+            org.w3c.dom.NodeList abstractNums = (org.w3c.dom.NodeList)
+                    xpath.evaluate("//w:abstractNum", numberingDoc, XPathConstants.NODESET);
+            for (int i = 0; i < abstractNums.getLength(); i++) {
+                org.w3c.dom.Node abstractNum = abstractNums.item(i);
+                String abstractId = attr(abstractNum, "abstractNumId");
+                if (abstractId.isEmpty()) {
+                    continue;
+                }
+
+                AbstractNumbering abstractNumbering = new AbstractNumbering();
+                org.w3c.dom.NodeList levels = (org.w3c.dom.NodeList)
+                        xpath.evaluate("./w:lvl", abstractNum, XPathConstants.NODESET);
+                for (int j = 0; j < levels.getLength(); j++) {
+                    org.w3c.dom.Node lvl = levels.item(j);
+                    NumberingLevel level = new NumberingLevel();
+                    level.ilvl = valueOrDefault(attr(lvl, "ilvl"), "0");
+                    level.start = parseInt(valueOrDefault(attr((org.w3c.dom.Node) xpath.evaluate("./w:start", lvl, XPathConstants.NODE), "val"), "1"), 1);
+                    level.numFmt = valueOrDefault(attr((org.w3c.dom.Node) xpath.evaluate("./w:numFmt", lvl, XPathConstants.NODE), "val"), "decimal");
+                    level.lvlText = valueOrDefault(attr((org.w3c.dom.Node) xpath.evaluate("./w:lvlText", lvl, XPathConstants.NODE), "val"),
+                            "%" + (parseInt(level.ilvl, 0) + 1) + ".");
+                    level.pStyle = attr((org.w3c.dom.Node) xpath.evaluate("./w:pStyle", lvl, XPathConstants.NODE), "val");
+                    abstractNumbering.levels.put(level.ilvl, level);
+                }
+                data.abstractNums.put(abstractId, abstractNumbering);
+            }
+
+            org.w3c.dom.NodeList nums = (org.w3c.dom.NodeList)
+                    xpath.evaluate("/w:numbering/w:num", numberingDoc, XPathConstants.NODESET);
+            for (int i = 0; i < nums.getLength(); i++) {
+                org.w3c.dom.Node num = nums.item(i);
+                String numId = attr(num, "numId");
+                String abstractId = attr((org.w3c.dom.Node) xpath.evaluate("./w:abstractNumId", num, XPathConstants.NODE), "val");
+                if (!numId.isEmpty() && !abstractId.isEmpty()) {
+                    NumberingInstance instance = new NumberingInstance();
+                    instance.numId = numId;
+                    instance.abstractId = abstractId;
+                    data.nums.put(numId, instance);
+                }
+            }
+
+            for (Map.Entry<String, NumberingInstance> entry : data.nums.entrySet()) {
+                AbstractNumbering abstractNumbering = data.abstractNums.get(entry.getValue().abstractId);
+                if (abstractNumbering == null) {
+                    continue;
+                }
+                for (Map.Entry<String, NumberingLevel> levelEntry : abstractNumbering.levels.entrySet()) {
+                    NumberingLevel level = levelEntry.getValue();
+                    if (!level.pStyle.isEmpty() && !data.styleNumbering.containsKey(level.pStyle)) {
+                        data.styleNumbering.put(level.pStyle, new NumberingRef(entry.getKey(), levelEntry.getKey()));
+                    }
+                }
+            }
+        }
+
+        if (stylesXmlBytes != null) {
+            org.w3c.dom.Document stylesDoc = parseXml(stylesXmlBytes);
+            org.w3c.dom.NodeList styles = (org.w3c.dom.NodeList)
+                    xpath.evaluate("//w:style[@w:type='paragraph']", stylesDoc, XPathConstants.NODESET);
+            for (int i = 0; i < styles.getLength(); i++) {
+                org.w3c.dom.Node style = styles.item(i);
+                String styleId = attr(style, "styleId");
+                if (styleId.isEmpty()) {
+                    continue;
+                }
+                StyleNumbering styleNumbering = new StyleNumbering();
+                styleNumbering.numId = attr((org.w3c.dom.Node) xpath.evaluate("./w:pPr/w:numPr/w:numId", style, XPathConstants.NODE), "val");
+                styleNumbering.ilvl = attr((org.w3c.dom.Node) xpath.evaluate("./w:pPr/w:numPr/w:ilvl", style, XPathConstants.NODE), "val");
+                styleNumbering.basedOn = attr((org.w3c.dom.Node) xpath.evaluate("./w:basedOn", style, XPathConstants.NODE), "val");
+                data.styleRules.put(styleId, styleNumbering);
+            }
+        }
+
+        return data;
+    }
+
+    private NumberingRef getParagraphNumbering(org.w3c.dom.Node paragraph, XPath xpath, NumberingData numbering) throws Exception {
+        String styleId = attr((org.w3c.dom.Node) xpath.evaluate("./w:pPr/w:pStyle", paragraph, XPathConstants.NODE), "val");
+        String numId = attr((org.w3c.dom.Node) xpath.evaluate("./w:pPr/w:numPr/w:numId", paragraph, XPathConstants.NODE), "val");
+        String ilvl = attr((org.w3c.dom.Node) xpath.evaluate("./w:pPr/w:numPr/w:ilvl", paragraph, XPathConstants.NODE), "val");
+
+        if (numId.isEmpty() && !styleId.isEmpty()) {
+            NumberingRef styleRef = resolveStyleNumbering(numbering, styleId, new HashMap<String, Boolean>());
+            if (styleRef != null) {
+                numId = styleRef.numId;
+                ilvl = styleRef.ilvl;
+            }
+        }
+
+        if (numId.isEmpty() && !styleId.isEmpty() && numbering.styleNumbering.containsKey(styleId)) {
+            NumberingRef styleRef = numbering.styleNumbering.get(styleId);
+            numId = styleRef.numId;
+            ilvl = styleRef.ilvl;
+        }
+
+        if (!numId.isEmpty() && ilvl.isEmpty() && !styleId.isEmpty()) {
+            ilvl = inferNumberLevel(numbering, numId, styleId);
+        }
+
+        return numId.isEmpty() ? null : new NumberingRef(numId, ilvl.isEmpty() ? "0" : ilvl);
+    }
+
+    private NumberingRef resolveStyleNumbering(NumberingData numbering, String styleId, Map<String, Boolean> seen) {
+        if (styleId == null || styleId.isEmpty() || seen.containsKey(styleId)) {
+            return null;
+        }
+        seen.put(styleId, true);
+
+        StyleNumbering rule = numbering.styleRules.get(styleId);
+        if (rule == null) {
+            return null;
+        }
+        if (!rule.numId.isEmpty()) {
+            String ilvl = rule.ilvl.isEmpty() ? inferNumberLevel(numbering, rule.numId, styleId) : rule.ilvl;
+            return new NumberingRef(rule.numId, ilvl.isEmpty() ? "0" : ilvl);
+        }
+        return resolveStyleNumbering(numbering, rule.basedOn, seen);
+    }
+
+    private String inferNumberLevel(NumberingData numbering, String numId, String styleId) {
+        NumberingInstance instance = numbering.nums.get(numId);
+        AbstractNumbering abstractNumbering = instance == null ? null : numbering.abstractNums.get(instance.abstractId);
+        if (abstractNumbering == null) {
+            return "0";
+        }
+        for (Map.Entry<String, NumberingLevel> entry : abstractNumbering.levels.entrySet()) {
+            if (styleId.equals(entry.getValue().pStyle)) {
+                return entry.getKey();
+            }
+        }
+        return "0";
+    }
+
+    private String formatNumberPrefix(NumberingData numbering, NumberingRef ref, Map<String, List<Integer>> counters) {
+        if (ref == null) {
+            return "";
+        }
+        NumberingInstance instance = numbering.nums.get(ref.numId);
+        AbstractNumbering abstractNumbering = instance == null ? null : numbering.abstractNums.get(instance.abstractId);
+        if (abstractNumbering == null) {
+            return "";
+        }
+
+        int ilvl = parseInt(ref.ilvl, 0);
+        NumberingLevel level = abstractNumbering.levels.get(String.valueOf(ilvl));
+        if (level == null) {
+            return "";
+        }
+
+        List<Integer> counter = counters.get(ref.numId);
+        if (counter == null) {
+            counter = new ArrayList<>();
+            counters.put(ref.numId, counter);
+        }
+        for (int i = 0; i <= ilvl; i++) {
+            while (counter.size() <= i) {
+                counter.add(null);
+            }
+            if (counter.get(i) == null) {
+                NumberingLevel currentLevel = abstractNumbering.levels.get(String.valueOf(i));
+                counter.set(i, (currentLevel == null ? 1 : currentLevel.start) - 1);
+            }
+        }
+        counter.set(ilvl, counter.get(ilvl) + 1);
+        while (counter.size() > ilvl + 1) {
+            counter.remove(counter.size() - 1);
+        }
+
+        String prefix = level.lvlText;
+        for (int i = 1; i <= 9; i++) {
+            int index = i - 1;
+            Integer value = index < counter.size() ? counter.get(index) : null;
+            NumberingLevel refLevel = abstractNumbering.levels.get(String.valueOf(index));
+            if (refLevel == null) {
+                refLevel = level;
+            }
+            prefix = prefix.replace("%" + i, value == null ? "" : formatNumberValue(value, refLevel.numFmt));
+        }
+        return prefix.isEmpty() || Character.isWhitespace(prefix.charAt(prefix.length() - 1)) ? prefix : prefix + " ";
+    }
+
+    private String formatNumberValue(int value, String numFmt) {
+        if ("upperLetter".equals(numFmt) || "lowerLetter".equals(numFmt)) {
+            int n = value;
+            StringBuilder text = new StringBuilder();
+            while (n > 0) {
+                n -= 1;
+                text.insert(0, (char) ('A' + (n % 26)));
+                n = n / 26;
+            }
+            String result = text.toString();
+            return "lowerLetter".equals(numFmt) ? result.toLowerCase() : result;
+        }
+        if ("upperRoman".equals(numFmt) || "lowerRoman".equals(numFmt)) {
+            String roman = toRoman(value);
+            return "lowerRoman".equals(numFmt) ? roman.toLowerCase() : roman;
+        }
+        return String.valueOf(value);
+    }
+
+    private String toRoman(int value) {
+        int[] amounts = {1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1};
+        String[] symbols = {"M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I"};
+        int n = value;
+        StringBuilder result = new StringBuilder();
+        for (int i = 0; i < amounts.length; i++) {
+            while (n >= amounts[i]) {
+                result.append(symbols[i]);
+                n -= amounts[i];
+            }
+        }
+        return result.toString();
+    }
+
+    private String joinNumberPrefix(String prefix, String content) {
+        if (prefix == null || prefix.isEmpty()) {
+            return content;
+        }
+        String trimmedPrefix = prefix.trim();
+        String trimmedContent = content.replaceFirst("^\\s+", "");
+        return trimmedContent.startsWith(trimmedPrefix) ? content : prefix + content;
+    }
+
+    private String readParagraphText(org.w3c.dom.Node node) {
+        StringBuilder result = new StringBuilder();
+        appendParagraphText(node, result);
+        return result.toString();
+    }
+
+    private void appendParagraphText(org.w3c.dom.Node node, StringBuilder result) {
+        String localName = node.getLocalName();
+        if ("t".equals(localName)) {
+            result.append(node.getTextContent());
+            return;
+        }
+        if ("tab".equals(localName)) {
+            result.append('\t');
+            return;
+        }
+        if ("br".equals(localName) || "cr".equals(localName)) {
+            result.append('\n');
+            return;
+        }
+
+        org.w3c.dom.Node child = node.getFirstChild();
+        while (child != null) {
+            appendParagraphText(child, result);
+            child = child.getNextSibling();
+        }
+    }
+
+    private String attr(org.w3c.dom.Node node, String name) {
+        if (node == null || node.getAttributes() == null) {
+            return "";
+        }
+        org.w3c.dom.Node attr = node.getAttributes().getNamedItemNS(
+                "http://schemas.openxmlformats.org/wordprocessingml/2006/main", name);
+        if (attr == null) {
+            attr = node.getAttributes().getNamedItem("w:" + name);
+        }
+        if (attr == null) {
+            attr = node.getAttributes().getNamedItem(name);
+        }
+        return attr == null ? "" : attr.getNodeValue();
+    }
+
+    private String valueOrDefault(String value, String defaultValue) {
+        return value == null || value.isEmpty() ? defaultValue : value;
+    }
+
+    private int parseInt(String value, int defaultValue) {
+        try {
+            return Integer.parseInt(value);
+        } catch (Exception e) {
+            return defaultValue;
+        }
+    }
+
+    private static class NumberingData {
+        private final Map<String, AbstractNumbering> abstractNums = new HashMap<>();
+        private final Map<String, NumberingInstance> nums = new HashMap<>();
+        private final Map<String, NumberingRef> styleNumbering = new HashMap<>();
+        private final Map<String, StyleNumbering> styleRules = new HashMap<>();
+    }
+
+    private static class AbstractNumbering {
+        private final Map<String, NumberingLevel> levels = new HashMap<>();
+    }
+
+    private static class NumberingInstance {
+        private String numId;
+        private String abstractId;
+    }
+
+    private static class NumberingLevel {
+        private String ilvl;
+        private int start;
+        private String numFmt;
+        private String lvlText;
+        private String pStyle;
+    }
+
+    private static class NumberingRef {
+        private final String numId;
+        private final String ilvl;
+
+        private NumberingRef(String numId, String ilvl) {
+            this.numId = numId;
+            this.ilvl = ilvl;
+        }
+    }
+
+    private static class StyleNumbering {
+        private String numId = "";
+        private String ilvl = "";
+        private String basedOn = "";
     }
 
     private byte[] readStream(InputStream in) throws Exception {
