@@ -108,6 +108,8 @@ public class AuditFeedbackController {
             item.put("id", f.getId());
             item.put("createdAt", f.getCreatedAt());
             item.put("auditBatchNo", f.getAuditBatchNo());
+            item.put("feedbackType", f.getFeedbackType());
+            item.put("reason", f.getReason());
             AuditTicketRecord ticketRecord = ticketRecordByBatchNo.get(f.getAuditBatchNo());
             item.put("ticketId", ticketRecord != null ? ticketRecord.getTicketId() : null);
             item.put("ts", ticketRecord != null ? ticketRecord.getTs() : null);

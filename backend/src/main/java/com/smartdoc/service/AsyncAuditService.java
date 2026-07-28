@@ -164,17 +164,20 @@ public class AsyncAuditService {
             Map<String, Object> ticketInfo = fetchTicketInfo(config, ticketId);
             String documentName = (String) ticketInfo.getOrDefault("documentName", "ticket_" + ticketId);
 
-            byte[] documentBytes;
-            if (ticketInfo.get("documentUrl") != null) {
-                documentBytes = downloadFile((String) ticketInfo.get("documentUrl"));
-            } else if (ticketInfo.get("documentBase64") != null) {
-                documentBytes = java.util.Base64.getDecoder().decode((String) ticketInfo.get("documentBase64"));
-            } else {
-                throw new RuntimeException("工单没有文档");
-            }
+            String documentText = asNonBlankString(ticketInfo.get("documentText"));
+            if (documentText == null) {
+                byte[] documentBytes;
+                if (ticketInfo.get("documentUrl") != null) {
+                    documentBytes = downloadFile((String) ticketInfo.get("documentUrl"));
+                } else if (ticketInfo.get("documentBase64") != null) {
+                    documentBytes = java.util.Base64.getDecoder().decode((String) ticketInfo.get("documentBase64"));
+                } else {
+                    throw new RuntimeException("工单没有文档");
+                }
 
-            String documentType = documentParserService.detectFileType(documentBytes, "auto");
-            String documentText = documentParserService.parseDocument(documentBytes, documentType);
+                String documentType = documentParserService.detectFileType(documentBytes, "auto");
+                documentText = documentParserService.parseDocument(documentBytes, documentType);
+            }
             if (documentText == null) {
                 throw new RuntimeException("无法解析文档内容");
             }
@@ -257,10 +260,19 @@ public class AsyncAuditService {
         Map<String, Object> result = new HashMap<>();
         if (root.has("documentUrl")) result.put("documentUrl", root.get("documentUrl").asText());
         if (root.has("documentBase64")) result.put("documentBase64", root.get("documentBase64").asText());
+        if (root.has("documentText")) result.put("documentText", root.get("documentText").asText());
         if (root.has("documentName")) result.put("documentName", root.get("documentName").asText());
         if (root.has("data")) result.put("data", objectMapper.convertValue(root.get("data"), Map.class));
 
         return result;
+    }
+
+    private String asNonBlankString(Object value) {
+        if (!(value instanceof String)) {
+            return null;
+        }
+        String text = (String) value;
+        return text.trim().isEmpty() ? null : text;
     }
 
     private byte[] downloadFile(String url) {

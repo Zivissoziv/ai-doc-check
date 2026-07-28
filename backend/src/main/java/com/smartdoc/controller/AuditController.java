@@ -91,13 +91,7 @@ public class AuditController {
             return badRequest("规则组为空");
         }
 
-        byte[] documentBytes = resolveDocument(request);
-        if (documentBytes == null) {
-            return badRequest("缺少 documentUrl 或 documentBase64 参数");
-        }
-
-        String documentType = resolveDocumentType(request, documentBytes);
-        String documentText = parseDocument(documentBytes, documentType);
+        String documentText = resolveDocumentText(request);
         if (documentText == null) {
             return ResponseEntity.unprocessableEntity().body(errorMap("无法解析文档内容"));
         }
@@ -162,13 +156,7 @@ public class AuditController {
             return ResponseEntity.badRequest().build();
         }
 
-        byte[] documentBytes = resolveDocument(request);
-        if (documentBytes == null) {
-            return ResponseEntity.badRequest().build();
-        }
-
-        String documentType = resolveDocumentType(request, documentBytes);
-        String documentText = parseDocument(documentBytes, documentType);
+        String documentText = resolveDocumentText(request);
         if (documentText == null) {
             return ResponseEntity.unprocessableEntity().build();
         }
@@ -258,6 +246,21 @@ public class AuditController {
             }
         }
         return null;
+    }
+
+    private String resolveDocumentText(AuditRequestDto request) {
+        if (request.getDocumentText() != null && !request.getDocumentText().trim().isEmpty()) {
+            return request.getDocumentText();
+        }
+
+        byte[] documentBytes = resolveDocument(request);
+        if (documentBytes == null) {
+            log.warn("Missing documentUrl/documentBase64/documentText");
+            return null;
+        }
+
+        String documentType = resolveDocumentType(request, documentBytes);
+        return parseDocument(documentBytes, documentType);
     }
 
     private String resolveDocumentType(AuditRequestDto request, byte[] documentBytes) {

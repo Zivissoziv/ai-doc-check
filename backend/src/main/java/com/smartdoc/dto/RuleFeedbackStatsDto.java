@@ -42,6 +42,12 @@ public class RuleFeedbackStatsDto {
 
         private String reason;
 
+        private String ticketId;
+
+        private String ts;
+
+        private String auditBatchNo;
+
         private LocalDateTime createdAt;
     }
 }

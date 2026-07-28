@@ -314,6 +314,7 @@ const DocumentParser = {
         const stylesDoc = stylesXml ? parser.parseFromString(stylesXml, 'text/xml') : null;
         const numbering = this._parseDocxNumbering(numberingDoc, stylesDoc);
         const counters = {};
+        const outlineCounters = [];
 
         const paragraphs = this._xmlDescendants(doc, 'p');
         let text = '';
@@ -324,7 +325,13 @@ const DocumentParser = {
         paragraphs.forEach(p => {
             const rawContent = this._readDocxParagraphText(p);
             const numPr = this._getDocxParagraphNumbering(p, numbering);
-            const prefix = this._formatDocxNumberPrefix(numbering, numPr, counters);
+            let prefix = this._formatDocxNumberPrefix(numbering, numPr, counters);
+            if (!prefix) {
+                prefix = this._formatDocxOutlineNumberPrefix(
+                    this._getDocxParagraphOutlineLevel(p, numbering),
+                    outlineCounters
+                );
+            }
             const content = this._joinDocxNumberPrefix(prefix, rawContent);
 
             if (content.trim()) {
@@ -405,7 +412,12 @@ const DocumentParser = {
                         pStyle: this._xmlAttr(this._xmlFirst(lvl, 'pStyle'), 'val') || ''
                     };
                 });
-                numbering.abstractNums[abstractId] = { abstractId, levels };
+                numbering.abstractNums[abstractId] = {
+                    abstractId,
+                    levels,
+                    numStyleLink: this._xmlAttr(this._xmlFirst(abstractNum, 'numStyleLink'), 'val') || '',
+                    styleLink: this._xmlAttr(this._xmlFirst(abstractNum, 'styleLink'), 'val') || ''
+                };
             });
 
             this._xmlChildren(numberingDoc.documentElement, 'num').forEach(num => {
@@ -430,16 +442,20 @@ const DocumentParser = {
 
         if (stylesDoc) {
             this._xmlDescendants(stylesDoc, 'style').forEach(style => {
-                if (this._xmlAttr(style, 'type') !== 'paragraph') return;
+                const styleType = this._xmlAttr(style, 'type');
+                if (styleType !== 'paragraph' && styleType !== 'numbering') return;
                 const styleId = this._xmlAttr(style, 'styleId');
                 const pPr = this._xmlFirst(style, 'pPr');
                 const numPr = pPr ? this._xmlFirst(pPr, 'numPr') : null;
                 if (!styleId) return;
 
                 numbering.styleRules[styleId] = {
+                    type: styleType,
                     numId: numPr ? this._xmlAttr(this._xmlFirst(numPr, 'numId'), 'val') : '',
                     ilvl: numPr ? this._xmlAttr(this._xmlFirst(numPr, 'ilvl'), 'val') : '',
-                    basedOn: this._xmlAttr(this._xmlFirst(style, 'basedOn'), 'val') || ''
+                    basedOn: this._xmlAttr(this._xmlFirst(style, 'basedOn'), 'val') || '',
+                    outlineLevel: this._xmlAttr(this._xmlFirst(pPr, 'outlineLvl'), 'val') || '',
+                    name: this._xmlAttr(this._xmlFirst(style, 'name'), 'val') || ''
                 };
             });
         }
@@ -475,6 +491,65 @@ const DocumentParser = {
         return { numId, ilvl: ilvl === '' || ilvl == null ? '0' : String(ilvl) };
     },
 
+    _getDocxParagraphOutlineLevel(paragraph, numbering) {
+        const pPr = this._xmlFirst(paragraph, 'pPr');
+        const directOutline = this._xmlAttr(this._xmlFirst(pPr, 'outlineLvl'), 'val');
+        if (directOutline !== '') {
+            return Number(directOutline);
+        }
+
+        const styleId = this._xmlAttr(this._xmlFirst(pPr, 'pStyle'), 'val');
+        return this._getDocxStyleOutlineLevel(numbering, styleId);
+    },
+
+    _getDocxStyleOutlineLevel(numbering, styleId, seen = {}) {
+        if (!styleId || seen[styleId]) return -1;
+        seen[styleId] = true;
+
+        const rule = numbering.styleRules[styleId];
+        if (rule && rule.outlineLevel !== '') {
+            return Number(rule.outlineLevel);
+        }
+
+        const inferred = this._inferOutlineLevelFromStyleName(styleId, rule?.name || '');
+        if (inferred >= 0) {
+            return inferred;
+        }
+
+        return rule ? this._getDocxStyleOutlineLevel(numbering, rule.basedOn, seen) : -1;
+    },
+
+    _inferOutlineLevelFromStyleName(styleId, styleName) {
+        const value = `${styleId || ''} ${styleName || ''}`.toLowerCase();
+        for (let i = 1; i <= 9; i++) {
+            if (
+                value.includes(`heading${i}`) ||
+                value.includes(`heading ${i}`) ||
+                value.includes(`标题${i}`) ||
+                value.includes(`標題${i}`)
+            ) {
+                return i - 1;
+            }
+        }
+        return -1;
+    },
+
+    _formatDocxOutlineNumberPrefix(outlineLevel, counters) {
+        if (outlineLevel < 0 || outlineLevel > 8 || Number.isNaN(outlineLevel)) {
+            return '';
+        }
+
+        for (let i = 0; i < outlineLevel; i++) {
+            if (counters[i] == null || counters[i] === 0) {
+                counters[i] = 1;
+            }
+        }
+        counters[outlineLevel] = (counters[outlineLevel] || 0) + 1;
+        counters.length = outlineLevel + 1;
+
+        return counters.slice(0, outlineLevel + 1).join('.') + '. ';
+    },
+
     _resolveDocxStyleNumbering(numbering, styleId, seen = {}) {
         if (!styleId || seen[styleId]) return null;
         seen[styleId] = true;
@@ -493,7 +568,7 @@ const DocumentParser = {
 
     _inferDocxNumberLevel(numbering, numId, styleId) {
         const num = numbering.nums[numId];
-        const abstractNum = num ? numbering.abstractNums[num.abstractId] : null;
+        const abstractNum = this._resolveDocxAbstractNum(numbering, num ? num.abstractId : null);
         if (!abstractNum) return '0';
 
         const matched = Object.keys(abstractNum.levels).find(ilvl => {
@@ -506,7 +581,7 @@ const DocumentParser = {
         if (!numPr) return '';
 
         const num = numbering.nums[numPr.numId];
-        const abstractNum = num ? numbering.abstractNums[num.abstractId] : null;
+        const abstractNum = this._resolveDocxAbstractNum(numbering, num ? num.abstractId : null);
         if (!abstractNum) return '';
 
         const ilvl = parseInt(numPr.ilvl || '0', 10);
@@ -552,6 +627,24 @@ const DocumentParser = {
         }
 
         return String(value);
+    },
+
+    _resolveDocxAbstractNum(numbering, abstractId, seen = {}) {
+        if (!abstractId || seen[abstractId]) return null;
+        seen[abstractId] = true;
+
+        const abstractNum = numbering.abstractNums[abstractId];
+        if (!abstractNum) return null;
+        if (Object.keys(abstractNum.levels || {}).length > 0) {
+            return abstractNum;
+        }
+
+        const linkedStyleId = abstractNum.numStyleLink || abstractNum.styleLink;
+        const linkedStyle = linkedStyleId ? numbering.styleRules[linkedStyleId] : null;
+        const linkedNum = linkedStyle && linkedStyle.numId ? numbering.nums[linkedStyle.numId] : null;
+        return linkedNum
+            ? this._resolveDocxAbstractNum(numbering, linkedNum.abstractId, seen)
+            : abstractNum;
     },
 
     _toRoman(value) {

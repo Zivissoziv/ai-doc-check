@@ -14,3 +14,5 @@ backend/logs/
 .vscode/
 logs/
 *.log
+scripts/*.docx
+scripts/~$*.docx

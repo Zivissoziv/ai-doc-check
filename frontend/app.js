@@ -148,9 +148,26 @@ class SmartDocApp {
             }
         } catch (err) {
             console.error('加载工单失败:', err);
+            if (ts && await this._tryDisplayHistoricalTicketAudit(ticketId, ts)) {
+                UiHelpers.setStatus(`工单 ${ticketId} 历史审核结果已加载`);
+                return;
+            }
             UiHelpers.setStatus(`工单加载失败: ${err.message}`);
             alert(`加载工单失败: ${err.message}`);
         }
+    }
+
+    async _tryDisplayHistoricalTicketAudit(ticketId, ts) {
+        try {
+            const record = await FeedbackAPI.getAuditRecordByTicketIdAndTs(ticketId, ts);
+            if (record.exists && record.results && record.results.length > 0) {
+                this._displayHistoricalResults(record);
+                return true;
+            }
+        } catch (err) {
+            console.error('查询历史审核记录失败:', err);
+        }
+        return false;
     }
 
     _displayHistoricalResults(record) {
@@ -982,7 +999,7 @@ class SmartDocApp {
 
             const auditRequest = {
                 ruleGroupId: this.currentRuleGroup,
-                documentBase64: btoa(unescape(encodeURIComponent(this.document.text))),
+                documentText: this.document.text,
                 documentType: 'txt',
                 data: this.ticketData,
                 ticketId: this.ticketId,
@@ -1672,9 +1689,9 @@ class SmartDocApp {
 
                     let reasonHtml = '';
                     if (inaccurateList.length > 0) {
-                        reasonHtml = inaccurateList.map(f =>
-                            `<div class="text-xs text-red-600 leading-tight">${f.reason || '未提供原因'}</div>`
-                        ).join('');
+                        reasonHtml = `<div class="min-w-[260px] max-w-[360px] space-y-1">
+                            ${inaccurateList.map((f, idx) => this._renderFeedbackReasonItem(f, idx)).join('')}
+                        </div>`;
                     } else {
                         reasonHtml = '<span class="text-xs text-gray-400">-</span>';
                     }
@@ -1736,6 +1753,81 @@ class SmartDocApp {
         UiHelpers.toggleModal('statsAnalysisModal', false);
     }
 
+    _renderFeedbackReasonItem(item, index = 0) {
+        const reason = this._normalizeInlineStatsText(item.reason || '未提供原因');
+        const link = this._renderTicketAuditLink(item.ticketId, item.ts, '查看结论', true);
+        return `<div class="flex items-center gap-2 text-xs leading-5 text-red-700">
+            <span class="shrink-0 text-red-400">${index + 1}.</span>
+            <span class="min-w-0 flex-1 truncate" title="${this._escapeStatsText(reason)}">${this._escapeStatsText(reason)}</span>
+            ${link ? `<span class="shrink-0">${link}</span>` : ''}
+        </div>`;
+    }
+
+    _renderTicketAuditLink(ticketId, ts, label = '查看审核结论', asButton = false) {
+        if (!ticketId || !ts) return '';
+        const href = `/?ticketId=${encodeURIComponent(ticketId)}&ts=${encodeURIComponent(ts)}`;
+        const className = asButton
+            ? 'inline-flex items-center gap-1 rounded border border-blue-200 bg-white px-1.5 py-0.5 text-[11px] font-medium leading-4 text-blue-600 hover:border-blue-300 hover:bg-blue-50'
+            : 'inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline';
+        return `<a href="${href}" target="_blank" rel="noopener noreferrer" class="${className}">
+            <i class="fas fa-arrow-up-right-from-square"></i>${this._escapeStatsText(label)}
+        </a>`;
+    }
+
+    _renderIssueDetail(issue, index) {
+        return `<div class="mb-3 rounded-lg border border-red-100 bg-red-50/40 p-3">
+            <div class="flex gap-2">
+                <div class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-red-100 text-[11px] font-semibold text-red-700">${index + 1}</div>
+                <div class="min-w-0 flex-1 space-y-2">
+                    ${this._renderIssueField('位置', issue.location, 'text-gray-600')}
+                    ${this._renderIssueField('问题', issue.problem, 'text-red-700')}
+                    ${this._renderIssueField('建议', issue.suggestion, 'text-green-700')}
+                </div>
+            </div>
+        </div>`;
+    }
+
+    _renderIssueField(label, value, colorClass) {
+        const parts = this._splitIssueText(value);
+        if (parts.length === 0) return '';
+        const body = parts.length === 1
+            ? this._escapeStatsText(parts[0])
+            : `<div class="mt-1 space-y-1">${parts.map((part, i) => `
+                <div class="flex gap-1.5">
+                    <span class="shrink-0 text-gray-400">${i + 1}.</span>
+                    <span>${this._escapeStatsText(part)}</span>
+                </div>
+            `).join('')}</div>`;
+        return `<div class="text-xs ${colorClass}">
+            <span class="font-medium">${label}：</span>${body}
+        </div>`;
+    }
+
+    _splitIssueText(value) {
+        const text = (value || '').toString().trim();
+        if (!text) return [];
+        return text
+            .replace(/\r\n/g, '\n')
+            .replace(/[；;]\s*/g, '\n')
+            .replace(/\s+(?=(?:\d+[.、]|[一二三四五六七八九十]+[、.．]|[（(][一二三四五六七八九十\d]+[）)]))/g, '\n')
+            .split('\n')
+            .map(part => part.trim())
+            .filter(Boolean);
+    }
+
+    _normalizeInlineStatsText(value) {
+        return (value || '').toString().replace(/\s+/g, ' ').trim();
+    }
+
+    _escapeStatsText(value) {
+        return (value || '').toString()
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     async showRuleFailures(ruleId, ruleName, btn) {
         const { startDate, endDate } = this._getDateRange();
         const params = [];
@@ -1764,14 +1856,10 @@ class SmartDocApp {
                 const ticketId = item.ticketId || '-';
                 const ts = item.ts || '-';
                 const auditBatchNo = item.auditBatchNo || '-';
+                const ticketLink = this._renderTicketAuditLink(item.ticketId, item.ts);
+                const feedbackReason = item.reason || '';
                 const issuesList = issues.length > 0
-                    ? issues.map(iss => `
-                        <div class="ml-3 mb-2 border-l-2 border-red-200 pl-3">
-                            ${iss.location ? `<div class="text-xs text-gray-500"><span class="font-medium">位置：</span>${iss.location}</div>` : ''}
-                            ${iss.problem ? `<div class="text-xs text-red-700"><span class="font-medium">问题：</span>${iss.problem}</div>` : ''}
-                            ${iss.suggestion ? `<div class="text-xs text-green-700"><span class="font-medium">建议：</span>${iss.suggestion}</div>` : ''}
-                        </div>
-                    `).join('')
+                    ? issues.map((iss, issueIdx) => this._renderIssueDetail(iss, issueIdx)).join('')
                     : '<div class="text-xs text-gray-400 ml-3">暂无明细</div>';
 
                 return `<div class="border border-gray-200 rounded-lg p-3 ${i > 0 ? 'mt-2' : ''}">
@@ -1779,12 +1867,16 @@ class SmartDocApp {
                         <span class="text-xs text-gray-400">${time}</span>
                         <span class="text-xs text-gray-500">置信度：${confidence}</span>
                     </div>
-                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-1 mb-2 text-xs text-gray-500 bg-gray-50 rounded p-2">
-                        <div><span class="font-medium text-gray-600">ticketId:</span> ${ticketId}</div>
-                        <div><span class="font-medium text-gray-600">ts:</span> ${ts}</div>
-                        <div><span class="font-medium text-gray-600">batch:</span> ${auditBatchNo}</div>
+                    <div class="mb-2 text-xs text-gray-500 bg-gray-50 rounded p-2">
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-1">
+                            <div><span class="font-medium text-gray-600">ticketId:</span> ${this._escapeStatsText(ticketId)}</div>
+                            <div><span class="font-medium text-gray-600">ts:</span> ${this._escapeStatsText(ts)}</div>
+                            <div><span class="font-medium text-gray-600">batch:</span> ${this._escapeStatsText(auditBatchNo)}</div>
+                        </div>
+                        ${ticketLink ? `<div class="mt-2">${ticketLink}</div>` : ''}
                     </div>
-                    ${summary ? `<div class="text-xs text-gray-700 mb-2">${summary}</div>` : ''}
+                    ${feedbackReason ? `<div class="mb-2 rounded border border-orange-100 bg-orange-50 px-3 py-2 text-xs text-orange-800"><span class="font-medium">反馈意见：</span>${this._escapeStatsText(feedbackReason)}</div>` : ''}
+                    ${summary ? `<div class="text-xs text-gray-700 mb-2">${this._escapeStatsText(summary)}</div>` : ''}
                     ${issuesList}
                 </div>`;
             }).join('');
@@ -1795,10 +1887,10 @@ class SmartDocApp {
             overlay.innerHTML = `
                 <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
                     <div class="p-4 border-b border-gray-100 flex justify-between items-center">
-                        <h3 class="text-sm font-bold text-gray-900"><i class="fas fa-exclamation-triangle text-red-500 mr-2"></i>${ruleName} - 不通过详情</h3>
+                        <h3 class="text-sm font-bold text-gray-900"><i class="fas fa-exclamation-triangle text-red-500 mr-2"></i>${this._escapeStatsText(ruleName)} - 不通过详情</h3>
                         <button onclick="document.getElementById('failureDetailModal').remove()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
                     </div>
-                    ${rulePrompt ? `<div class="px-4 pt-4 pb-0"><div class="bg-gray-50 rounded-lg p-3 text-xs text-gray-600 leading-relaxed border border-gray-200"><span class="font-medium text-gray-700">规则描述：</span>${rulePrompt}</div></div>` : ''}
+                    ${rulePrompt ? `<div class="px-4 pt-4 pb-0"><div class="bg-gray-50 rounded-lg p-3 text-xs text-gray-600 leading-relaxed border border-gray-200"><span class="font-medium text-gray-700">规则描述：</span>${this._escapeStatsText(rulePrompt)}</div></div>` : ''}
                     <div class="p-4 overflow-y-auto flex-1 space-y-2">${issuesHtml}</div>
                     <div class="p-3 border-t border-gray-100 flex justify-end">
                         <button onclick="document.getElementById('failureDetailModal').remove()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-xs">关闭</button>

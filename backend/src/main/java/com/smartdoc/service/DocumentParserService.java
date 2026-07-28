@@ -166,11 +166,16 @@ public class DocumentParserService {
 
         StringBuilder result = new StringBuilder();
         Map<String, List<Integer>> counters = new HashMap<>();
+        List<Integer> outlineCounters = new ArrayList<>();
         for (int i = 0; i < paragraphs.getLength(); i++) {
             org.w3c.dom.Node p = paragraphs.item(i);
             String paraText = readParagraphText(p);
             NumberingRef numberingRef = getParagraphNumbering(p, xpath, numbering);
-            String content = joinNumberPrefix(formatNumberPrefix(numbering, numberingRef, counters), paraText);
+            String prefix = formatNumberPrefix(numbering, numberingRef, counters);
+            if (prefix.isEmpty()) {
+                prefix = formatOutlineNumberPrefix(getParagraphOutlineLevel(p, xpath, numbering), outlineCounters);
+            }
+            String content = joinNumberPrefix(prefix, paraText);
 
             String trimmed = content.trim();
             if (!trimmed.isEmpty()) {
@@ -224,6 +229,8 @@ public class DocumentParserService {
                 }
 
                 AbstractNumbering abstractNumbering = new AbstractNumbering();
+                abstractNumbering.numStyleLink = attr((org.w3c.dom.Node) xpath.evaluate("./w:numStyleLink", abstractNum, XPathConstants.NODE), "val");
+                abstractNumbering.styleLink = attr((org.w3c.dom.Node) xpath.evaluate("./w:styleLink", abstractNum, XPathConstants.NODE), "val");
                 org.w3c.dom.NodeList levels = (org.w3c.dom.NodeList)
                         xpath.evaluate("./w:lvl", abstractNum, XPathConstants.NODESET);
                 for (int j = 0; j < levels.getLength(); j++) {
@@ -271,7 +278,7 @@ public class DocumentParserService {
         if (stylesXmlBytes != null) {
             org.w3c.dom.Document stylesDoc = parseXml(stylesXmlBytes);
             org.w3c.dom.NodeList styles = (org.w3c.dom.NodeList)
-                    xpath.evaluate("//w:style[@w:type='paragraph']", stylesDoc, XPathConstants.NODESET);
+                    xpath.evaluate("//w:style[@w:type='paragraph' or @w:type='numbering']", stylesDoc, XPathConstants.NODESET);
             for (int i = 0; i < styles.getLength(); i++) {
                 org.w3c.dom.Node style = styles.item(i);
                 String styleId = attr(style, "styleId");
@@ -282,6 +289,8 @@ public class DocumentParserService {
                 styleNumbering.numId = attr((org.w3c.dom.Node) xpath.evaluate("./w:pPr/w:numPr/w:numId", style, XPathConstants.NODE), "val");
                 styleNumbering.ilvl = attr((org.w3c.dom.Node) xpath.evaluate("./w:pPr/w:numPr/w:ilvl", style, XPathConstants.NODE), "val");
                 styleNumbering.basedOn = attr((org.w3c.dom.Node) xpath.evaluate("./w:basedOn", style, XPathConstants.NODE), "val");
+                styleNumbering.outlineLevel = attr((org.w3c.dom.Node) xpath.evaluate("./w:pPr/w:outlineLvl", style, XPathConstants.NODE), "val");
+                styleNumbering.name = attr((org.w3c.dom.Node) xpath.evaluate("./w:name", style, XPathConstants.NODE), "val");
                 data.styleRules.put(styleId, styleNumbering);
             }
         }
@@ -315,6 +324,80 @@ public class DocumentParserService {
         return numId.isEmpty() ? null : new NumberingRef(numId, ilvl.isEmpty() ? "0" : ilvl);
     }
 
+    private int getParagraphOutlineLevel(org.w3c.dom.Node paragraph, XPath xpath, NumberingData numbering) throws Exception {
+        String outline = attr((org.w3c.dom.Node) xpath.evaluate("./w:pPr/w:outlineLvl", paragraph, XPathConstants.NODE), "val");
+        if (!outline.isEmpty()) {
+            return parseInt(outline, -1);
+        }
+
+        String styleId = attr((org.w3c.dom.Node) xpath.evaluate("./w:pPr/w:pStyle", paragraph, XPathConstants.NODE), "val");
+        return getStyleOutlineLevel(numbering, styleId, new HashMap<String, Boolean>());
+    }
+
+    private int getStyleOutlineLevel(NumberingData numbering, String styleId, Map<String, Boolean> seen) {
+        if (styleId == null || styleId.isEmpty() || seen.containsKey(styleId)) {
+            return -1;
+        }
+        seen.put(styleId, true);
+
+        StyleNumbering rule = numbering.styleRules.get(styleId);
+        if (rule != null && !rule.outlineLevel.isEmpty()) {
+            return parseInt(rule.outlineLevel, -1);
+        }
+
+        int levelFromName = inferOutlineLevelFromStyleName(styleId, rule == null ? "" : rule.name);
+        if (levelFromName >= 0) {
+            return levelFromName;
+        }
+
+        return rule == null ? -1 : getStyleOutlineLevel(numbering, rule.basedOn, seen);
+    }
+
+    private int inferOutlineLevelFromStyleName(String styleId, String styleName) {
+        String value = ((styleId == null ? "" : styleId) + " " + (styleName == null ? "" : styleName)).toLowerCase();
+        for (int i = 1; i <= 9; i++) {
+            if (value.contains("heading" + i)
+                    || value.contains("heading " + i)
+                    || value.contains("标题" + i)
+                    || value.contains("標題" + i)) {
+                return i - 1;
+            }
+        }
+        return -1;
+    }
+
+    private String formatOutlineNumberPrefix(int outlineLevel, List<Integer> counters) {
+        if (outlineLevel < 0 || outlineLevel > 8) {
+            return "";
+        }
+
+        for (int i = 0; i < outlineLevel; i++) {
+            while (counters.size() <= i) {
+                counters.add(0);
+            }
+            if (counters.get(i) == 0) {
+                counters.set(i, 1);
+            }
+        }
+        while (counters.size() <= outlineLevel) {
+            counters.add(0);
+        }
+        counters.set(outlineLevel, counters.get(outlineLevel) + 1);
+        while (counters.size() > outlineLevel + 1) {
+            counters.remove(counters.size() - 1);
+        }
+
+        StringBuilder prefix = new StringBuilder();
+        for (int i = 0; i <= outlineLevel; i++) {
+            if (i > 0) {
+                prefix.append('.');
+            }
+            prefix.append(counters.get(i));
+        }
+        prefix.append(". ");
+        return prefix.toString();
+    }
+
     private NumberingRef resolveStyleNumbering(NumberingData numbering, String styleId, Map<String, Boolean> seen) {
         if (styleId == null || styleId.isEmpty() || seen.containsKey(styleId)) {
             return null;
@@ -334,7 +417,7 @@ public class DocumentParserService {
 
     private String inferNumberLevel(NumberingData numbering, String numId, String styleId) {
         NumberingInstance instance = numbering.nums.get(numId);
-        AbstractNumbering abstractNumbering = instance == null ? null : numbering.abstractNums.get(instance.abstractId);
+        AbstractNumbering abstractNumbering = instance == null ? null : resolveAbstractNumbering(numbering, instance.abstractId, new HashMap<String, Boolean>());
         if (abstractNumbering == null) {
             return "0";
         }
@@ -351,7 +434,7 @@ public class DocumentParserService {
             return "";
         }
         NumberingInstance instance = numbering.nums.get(ref.numId);
-        AbstractNumbering abstractNumbering = instance == null ? null : numbering.abstractNums.get(instance.abstractId);
+        AbstractNumbering abstractNumbering = instance == null ? null : resolveAbstractNumbering(numbering, instance.abstractId, new HashMap<String, Boolean>());
         if (abstractNumbering == null) {
             return "";
         }
@@ -411,6 +494,32 @@ public class DocumentParserService {
             return "lowerRoman".equals(numFmt) ? roman.toLowerCase() : roman;
         }
         return String.valueOf(value);
+    }
+
+    private AbstractNumbering resolveAbstractNumbering(NumberingData numbering, String abstractId, Map<String, Boolean> seen) {
+        if (abstractId == null || abstractId.isEmpty() || seen.containsKey(abstractId)) {
+            return null;
+        }
+        seen.put(abstractId, true);
+
+        AbstractNumbering abstractNumbering = numbering.abstractNums.get(abstractId);
+        if (abstractNumbering == null) {
+            return null;
+        }
+        if (!abstractNumbering.levels.isEmpty()) {
+            return abstractNumbering;
+        }
+
+        String linkedStyleId = !abstractNumbering.numStyleLink.isEmpty()
+                ? abstractNumbering.numStyleLink
+                : abstractNumbering.styleLink;
+        StyleNumbering linkedStyle = linkedStyleId.isEmpty() ? null : numbering.styleRules.get(linkedStyleId);
+        NumberingInstance linkedInstance = linkedStyle == null || linkedStyle.numId.isEmpty()
+                ? null
+                : numbering.nums.get(linkedStyle.numId);
+        return linkedInstance == null
+                ? abstractNumbering
+                : resolveAbstractNumbering(numbering, linkedInstance.abstractId, seen);
     }
 
     private String toRoman(int value) {
@@ -500,6 +609,8 @@ public class DocumentParserService {
 
     private static class AbstractNumbering {
         private final Map<String, NumberingLevel> levels = new HashMap<>();
+        private String numStyleLink = "";
+        private String styleLink = "";
     }
 
     private static class NumberingInstance {

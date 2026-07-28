@@ -17,6 +17,8 @@ public class AuditRequestDto {
 
     private String documentBase64;
 
+    private String documentText;
+
     @Builder.Default
     private String documentType = "auto";
 

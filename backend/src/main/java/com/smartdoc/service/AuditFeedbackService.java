@@ -5,9 +5,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartdoc.dto.AuditResultDto;
 import com.smartdoc.dto.RuleFeedbackStatsDto;
 import com.smartdoc.entity.AuditFeedback;
+import com.smartdoc.entity.AuditTicketRecord;
 import com.smartdoc.entity.Rule;
 import com.smartdoc.exception.BusinessException;
 import com.smartdoc.mapper.AuditFeedbackMapper;
+import com.smartdoc.mapper.AuditTicketRecordMapper;
 import com.smartdoc.mapper.RuleMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,7 +18,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -26,6 +30,7 @@ import java.util.stream.Collectors;
 public class AuditFeedbackService {
 
     private final AuditFeedbackMapper auditFeedbackMapper;
+    private final AuditTicketRecordMapper auditTicketRecordMapper;
     private final RuleMapper ruleMapper;
     private final ObjectMapper objectMapper;
 
@@ -128,12 +133,19 @@ public class AuditFeedbackService {
         Long inaccurateCount = mapper.countByRuleIdAndFeedbackType(ruleId, "INACCURATE");
 
         List<AuditFeedback> recentFeedbacks = mapper.findRecentFeedbacks(ruleId, 5);
+        Map<String, AuditTicketRecord> ticketRecordByBatchNo = findTicketRecordsByBatchNo(recentFeedbacks);
         List<RuleFeedbackStatsDto.FeedbackItem> feedbackItems = recentFeedbacks.stream()
-                .map(f -> RuleFeedbackStatsDto.FeedbackItem.builder()
-                        .feedbackType(f.getFeedbackType())
-                        .reason(f.getReason())
-                        .createdAt(f.getCreatedAt())
-                        .build())
+                .map(f -> {
+                    AuditTicketRecord ticketRecord = ticketRecordByBatchNo.get(f.getAuditBatchNo());
+                    return RuleFeedbackStatsDto.FeedbackItem.builder()
+                            .feedbackType(f.getFeedbackType())
+                            .reason(f.getReason())
+                            .auditBatchNo(f.getAuditBatchNo())
+                            .ticketId(ticketRecord != null ? ticketRecord.getTicketId() : null)
+                            .ts(ticketRecord != null ? ticketRecord.getTs() : null)
+                            .createdAt(f.getCreatedAt())
+                            .build();
+                })
                 .collect(Collectors.toList());
 
         String ruleName = null;
@@ -157,5 +169,25 @@ public class AuditFeedbackService {
 
     public List<AuditFeedback> getRuleFailures(Long ruleId, String startDate, String endDate, int limit) {
         return auditFeedbackMapper.findFailuresByRuleId(ruleId, startDate, endDate, limit);
+    }
+
+    private Map<String, AuditTicketRecord> findTicketRecordsByBatchNo(List<AuditFeedback> feedbacks) {
+        List<String> batchNos = feedbacks.stream()
+                .map(AuditFeedback::getAuditBatchNo)
+                .filter(batchNo -> batchNo != null && !batchNo.isEmpty())
+                .distinct()
+                .collect(Collectors.toList());
+
+        Map<String, AuditTicketRecord> result = new HashMap<>();
+        if (batchNos.isEmpty()) {
+            return result;
+        }
+
+        for (AuditTicketRecord record : auditTicketRecordMapper.findByBatchNos(batchNos)) {
+            if (record.getAuditBatchNo() != null && !result.containsKey(record.getAuditBatchNo())) {
+                result.put(record.getAuditBatchNo(), record);
+            }
+        }
+        return result;
     }
 }
