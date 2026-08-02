@@ -1,11 +1,24 @@
 const UiHelpers = {
     switchTab(tab) {
-        ['preview', 'compare', 'audit'].forEach(t => {
-            document.getElementById(`view-${t}`).classList.add('hidden');
-            document.getElementById(`tab-${t}`).className = 'px-4 py-2 text-sm font-medium rounded-lg text-gray-600 hover:bg-gray-50';
+        const tabButtonMap = { preview: 'preview', compare: 'compare', ticket: 'preview', audit: 'audit' };
+        ['preview', 'compare', 'ticket', 'audit'].forEach(t => {
+            const view = document.getElementById(`view-${t}`);
+            if (view) view.classList.add('hidden');
         });
-        document.getElementById(`view-${tab}`).classList.remove('hidden');
-        document.getElementById(`tab-${tab}`).className = 'px-4 py-2 text-sm font-medium rounded-lg bg-gray-100 text-gray-900';
+        ['preview', 'compare', 'audit'].forEach(t => {
+            const tabEl = document.getElementById(`tab-${t}`);
+            if (tabEl) {
+                const preserveHidden = tabEl.classList.contains('hidden');
+                tabEl.className = 'px-4 py-2 text-sm font-medium rounded-lg text-gray-600 hover:bg-gray-50' + (preserveHidden ? ' hidden' : '');
+            }
+        });
+        const activeView = document.getElementById(`view-${tab}`);
+        if (activeView) activeView.classList.remove('hidden');
+        const activeTab = document.getElementById(`tab-${tabButtonMap[tab] || tab}`);
+        if (activeTab) {
+            const preserveHidden = activeTab.classList.contains('hidden');
+            activeTab.className = 'px-4 py-2 text-sm font-medium rounded-lg bg-gray-100 text-gray-900' + (preserveHidden ? ' hidden' : '');
+        }
     },
 
     setStatus(text, loading = false) {

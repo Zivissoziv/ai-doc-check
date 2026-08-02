@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>文档智能审核工具</title>
+    <title>智能审核工具</title>
     <script src="./libs/tailwind/tailwind.min.js"></script>
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="./libs/fontawesome/css/all.min.css">
@@ -13,6 +13,8 @@
     <script src="./libs/xlsx.full.min.js"></script>
     <script src="./js/api-client.js"></script>
     <script src="./js/ui-helpers.js"></script>
+    <script src="./js/ticket-audit-view.js"></script>
+    <script src="./js/audit-mode.js"></script>
 </head>
 <body class="bg-gray-50 text-gray-800 h-screen overflow-hidden">
 
@@ -22,7 +24,11 @@
         <div class="w-8 h-8 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-lg flex items-center justify-center text-white font-bold">
             <i class="fas fa-file-signature"></i>
         </div>
-        <h1 class="font-bold text-lg text-gray-900">文档智能审核工具</h1>
+        <h1 id="appTitle" class="font-bold text-lg text-gray-900">智能审核工具</h1>
+        <div class="ml-2 flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 p-1">
+            <button id="mode-document" onclick="app.switchAuditMode('document')" class="px-3 py-1.5 text-xs font-medium rounded-md bg-gray-900 text-white shadow-sm">文档审核</button>
+            <button id="mode-ticket" onclick="app.switchAuditMode('ticket')" class="px-3 py-1.5 text-xs font-medium rounded-md text-gray-600 hover:bg-gray-100">工单审核</button>
+        </div>
     </div>
     
     <div class="flex items-center gap-4">
@@ -49,12 +55,12 @@
     <aside class="w-80 bg-white border-r border-gray-200 flex flex-col">
         <div class="p-4 border-b border-gray-100">
             <div class="flex items-center justify-between mb-3">
-                <h2 class="font-semibold text-gray-900">文档结构</h2>
+                <h2 id="leftPanelTitle" class="font-semibold text-gray-900">文档结构</h2>
                 <span id="structureScore" class="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-600 hidden">匹配度: --</span>
             </div>
             
             <!-- 上传区 -->
-            <div class="space-y-2">
+            <div id="uploadArea" class="space-y-2">
                 <button id="templateBtn" onclick="app.showTemplateModal()" class="w-full flex items-center gap-2 p-3 bg-gray-50 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors">
                     <i class="fas fa-file-import text-gray-400" id="templateBtnIcon"></i>
                     <div class="text-sm text-left">
@@ -96,13 +102,13 @@
         <!-- 标签页 -->
         <div class="flex items-center gap-1 p-2 bg-white border-b border-gray-200">
             <button onclick="app.switchTab('preview')" id="tab-preview" class="px-4 py-2 text-sm font-medium rounded-lg bg-gray-100 text-gray-900">
-                <i class="fas fa-eye mr-1"></i> 文档预览
+                <i class="fas fa-eye mr-1"></i> <span id="tabPreviewText">文档预览</span>
             </button>
             <button onclick="app.switchTab('compare')" id="tab-compare" class="px-4 py-2 text-sm font-medium rounded-lg text-gray-600 hover:bg-gray-50">
-                <i class="fas fa-code-compare mr-1"></i> 结构对比
+                <i class="fas fa-code-compare mr-1"></i> <span id="tabCompareText">结构对比</span>
             </button>
             <button onclick="app.switchTab('audit')" id="tab-audit" class="px-4 py-2 text-sm font-medium rounded-lg text-gray-600 hover:bg-gray-50 relative">
-                <i class="fas fa-robot mr-1"></i> AI审核结果
+                <i class="fas fa-robot mr-1"></i> <span id="tabAuditText">AI审核结果</span>
                 <span id="auditBadge" class="hidden absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full"></span>
             </button>
         </div>
@@ -156,6 +162,18 @@
                             <div id="totalSimilarityScore" class="text-sm font-medium"></div>
                         </div>
                         <div id="contentDiffList" class="space-y-4"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 工单信息视图 -->
+            <div id="view-ticket" class="hidden h-full overflow-y-auto p-8">
+                <div id="ticketContent">
+                    <div class="max-w-3xl mx-auto bg-white shadow-lg rounded-xl p-12 min-h-[800px]">
+                        <div class="text-center text-gray-400 mt-32">
+                            <i class="fas fa-clipboard-list text-6xl mb-4 opacity-20"></i>
+                            <p>加载工单数据后开始审核</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -227,7 +245,7 @@
                 </div>
             
             <!-- Excel/工单数据 -->
-            <div class="mb-3">
+            <div id="dataSourceArea" class="mb-3">
                 <input type="file" id="excelInput" accept=".xlsx,.xls,.csv" class="hidden" onchange="app.handleExcelUpload(this)">
                 <div class="flex items-center gap-2">
                     <label for="excelInput" class="flex-1 flex items-center gap-2 p-2 border border-dashed border-gray-300 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition-all cursor-pointer">
@@ -261,7 +279,7 @@
         <!-- 运行按钮 -->
         <div class="p-4 border-t border-gray-200 bg-gray-50">
             <button onclick="app.runAudit()" id="runAuditBtn" class="w-full py-3 bg-gray-900 hover:bg-gray-800 text-white rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
-                <i class="fas fa-play"></i> 运行AI审核
+                <i class="fas fa-play"></i> <span id="runAuditBtnText">AI审核</span>
             </button>
         </div>
     </aside></div>

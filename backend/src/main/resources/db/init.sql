@@ -35,10 +35,12 @@ CREATE TABLE IF NOT EXISTS rule (
     is_enabled BOOLEAN DEFAULT TRUE COMMENT '是否启用',
     sort_order INT DEFAULT 0 COMMENT '排序序号',
     trigger_condition VARCHAR(500) DEFAULT NULL COMMENT '触发条件表达式，如 {{data.状态}} == "已关闭"',
+    audit_scope VARCHAR(20) DEFAULT 'DOCUMENT' COMMENT '规则作用域: DOCUMENT/TICKET',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     FOREIGN KEY (rule_group_id) REFERENCES rule_group(id) ON DELETE CASCADE,
-    INDEX idx_rule_group_id (rule_group_id)
+    INDEX idx_rule_group_id (rule_group_id),
+    INDEX idx_rule_group_scope (rule_group_id, audit_scope)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='规则表';
 
 -- API配置表

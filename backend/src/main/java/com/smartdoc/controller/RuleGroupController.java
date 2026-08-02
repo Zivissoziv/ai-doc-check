@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import javax.validation.Valid;
@@ -43,8 +44,10 @@ public class RuleGroupController {
     }
 
     @GetMapping("/{groupId}")
-    public ResponseEntity<List<RuleDto>> getRuleGroup(@PathVariable String groupId) {
-        List<RuleDto> rules = ruleGroupService.getRulesByGroupId(groupId);
+    public ResponseEntity<List<RuleDto>> getRuleGroup(
+            @PathVariable String groupId,
+            @RequestParam(required = false, defaultValue = "document") String auditMode) {
+        List<RuleDto> rules = ruleGroupService.getRulesByGroupId(groupId, auditMode);
         return ResponseEntity.ok(rules);
     }
 
@@ -63,9 +66,10 @@ public class RuleGroupController {
     @PutMapping("/{groupId}")
     public ResponseEntity<RuleGroupDto> updateRuleGroup(
             @PathVariable String groupId,
+            @RequestParam(required = false, defaultValue = "document") String auditMode,
             @Valid @RequestBody RuleGroupDto dto) {
 
-        RuleGroupDto updated = ruleGroupService.updateRuleGroup(groupId, dto);
+        RuleGroupDto updated = ruleGroupService.updateRuleGroup(groupId, dto, auditMode);
 
         return ResponseEntity.ok(updated);
     }

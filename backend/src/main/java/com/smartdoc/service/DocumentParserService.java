@@ -640,6 +640,8 @@ public class DocumentParserService {
         private String numId = "";
         private String ilvl = "";
         private String basedOn = "";
+        private String outlineLevel = "";
+        private String name = "";
     }
 
     private byte[] readStream(InputStream in) throws Exception {

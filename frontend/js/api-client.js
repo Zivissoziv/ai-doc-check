@@ -67,15 +67,15 @@ const RulesManager = {
         return response.json();
     },
 
-    async loadFromServer(groupId) {
-        const response = await fetch(`/api/config/rules/${groupId}`);
+    async loadFromServer(groupId, auditMode = 'document') {
+        const response = await fetch(`/api/config/rules/${groupId}?auditMode=${encodeURIComponent(auditMode)}`);
         if (!response.ok) {
             throw new Error('获取规则失败');
         }
         return response.json();
     },
 
-    async saveToServer(groupId, rules, groupName) {
+    async saveToServer(groupId, rules, groupName, auditMode = 'document') {
         const payload = {
             groupId: groupId,
             name: groupName,
@@ -86,11 +86,12 @@ const RulesManager = {
                 severity: r.severity || 'warning',
                 enabled: r.enabled !== false,
                 sortOrder: r.sortOrder ?? idx,
-                triggerCondition: r.triggerCondition || null
+                triggerCondition: r.triggerCondition || null,
+                auditScope: auditMode
             }))
         };
 
-        const response = await fetch(`/api/config/rules/${groupId}`, {
+        const response = await fetch(`/api/config/rules/${groupId}?auditMode=${encodeURIComponent(auditMode)}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -263,7 +264,7 @@ const DocumentParser = {
             html = result.html;
         } else if (ext === 'txt') {
             text = new TextDecoder().decode(arrayBuffer);
-            tree = this.buildTreeFromText(text);
+            tree = [];
             html = `<pre class="whitespace-pre-wrap">${this.escapeHtml(text)}</pre>`;
         }
 
@@ -293,9 +294,8 @@ const DocumentParser = {
 
         const result = await response.json();
         const text = result.text || '';
-        const tree = text ? this.buildTreeFromText(text) : [];
 
-        return { text, tree, html: `<div>${this.escapeHtml(text).replace(/\n/g, '<br>')}</div>` };
+        return { text, tree: [], html: `<div>${this.escapeHtml(text).replace(/\n/g, '<br>')}</div>` };
     },
 
     async parseDocx(arrayBuffer) {
@@ -338,7 +338,7 @@ const DocumentParser = {
                 text += content + '\n';
                 paragraphInfos.push({ rawContent, content, prefix });
 
-                const level = this.detectHeadingLevel(content);
+                const level = this.getDocxHeadingLevel(p, numbering);
                 if (level > 0) {
                     flatNodes.push({
                         id: 'node-' + (nodeId++),
@@ -517,6 +517,14 @@ const DocumentParser = {
         }
 
         return rule ? this._getDocxStyleOutlineLevel(numbering, rule.basedOn, seen) : -1;
+    },
+
+    getDocxHeadingLevel(paragraph, numbering) {
+        const outlineLevel = this._getDocxParagraphOutlineLevel(paragraph, numbering);
+        if (outlineLevel < 0 || outlineLevel > 8 || Number.isNaN(outlineLevel)) {
+            return 0;
+        }
+        return outlineLevel + 1;
     },
 
     _inferOutlineLevelFromStyleName(styleId, styleName) {
@@ -733,26 +741,6 @@ const DocumentParser = {
         return node.getAttribute(`w:${name}`) || node.getAttribute(name) || '';
     },
 
-    detectHeadingLevel(content) {
-        if (!content) return 0;
-        const trimmed = content.trim();
-        
-        if (/^第[一二三四五六七八九十百]+章/.test(trimmed)) return 1;
-        if (/^第[一二三四五六七八九十百]+节/.test(trimmed)) return 2;
-        
-        if (/^\d+\.\d+\.\d+/.test(trimmed)) return 3;
-        if (/^\d+\.\d+/.test(trimmed)) return 2;
-        if (/^\d+[\.\、]/.test(trimmed)) return 1;
-        
-        if (/^[一二三四五六七八九十]+[\.\、]/.test(trimmed)) return 1;
-        if (/^[（\(][一二三四五六七八九十]+[）\)]/.test(trimmed)) return 2;
-        if (/^[（\(]\d+[）\)]/.test(trimmed)) return 2;
-        
-        if (/^[①②③④⑤⑥⑦⑧⑨⑩]/.test(trimmed)) return 3;
-        
-        return 0;
-    },
-
     _headingHtml(content, level) {
         const sizes = { 1: 'text-lg', 2: 'text-base', 3: 'text-sm' };
         const cls = `font-bold ${sizes[level] || 'text-sm'}`;
@@ -843,32 +831,6 @@ const DocumentParser = {
         return { data };
     },
 
-    buildTreeFromText(text) {
-        const lines = text.split('\n');
-        const flatNodes = [];
-        let nodeId = 0;
-
-        lines.forEach(line => {
-            const trimmed = line.trim();
-            if (!trimmed) return;
-
-            const level = this.detectHeadingLevel(trimmed);
-            const nodeType = level > 0 ? 'heading' : 'paragraph';
-            flatNodes.push({
-                    id: 'node-' + (nodeId++),
-                    type: nodeType,
-                    level: level,
-                    content: trimmed,
-                    html: nodeType === 'heading'
-                        ? this._headingHtml(trimmed, level)
-                        : `<p>${this.escapeHtml(trimmed)}</p>`,
-                    children: []
-                });
-        });
-
-        return this.buildHeadingTree(flatNodes);
-    },
-
     escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
@@ -914,19 +876,18 @@ const AiAudit = {
         const div = document.createElement('div');
         div.className = 'bg-white rounded-xl border border-gray-200 p-6 fade-in';
 
-        const isSkipped = result.summary && (result.summary.startsWith('已跳过:') || result.summary.startsWith('未匹配关键词:') || result.summary.startsWith('触发条件'));
+        const summary = result.summary || '';
+        const isKeywordMiss = summary.startsWith('未匹配关键词:');
+        const isSkipped = summary && (summary.startsWith('已跳过:') || summary.startsWith('触发条件'));
 
         if (isSkipped) {
             div.className = 'bg-gray-50 rounded-xl border border-gray-300 p-6 fade-in opacity-75';
 
-            const isKeywordMiss = result.summary && result.summary.startsWith('未匹配关键词:');
-            const isTriggerCondition = result.summary && result.summary.startsWith('触发条件');
-            const skipLabel = isKeywordMiss ? '未匹配' : isTriggerCondition ? '条件不满足' : '已跳过';
-            const skipDesc = isKeywordMiss
-                ? 'AI 已完成审核，但文档中未找到所需关键字'
-                : isTriggerCondition
-                    ? '此规则因触发条件不满足而被跳过，未进行实际审核'
-                    : '此规则因缺少必要数据而被跳过，未进行实际审核';
+            const isTriggerCondition = summary.startsWith('触发条件');
+            const skipLabel = isTriggerCondition ? '条件不满足' : '已跳过';
+            const skipDesc = isTriggerCondition
+                ? '此规则因触发条件不满足而被跳过，未进行实际审核'
+                : '此规则因缺少必要数据而被跳过，未进行实际审核';
 
             div.innerHTML = `
                 <div class="flex items-center justify-between mb-4">
@@ -947,7 +908,7 @@ const AiAudit = {
                     <i class="fas fa-info-circle mr-1"></i> ${skipDesc}
                 </div>
                 <div class="text-xs text-gray-400 pt-3 border-t border-gray-200">
-                    <i class="fas fa-quote-left mr-1 opacity-50"></i> ${result.summary}
+                    <i class="fas fa-quote-left mr-1 opacity-50"></i> ${summary}
                 </div>`;
 
             container.appendChild(div);
@@ -957,6 +918,13 @@ const AiAudit = {
         const statusColor = result.pass ? 'green' : 'red';
         const statusIcon = result.pass ? 'check' : 'times';
         const severityClass = result.severity === 'error' ? 'red' : result.severity === 'warning' ? 'yellow' : 'blue';
+        const displaySummary = isKeywordMiss ? (summary.replace(/^未匹配关键词:\s*/, '').trim() || summary) : summary;
+        const keywordMissBadge = isKeywordMiss
+            ? '<span class="px-2 py-0.5 rounded-full bg-red-100 text-red-700">未匹配关键词</span>'
+            : '';
+        const noIssuesHtml = result.pass
+            ? '<div class="text-sm text-green-600 mb-4"><i class="fas fa-check-circle mr-1"></i> 未发现问题</div>'
+            : `<div class="text-sm text-red-600 mb-4"><i class="fas fa-times-circle mr-1"></i> ${isKeywordMiss ? '文档中未找到所需关键字' : '未通过，未返回具体问题'}</div>`;
         
         const issuesHtml = result.issues?.length > 0 
             ? `<div class="space-y-3 mb-4">${result.issues.map((issue, idx) => `
@@ -973,7 +941,7 @@ const AiAudit = {
                         </div>
                     </div>
                 </div>`).join('')}</div>`
-            : '<div class="text-sm text-green-600 mb-4"><i class="fas fa-check-circle mr-1"></i> 未发现问题</div>';
+            : noIssuesHtml;
         
         const feedbackLabelId = 'feedback-label-' + resultIndex;
         const feedbackStatus = result._feedbackType
@@ -992,6 +960,7 @@ const AiAudit = {
                         <h3 class="font-semibold text-gray-900">${result.ruleName}</h3>
                         <div class="flex items-center gap-2 text-xs text-gray-500">
                             <span class="px-2 py-0.5 rounded-full bg-${severityClass}-100 text-${severityClass}-700">${result.severity === 'error' ? '错误' : result.severity === 'warning' ? '警告' : '信息'}</span>
+                            ${keywordMissBadge}
                             <span>置信度: ${result.confidence}%</span>
                         </div>
                     </div>
@@ -1000,7 +969,7 @@ const AiAudit = {
             ${issuesHtml}
             <div class="flex items-center justify-between pt-3 border-t border-gray-100">
                 <div class="text-xs text-gray-500">
-                    <i class="fas fa-quote-left mr-1 opacity-50"></i> ${result.summary}
+                    <i class="fas fa-quote-left mr-1 opacity-50"></i> ${displaySummary}
                 </div>
                 <button onclick="app.openFeedbackModal(${resultIndex})" class="text-xs flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-gray-100 transition-colors flex-shrink-0 ml-2" id="${feedbackLabelId}">
                     ${feedbackStatus}

@@ -15,14 +15,23 @@ public interface RuleMapper extends BaseMapper<Rule> {
     @Select("SELECT * FROM rule WHERE rule_group_id = #{ruleGroupId} ORDER BY sort_order")
     List<Rule> findByRuleGroupId(@Param("ruleGroupId") Long ruleGroupId);
 
+    @Select("SELECT * FROM rule WHERE rule_group_id = #{ruleGroupId} AND audit_scope = #{auditScope} ORDER BY sort_order")
+    List<Rule> findByRuleGroupIdAndScope(@Param("ruleGroupId") Long ruleGroupId, @Param("auditScope") String auditScope);
+
     @Select("SELECT r.* FROM rule r JOIN rule_group rg ON r.rule_group_id = rg.id WHERE rg.group_id = #{groupId} ORDER BY r.sort_order")
     List<Rule> findByGroupId(@Param("groupId") String groupId);
+
+    @Select("SELECT r.* FROM rule r JOIN rule_group rg ON r.rule_group_id = rg.id WHERE rg.group_id = #{groupId} AND r.audit_scope = #{auditScope} ORDER BY r.sort_order")
+    List<Rule> findByGroupIdAndScope(@Param("groupId") String groupId, @Param("auditScope") String auditScope);
 
     @Select("SELECT r.* FROM rule r JOIN rule_group rg ON r.rule_group_id = rg.id WHERE rg.group_id = #{groupId} AND r.is_enabled = true ORDER BY r.sort_order")
     List<Rule> findEnabledByGroupId(@Param("groupId") String groupId);
 
     @Delete("DELETE FROM rule WHERE rule_group_id = #{ruleGroupId}")
     void deleteByRuleGroupId(@Param("ruleGroupId") Long ruleGroupId);
+
+    @Delete("DELETE FROM rule WHERE rule_group_id = #{ruleGroupId} AND audit_scope = #{auditScope}")
+    void deleteByRuleGroupIdAndScope(@Param("ruleGroupId") Long ruleGroupId, @Param("auditScope") String auditScope);
 
     @Select("SELECT r.id FROM rule r JOIN rule_group rg ON r.rule_group_id = rg.id WHERE rg.group_id = #{groupId}")
     List<Long> findIdsByGroupId(@Param("groupId") String groupId);

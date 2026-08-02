@@ -49,7 +49,12 @@ public class RuleGroupService {
 
     @Transactional(readOnly = true)
     public List<RuleDto> getRulesByGroupId(String groupId) {
-        List<Rule> rules = ruleMapper.findByGroupId(groupId);
+        return getRulesByGroupId(groupId, "document");
+    }
+
+    @Transactional(readOnly = true)
+    public List<RuleDto> getRulesByGroupId(String groupId, String auditMode) {
+        List<Rule> rules = ruleMapper.findByGroupIdAndScope(groupId, normalizeAuditScope(auditMode).name());
         return rules.stream().map(this::convertRuleToDto).collect(Collectors.toList());
     }
 
@@ -67,7 +72,7 @@ public class RuleGroupService {
         ruleGroupMapper.insert(group);
 
         if (dto.getRules() != null && !dto.getRules().isEmpty()) {
-            saveRules(group.getId(), dto.getRules());
+            saveRules(group.getId(), dto.getRules(), Rule.AuditScope.DOCUMENT);
         }
 
         log.info("创建规则组成功: {}", dto.getGroupId());
@@ -76,6 +81,11 @@ public class RuleGroupService {
 
     @Transactional
     public RuleGroupDto updateRuleGroup(String groupId, RuleGroupDto dto) {
+        return updateRuleGroup(groupId, dto, "document");
+    }
+
+    @Transactional
+    public RuleGroupDto updateRuleGroup(String groupId, RuleGroupDto dto, String auditMode) {
         Optional<RuleGroup> existingGroup = ruleGroupMapper.findByGroupId(groupId);
         if (!existingGroup.isPresent()) {
             throw new BusinessException("规则组 " + groupId + " 不存在");
@@ -93,11 +103,11 @@ public class RuleGroupService {
         ruleGroupMapper.updateById(group);
 
         if (dto.getRules() != null) {
-            saveRules(group.getId(), dto.getRules());
+            saveRules(group.getId(), dto.getRules(), normalizeAuditScope(auditMode));
         }
 
         log.info("更新规则组成功: {}", groupId);
-        return convertToDto(group);
+        return convertToDto(group, auditMode);
     }
 
     public void deleteRuleGroup(String groupId) {
@@ -194,8 +204,8 @@ public class RuleGroupService {
         throw new BusinessException("密码错误");
     }
 
-    private void saveRules(Long ruleGroupId, List<RuleDto> ruleDtos) {
-        List<Rule> existingRules = ruleMapper.findByRuleGroupId(ruleGroupId);
+    private void saveRules(Long ruleGroupId, List<RuleDto> ruleDtos, Rule.AuditScope auditScope) {
+        List<Rule> existingRules = ruleMapper.findByRuleGroupIdAndScope(ruleGroupId, auditScope.name());
         Set<Long> existingIds = existingRules.stream()
                 .map(Rule::getId).collect(Collectors.toSet());
         Set<Long> seenIds = new HashSet<>();
@@ -212,6 +222,7 @@ public class RuleGroupService {
                     rule.setIsEnabled(ruleDto.getEnabled() != null ? ruleDto.getEnabled() : true);
                     rule.setSortOrder(i);
                     rule.setTriggerCondition(ruleDto.getTriggerCondition());
+                    rule.setAuditScope(auditScope);
                     ruleMapper.updateById(rule);
                     seenIds.add(ruleDto.getId());
                     continue;
@@ -226,6 +237,7 @@ public class RuleGroupService {
                     .isEnabled(ruleDto.getEnabled() != null ? ruleDto.getEnabled() : true)
                     .sortOrder(i)
                     .triggerCondition(ruleDto.getTriggerCondition())
+                    .auditScope(auditScope)
                     .build();
             ruleMapper.insert(rule);
         }
@@ -239,7 +251,15 @@ public class RuleGroupService {
 
     private RuleGroupDto convertToDto(RuleGroup group) {
         List<Rule> rules = ruleMapper.findByRuleGroupId(group.getId());
-        
+        return buildGroupDto(group, rules);
+    }
+
+    private RuleGroupDto convertToDto(RuleGroup group, String auditMode) {
+        List<Rule> rules = ruleMapper.findByRuleGroupIdAndScope(group.getId(), normalizeAuditScope(auditMode).name());
+        return buildGroupDto(group, rules);
+    }
+
+    private RuleGroupDto buildGroupDto(RuleGroup group, List<Rule> rules) {
         return RuleGroupDto.builder()
                 .id(group.getId())
                 .groupId(group.getGroupId())
@@ -259,6 +279,11 @@ public class RuleGroupService {
                 .enabled(rule.getIsEnabled())
                 .sortOrder(rule.getSortOrder())
                 .triggerCondition(rule.getTriggerCondition())
+                .auditScope(rule.getAuditScope() != null ? rule.getAuditScope().name().toLowerCase() : "document")
                 .build();
+    }
+
+    private Rule.AuditScope normalizeAuditScope(String auditMode) {
+        return "ticket".equalsIgnoreCase(auditMode) ? Rule.AuditScope.TICKET : Rule.AuditScope.DOCUMENT;
     }
 }

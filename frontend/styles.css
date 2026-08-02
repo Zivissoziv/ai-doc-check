@@ -1323,3 +1323,126 @@ body {
 .line-through {
     text-decoration: line-through;
 }
+
+.ticket-audit-sheet {
+    color: #1f2937;
+}
+
+.ticket-json-block {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.ticket-json-panel {
+    color: #111827;
+}
+
+.ticket-json-scroll {
+    max-height: calc(100vh - 300px);
+    min-height: 520px;
+}
+
+.ticket-json-tree {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    line-height: 1.7;
+    min-width: max-content;
+}
+
+.ticket-json-row,
+.ticket-json-brace {
+    min-height: 26px;
+    padding-left: calc(var(--depth, 0) * 24px);
+    padding-right: 12px;
+    white-space: nowrap;
+}
+
+.ticket-json-row {
+    border-radius: 6px;
+    transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.ticket-json-row:hover {
+    background: #eef2ff;
+}
+
+.ticket-json-toggle {
+    width: 18px;
+    height: 18px;
+    margin-left: -20px;
+    margin-right: 2px;
+    border-radius: 4px;
+    color: #6b7280;
+    vertical-align: middle;
+    transition: transform 0.2s ease, background-color 0.2s ease;
+}
+
+.ticket-json-toggle:hover {
+    background: #e5e7eb;
+    color: #374151;
+}
+
+.ticket-json-node.is-collapsed > .ticket-json-children,
+.ticket-json-node.is-collapsed > .ticket-json-close {
+    display: none;
+}
+
+.ticket-json-node.is-collapsed > .ticket-json-parent .ticket-json-toggle i {
+    transform: rotate(-90deg);
+}
+
+.ticket-json-node.is-collapsed > .ticket-json-parent .ticket-json-ellipsis {
+    display: inline !important;
+}
+
+.ticket-json-key {
+    color: #1d4ed8;
+    cursor: pointer;
+}
+
+.ticket-json-key:hover {
+    text-decoration: underline;
+}
+
+.ticket-json-string {
+    color: #047857;
+}
+
+.ticket-json-number {
+    color: #b45309;
+}
+
+.ticket-json-boolean {
+    color: #7c3aed;
+}
+
+.ticket-json-null,
+.ticket-json-empty {
+    color: #9ca3af;
+    font-style: italic;
+}
+
+.ticket-json-punctuation {
+    color: #374151;
+}
+
+.ticket-json-count {
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: #e5e7eb;
+    color: #6b7280;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 11px;
+}
+
+.ticket-json-ellipsis {
+    color: #9ca3af;
+}
+
+.ticket-field-block {
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+}
+
+.ticket-field-highlight {
+    background: #dbeafe !important;
+    box-shadow: inset 3px 0 0 #3b82f6;
+}

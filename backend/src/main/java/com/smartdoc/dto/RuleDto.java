@@ -33,4 +33,7 @@ public class RuleDto {
     private Integer sortOrder = 0;
 
     private String triggerCondition;
+
+    @Builder.Default
+    private String auditScope = "document";
 }

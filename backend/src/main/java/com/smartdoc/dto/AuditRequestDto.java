@@ -13,6 +13,8 @@ public class AuditRequestDto {
 
     private String ruleGroupId;
 
+    private String auditMode;
+
     private String documentUrl;
 
     private String documentBase64;

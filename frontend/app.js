@@ -34,6 +34,7 @@ class SmartDocApp {
         this._statsRequestToken = 0;
         this.ticketId = null;
         this.ts = null;
+        this.auditMode = localStorage.getItem('smartdoc_audit_mode') || 'document';
 
         this.init();
     }
@@ -41,6 +42,21 @@ class SmartDocApp {
     getUrlParams() {
         const params = new URLSearchParams(window.location.search);
         return Object.fromEntries(params.entries());
+    }
+
+    _ruleGroupStorageKey() {
+        return 'smartdoc_current_group';
+    }
+
+    _getSavedRuleGroup() {
+        return localStorage.getItem(this._ruleGroupStorageKey()) || RulesManager.getCurrentGroup();
+    }
+
+    _setSavedRuleGroup(groupId) {
+        if (groupId) {
+            localStorage.setItem(this._ruleGroupStorageKey(), groupId);
+            RulesManager.setCurrentGroup(groupId);
+        }
     }
     
     async init() {
@@ -53,6 +69,7 @@ class SmartDocApp {
         if (params.ticketId) {
             await this.loadFromTicket(params.ticketId, params.ts);
         }
+        AuditMode.apply(this, this.auditMode);
     }
     
     _base64ToBlob(base64) {
@@ -98,8 +115,16 @@ class SmartDocApp {
                 const docFile = new File([docBlob], fileName, { type: docBlob.type || 'application/octet-stream' });
                 this.document = await DocumentParser.parse(docFile);
                 DocumentRenderer.render(this.document, 'docContent');
-                TreeRenderer.render(this.document?.tree || [], 'structureTree');
-                UiHelpers.updateWordCount(this.document.text?.length || 0);
+                if (this.auditMode === 'ticket') {
+                    this.refreshTicketAuditView();
+                } else {
+                    TreeRenderer.render(this.document?.tree || [], 'structureTree');
+                }
+                if (this.auditMode === 'ticket') {
+                    AuditMode.setText('wordCount', `字段: ${AuditMode.getTicketFieldCount(this.ticketData)}`);
+                } else {
+                    UiHelpers.updateWordCount(this.document.text?.length || 0);
+                }
                 this.updateDocBtn(true, this.document.name);
                 this.compareStructure();
             }
@@ -109,6 +134,7 @@ class SmartDocApp {
                 document.getElementById('excelLabel').textContent = '工单数据已加载';
                 document.getElementById('excelIcon').className = 'fas fa-database text-blue-500 text-sm';
                 this._updateDataPreviewButton();
+                this.refreshTicketAuditView();
             }
 
             let templateBlob = null;
@@ -213,7 +239,7 @@ class SmartDocApp {
             this.ruleGroups = config.groups || [];
             this.defaultRuleGroup = config.defaultGroup;
             
-            const savedGroup = RulesManager.getCurrentGroup();
+            const savedGroup = this._getSavedRuleGroup();
             const groupExists = this.ruleGroups.some(g => g.groupId === savedGroup);
             this.currentRuleGroup = groupExists ? savedGroup : this.defaultRuleGroup;
             
@@ -229,14 +255,22 @@ class SmartDocApp {
     }
     
     async loadCurrentGroupRules(groupName = '') {
-        const rules = await RulesManager.loadFromServer(this.currentRuleGroup);
-        this.rules = rules || [];
+        const rules = await RulesManager.loadFromServer(this.currentRuleGroup, this.auditMode);
+        this.rules = this._filterRulesForCurrentMode(rules || []);
         RulesManager.save(this.rules);
         this.renderRules();
         this.updateGroupLockUI();
         if (groupName) {
             UiHelpers.setStatus(`已加载规则组: ${groupName}`);
         }
+    }
+
+    _filterRulesForCurrentMode(rules) {
+        const expectedScope = this.auditMode === 'ticket' ? 'ticket' : 'document';
+        return (rules || []).filter(rule => {
+            if (!rule.auditScope) return expectedScope === 'document';
+            return String(rule.auditScope).toLowerCase() === expectedScope;
+        });
     }
     
     _loadLocalSettings() {
@@ -340,7 +374,11 @@ class SmartDocApp {
     }
     
     _onTemplateLoaded(fileName) {
-        TreeRenderer.render(this.template?.tree || [], 'structureTree');
+        if (this.auditMode === 'ticket') {
+            this.refreshTicketAuditView();
+        } else {
+            TreeRenderer.render(this.template?.tree || [], 'structureTree');
+        }
         UiHelpers.setStatus(`模板已加载: ${fileName}`);
         this.updateTemplateBtn(true, fileName);
         this.compareStructure();
@@ -354,8 +392,16 @@ class SmartDocApp {
         try {
             this.document = await DocumentParser.parse(file);
             DocumentRenderer.render(this.document, 'docContent');
-            TreeRenderer.render(this.document?.tree || [], 'structureTree');
-            UiHelpers.updateWordCount(this.document.text?.length || 0);
+            if (this.auditMode === 'ticket') {
+                this.refreshTicketAuditView();
+            } else {
+                TreeRenderer.render(this.document?.tree || [], 'structureTree');
+            }
+            if (this.auditMode === 'ticket') {
+                AuditMode.setText('wordCount', `字段: ${AuditMode.getTicketFieldCount(this.ticketData)}`);
+            } else {
+                UiHelpers.updateWordCount(this.document.text?.length || 0);
+            }
             UiHelpers.setStatus(`文档已加载: ${file.name}`);
             this.updateDocBtn(true, file.name);
             this.compareStructure();
@@ -377,6 +423,7 @@ class SmartDocApp {
             document.getElementById('excelLabel').textContent = file.name;
             document.getElementById('excelIcon').className = 'fas fa-table text-green-500 text-sm';
             this._updateDataPreviewButton();
+            this.refreshTicketAuditView();
             UiHelpers.setStatus(`Excel已加载: ${file.name}，数据已合并到 {{data}}`);
         } catch (err) {
             alert('Excel解析失败: ' + err.message);
@@ -465,7 +512,7 @@ class SmartDocApp {
         if (groupId === this.currentRuleGroup) return;
         
         this.currentRuleGroup = groupId;
-        RulesManager.setCurrentGroup(groupId);
+        this._setSavedRuleGroup(groupId);
         
         const group = this.ruleGroups.find(g => g.groupId === groupId);
         if (group) {
@@ -595,7 +642,7 @@ class SmartDocApp {
         const groupName = group ? group.name : '';
         
         try {
-            const savedRules = await RulesManager.saveToServer(this.currentRuleGroup, this.rules, groupName);
+            const savedRules = await RulesManager.saveToServer(this.currentRuleGroup, this.rules, groupName, this.auditMode);
             savedRules.forEach((sr, i) => {
                 if (this.rules[i]) {
                     this.rules[i].id = sr.id;
@@ -659,7 +706,7 @@ class SmartDocApp {
                 await RulesManager.createGroup(groupId, groupName, []);
                 this.ruleGroups.push({ groupId: groupId, name: groupName });
                 this.currentRuleGroup = groupId;
-                RulesManager.setCurrentGroup(groupId);
+                this._setSavedRuleGroup(groupId);
                 this.rules = [];
                 this.renderRules();
                 RulesManager.renderGroupSelector(this.ruleGroups, groupId, 'ruleGroupSelect');
@@ -675,7 +722,7 @@ class SmartDocApp {
             }
             
             try {
-                const savedRules = await RulesManager.saveToServer(groupId, this.rules, groupName);
+                const savedRules = await RulesManager.saveToServer(groupId, this.rules, groupName, this.auditMode);
                 savedRules.forEach((sr, i) => {
                     if (this.rules[i]) {
                         this.rules[i].id = sr.id;
@@ -714,9 +761,9 @@ class SmartDocApp {
         
         try {
             await RulesManager.deleteGroup(this.currentRuleGroup);
-            this.ruleGroups = this.ruleGroups.filter(g => g.id !== this.currentRuleGroup);
-            this.currentRuleGroup = this.ruleGroups[0]?.id;
-            RulesManager.setCurrentGroup(this.currentRuleGroup);
+            this.ruleGroups = this.ruleGroups.filter(g => g.groupId !== this.currentRuleGroup);
+            this.currentRuleGroup = this.ruleGroups[0]?.groupId;
+            this._setSavedRuleGroup(this.currentRuleGroup);
             RulesManager.renderGroupSelector(this.ruleGroups, this.currentRuleGroup, 'ruleGroupSelect');
             await this.loadCurrentGroupRules();
             UiHelpers.setStatus('规则组已删除');
@@ -783,7 +830,7 @@ class SmartDocApp {
                 }
                 
                 this.rules = rules;
-                const savedRules = await RulesManager.saveToServer(this.currentRuleGroup, this.rules, group.name);
+                const savedRules = await RulesManager.saveToServer(this.currentRuleGroup, this.rules, group.name, this.auditMode);
                 savedRules.forEach((sr, i) => {
                     if (this.rules[i]) {
                         this.rules[i].id = sr.id;
@@ -924,8 +971,14 @@ class SmartDocApp {
             return;
         }
         
-        if (!this.document) {
+        const isTicketMode = this.auditMode === 'ticket';
+        if (!isTicketMode && !this.document) {
             alert('请先上传待审文档');
+            return;
+        }
+
+        if (isTicketMode && (!this.ticketData || Object.keys(this.ticketData).length === 0)) {
+            alert('请先加载工单数据');
             return;
         }
         
@@ -948,9 +1001,9 @@ class SmartDocApp {
             }
         }
 
-        const freshRules = await RulesManager.loadFromServer(this.currentRuleGroup);
+        const freshRules = await RulesManager.loadFromServer(this.currentRuleGroup, this.auditMode);
         if (freshRules && freshRules.length > 0) {
-            this.rules = freshRules;
+            this.rules = this._filterRulesForCurrentMode(freshRules);
         }
         const syncedRules = this.rules.filter(r => r.enabled !== false);
         if (syncedRules.length === 0) {
@@ -964,7 +1017,7 @@ class SmartDocApp {
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 审核中...';
         
-        UiHelpers.setStatus('正在运行AI审核...', true);
+        UiHelpers.setStatus(isTicketMode ? '正在运行工单审核...' : '正在运行AI审核...', true);
         this.auditResults = [];
         const resultsContainer = document.getElementById('auditResults');
         resultsContainer.innerHTML = '<div class="space-y-4" id="auditList"></div>';
@@ -999,9 +1052,12 @@ class SmartDocApp {
 
             const auditRequest = {
                 ruleGroupId: this.currentRuleGroup,
-                documentText: this.document.text,
+                documentText: isTicketMode
+                    ? TicketAuditView.toAuditText(this.ticketData, this.ticketId, this.ts)
+                    : this.document.text,
                 documentType: 'txt',
                 data: this.ticketData,
+                auditMode: this.auditMode,
                 ticketId: this.ticketId,
                 ts: this.ts,
                 settings: {
@@ -1105,7 +1161,7 @@ class SmartDocApp {
                 console.error('保存审核结果失败:', err);
             }
 
-            UiHelpers.setStatus(`审核完成，共检查 ${syncedRules.length} 条规则`);
+            UiHelpers.setStatus(`${isTicketMode ? '工单审核' : '审核'}完成，共检查 ${syncedRules.length} 条规则`);
             document.getElementById('auditBadge').classList.remove('hidden');
             UiHelpers.switchTab('audit');
 
@@ -1116,7 +1172,7 @@ class SmartDocApp {
         } finally {
             this.isAuditing = false;
             btn.disabled = false;
-            btn.innerHTML = '<i class="fas fa-play"></i> 运行AI审核';
+            btn.innerHTML = '<i class="fas fa-play"></i> <span id="runAuditBtnText">AI审核</span>';
         }
     }
     
@@ -1237,7 +1293,46 @@ class SmartDocApp {
         }
     }
     
-    switchTab(tab) { UiHelpers.switchTab(tab); }
+    switchTab(tab) {
+        if (this.auditMode === 'ticket') {
+            if (tab === 'preview') {
+                UiHelpers.switchTab('ticket');
+                return;
+            }
+            if (tab === 'compare') return;
+        }
+        UiHelpers.switchTab(tab);
+    }
+    async switchAuditMode(mode) {
+        const nextMode = mode === 'ticket' ? 'ticket' : 'document';
+        AuditMode.apply(this, nextMode);
+
+        if (this.currentRuleGroup) {
+            RulesManager.renderGroupSelector(this.ruleGroups, this.currentRuleGroup, 'ruleGroupSelect');
+            await this.loadCurrentGroupRules();
+        } else {
+            RulesManager.renderGroupSelector(this.ruleGroups, this.currentRuleGroup, 'ruleGroupSelect');
+            this.renderRules();
+            this.updateGroupLockUI();
+        }
+
+        AuditMode.apply(this, nextMode);
+    }
+
+    refreshTicketAuditView() {
+        if (typeof TicketAuditView !== 'undefined') {
+            TicketAuditView.render(this);
+        }
+        if (this.auditMode === 'ticket') {
+            AuditMode.setText('wordCount', `字段: ${AuditMode.getTicketFieldCount(this.ticketData)}`);
+        }
+    }
+
+    scrollToTicketField(key) {
+        UiHelpers.switchTab('ticket');
+        setTimeout(() => TicketAuditView.scrollToField(key), 100);
+    }
+
     scrollToNode(nodeId) { UiHelpers.switchTab('preview'); setTimeout(() => UiHelpers.scrollToNode(nodeId), 100); }
     setStatus(text, loading = false) { UiHelpers.setStatus(text, loading); }
     exportHtmlReport() { ReportExporter.exportHtml(this.document, this.template, this.excelData, this.auditResults); }

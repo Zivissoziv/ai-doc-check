@@ -86,7 +86,7 @@ public class AuditController {
             return badRequest("缺少 ruleGroupId 参数");
         }
 
-        List<Rule> rules = loadRules(request.getRuleGroupId());
+        List<Rule> rules = loadRules(request.getRuleGroupId(), request.getAuditMode());
         if (rules == null) {
             return badRequest("规则组为空");
         }
@@ -151,7 +151,7 @@ public class AuditController {
             return ResponseEntity.badRequest().build();
         }
 
-        List<Rule> rules = loadRules(request.getRuleGroupId());
+        List<Rule> rules = loadRules(request.getRuleGroupId(), request.getAuditMode());
         if (rules == null) {
             return ResponseEntity.badRequest().build();
         }
@@ -222,7 +222,11 @@ public class AuditController {
     }
 
     private List<Rule> loadRules(String groupId) {
-        List<RuleDto> ruleDtos = ruleGroupService.getRulesByGroupId(groupId);
+        return loadRules(groupId, "document");
+    }
+
+    private List<Rule> loadRules(String groupId, String auditMode) {
+        List<RuleDto> ruleDtos = ruleGroupService.getRulesByGroupId(groupId, auditMode);
         if (ruleDtos.isEmpty()) {
             return null;
         }
@@ -251,6 +255,10 @@ public class AuditController {
     private String resolveDocumentText(AuditRequestDto request) {
         if (request.getDocumentText() != null && !request.getDocumentText().trim().isEmpty()) {
             return request.getDocumentText();
+        }
+
+        if (isTicketAuditMode(request)) {
+            return buildTicketAuditText(request);
         }
 
         byte[] documentBytes = resolveDocument(request);
@@ -285,6 +293,10 @@ public class AuditController {
             ? objectMapper.convertValue(request.getData(), Map.class) 
             : new HashMap<>();
 
+        if (isTicketAuditMode(request)) {
+            return userData;
+        }
+
         if (request.getExcelUrl() != null || request.getExcelBase64() != null) {
             byte[] excelBytes;
             if (request.getExcelUrl() != null) {
@@ -312,6 +324,32 @@ public class AuditController {
             }
         }
         return userData;
+    }
+
+    private boolean isTicketAuditMode(AuditRequestDto request) {
+        return request != null && "ticket".equalsIgnoreCase(request.getAuditMode());
+    }
+
+    private String buildTicketAuditText(AuditRequestDto request) {
+        if (request.getData() == null) {
+            log.warn("Ticket audit missing data and documentText");
+            return null;
+        }
+
+        try {
+            StringBuilder text = new StringBuilder("工单信息");
+            if (request.getTicketId() != null && !request.getTicketId().isEmpty()) {
+                text.append("\nticketId: ").append(request.getTicketId());
+            }
+            if (request.getTs() != null && !request.getTs().isEmpty()) {
+                text.append("\nts: ").append(request.getTs());
+            }
+            text.append("\n\n").append(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(request.getData()));
+            return text.toString();
+        } catch (Exception e) {
+            log.error("无法序列化工单数据: {}", e.getMessage(), e);
+            return null;
+        }
     }
 
     private ApiConfig resolveApiConfig(AuditSettingsDto settings) {

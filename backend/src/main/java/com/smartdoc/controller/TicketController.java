@@ -165,13 +165,15 @@ public class TicketController {
         String ticketId = body.get("ticketId");
         String ts = body.get("ts");
         String ruleGroupId = body.get("ruleGroupId");
+        String auditMode = body.getOrDefault("auditMode", "document");
 
         if (ticketId == null || ts == null || ruleGroupId == null) {
             return ResponseEntity.badRequest().body(errorMap("缺少必填参数: ticketId, ts, ruleGroupId"));
         }
 
-        log.info("提交异步审核: ticketId={}, ts={}, ruleGroupId={}", ticketId, ts, ruleGroupId);
-        String taskId = asyncAuditService.createAsyncTask(ticketId, ts, ruleGroupId);
+        log.info("提交异步审核: ticketId={}, ts={}, ruleGroupId={}, auditMode={}",
+                ticketId, ts, ruleGroupId, auditMode);
+        String taskId = asyncAuditService.createAsyncTask(ticketId, ts, ruleGroupId, auditMode);
 
         Map<String, Object> response = new HashMap<>();
         response.put("taskId", taskId);

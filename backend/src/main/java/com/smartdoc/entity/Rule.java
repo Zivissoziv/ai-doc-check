@@ -51,6 +51,10 @@ public class Rule {
     @TableField("trigger_condition")
     private String triggerCondition;
 
+    @TableField("audit_scope")
+    @Builder.Default
+    private AuditScope auditScope = AuditScope.DOCUMENT;
+
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 
@@ -64,5 +68,10 @@ public class Rule {
         WARNING,
         /** 提示（仅供参考） */
         INFO
+    }
+
+    public enum AuditScope {
+        DOCUMENT,
+        TICKET
     }
 }

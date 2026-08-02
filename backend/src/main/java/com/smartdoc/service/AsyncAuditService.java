@@ -86,6 +86,12 @@ public class AsyncAuditService {
 
     @Transactional
     public String createAsyncTask(String ticketId, String ts, String ruleGroupId) {
+        return createAsyncTask(ticketId, ts, ruleGroupId, "document");
+    }
+
+    @Transactional
+    public String createAsyncTask(String ticketId, String ts, String ruleGroupId, String auditMode) {
+        String normalizedAuditMode = normalizeAuditMode(auditMode);
         String taskId;
         boolean created;
         Object lock = lockFor(ticketId, ts);
@@ -115,10 +121,11 @@ public class AsyncAuditService {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    submitAsyncTask(finalTaskId, ticketId, ts, ruleGroupId);
+                    submitAsyncTask(finalTaskId, ticketId, ts, ruleGroupId, normalizedAuditMode);
                 }
             });
-            log.info("Created async audit task: taskId={}, ticketId={}, ts={}", taskId, ticketId, ts);
+            log.info("Created async audit task: taskId={}, ticketId={}, ts={}, auditMode={}",
+                    taskId, ticketId, ts, normalizedAuditMode);
         }
         return taskId;
     }
@@ -141,9 +148,9 @@ public class AsyncAuditService {
                 .build();
     }
 
-    private void submitAsyncTask(String taskId, String ticketId, String ts, String ruleGroupId) {
+    private void submitAsyncTask(String taskId, String ticketId, String ts, String ruleGroupId, String auditMode) {
         try {
-            asyncAuditExecutor.execute(() -> doAsyncAudit(taskId, ticketId, ts, ruleGroupId));
+            asyncAuditExecutor.execute(() -> doAsyncAudit(taskId, ticketId, ts, ruleGroupId, auditMode));
         } catch (RuntimeException e) {
             String message = "异步审核队列已满，请稍后重试";
             log.warn("Rejected async audit task: taskId={}, ticketId={}, ts={}", taskId, ticketId, ts, e);
@@ -152,7 +159,7 @@ public class AsyncAuditService {
         }
     }
 
-    private void doAsyncAudit(String taskId, String ticketId, String ts, String ruleGroupId) {
+    private void doAsyncAudit(String taskId, String ticketId, String ts, String ruleGroupId, String auditMode) {
         updateStatus(taskId, AuditTicketRecord.STATUS_RUNNING, null);
 
         try {
@@ -164,30 +171,39 @@ public class AsyncAuditService {
             Map<String, Object> ticketInfo = fetchTicketInfo(config, ticketId);
             String documentName = (String) ticketInfo.getOrDefault("documentName", "ticket_" + ticketId);
 
-            String documentText = asNonBlankString(ticketInfo.get("documentText"));
-            if (documentText == null) {
-                byte[] documentBytes;
-                if (ticketInfo.get("documentUrl") != null) {
-                    documentBytes = downloadFile((String) ticketInfo.get("documentUrl"));
-                } else if (ticketInfo.get("documentBase64") != null) {
-                    documentBytes = java.util.Base64.getDecoder().decode((String) ticketInfo.get("documentBase64"));
-                } else {
-                    throw new RuntimeException("工单没有文档");
-                }
-
-                String documentType = documentParserService.detectFileType(documentBytes, "auto");
-                documentText = documentParserService.parseDocument(documentBytes, documentType);
-            }
-            if (documentText == null) {
-                throw new RuntimeException("无法解析文档内容");
-            }
-
             Map<String, Object> userData = new HashMap<>();
             if (ticketInfo.get("data") != null) {
                 userData = objectMapper.convertValue(ticketInfo.get("data"), Map.class);
             }
 
-            List<RuleDto> ruleDtos = ruleGroupService.getRulesByGroupId(ruleGroupId);
+            boolean ticketMode = "ticket".equals(auditMode);
+            String documentText;
+            if (ticketMode) {
+                documentText = buildTicketAuditText(ticketId, ts, userData);
+                if (documentText == null) {
+                    throw new RuntimeException("工单没有可审核的数据");
+                }
+            } else {
+                documentText = asNonBlankString(ticketInfo.get("documentText"));
+                if (documentText == null) {
+                    byte[] documentBytes;
+                    if (ticketInfo.get("documentUrl") != null) {
+                        documentBytes = downloadFile((String) ticketInfo.get("documentUrl"));
+                    } else if (ticketInfo.get("documentBase64") != null) {
+                        documentBytes = java.util.Base64.getDecoder().decode((String) ticketInfo.get("documentBase64"));
+                    } else {
+                        throw new RuntimeException("工单没有文档");
+                    }
+
+                    String documentType = documentParserService.detectFileType(documentBytes, "auto");
+                    documentText = documentParserService.parseDocument(documentBytes, documentType);
+                }
+            }
+            if (documentText == null) {
+                throw new RuntimeException("无法解析文档内容");
+            }
+
+            List<RuleDto> ruleDtos = ruleGroupService.getRulesByGroupId(ruleGroupId, auditMode);
             if (ruleDtos.isEmpty()) {
                 throw new RuntimeException("规则组为空: " + ruleGroupId);
             }
@@ -221,7 +237,8 @@ public class AsyncAuditService {
                 auditTicketRecordMapper.updateById(record);
             }
 
-            log.info("Async audit task completed: taskId={}, batchNo={}", taskId, batchNo);
+            log.info("Async audit task completed: taskId={}, batchNo={}, auditMode={}",
+                    taskId, batchNo, auditMode);
 
         } catch (Exception e) {
             log.error("Async audit task failed: taskId={}, error={}", taskId, e.getMessage(), e);
@@ -267,12 +284,37 @@ public class AsyncAuditService {
         return result;
     }
 
+    private String buildTicketAuditText(String ticketId, String ts, Map<String, Object> userData) {
+        if (userData == null || userData.isEmpty()) {
+            return null;
+        }
+
+        try {
+            StringBuilder text = new StringBuilder("工单信息");
+            if (ticketId != null && !ticketId.isEmpty()) {
+                text.append("\nticketId: ").append(ticketId);
+            }
+            if (ts != null && !ts.isEmpty()) {
+                text.append("\nts: ").append(ts);
+            }
+            text.append("\n\n").append(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(userData));
+            return text.toString();
+        } catch (Exception e) {
+            log.error("无法序列化工单数据: {}", e.getMessage(), e);
+            return null;
+        }
+    }
+
     private String asNonBlankString(Object value) {
         if (!(value instanceof String)) {
             return null;
         }
         String text = (String) value;
         return text.trim().isEmpty() ? null : text;
+    }
+
+    private String normalizeAuditMode(String auditMode) {
+        return "ticket".equalsIgnoreCase(auditMode) ? "ticket" : "document";
     }
 
     private byte[] downloadFile(String url) {
