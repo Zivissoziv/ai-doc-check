@@ -7,9 +7,12 @@ import com.smartdoc.dto.AuditIssueDto;
 import com.smartdoc.dto.AuditResultDto;
 import com.smartdoc.dto.RuleFeedbackStatsDto;
 import com.smartdoc.entity.AuditFeedback;
+import com.smartdoc.entity.AuditOrderFeedback;
+import com.smartdoc.entity.AuditOrderRecord;
 import com.smartdoc.entity.AuditTicketRecord;
 import com.smartdoc.mapper.AuditTicketRecordMapper;
 import com.smartdoc.service.AuditFeedbackService;
+import com.smartdoc.service.AuditOrderFeedbackService;
 import com.smartdoc.service.AuditTicketRecordService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -36,6 +39,7 @@ import java.util.stream.Collectors;
 public class AuditFeedbackController {
 
     private final AuditFeedbackService auditFeedbackService;
+    private final AuditOrderFeedbackService auditOrderFeedbackService;
     private final AuditTicketRecordService auditTicketRecordService;
     private final AuditTicketRecordMapper auditTicketRecordMapper;
     private final ObjectMapper objectMapper;
@@ -77,8 +81,11 @@ public class AuditFeedbackController {
     public ResponseEntity<RuleFeedbackStatsDto> getRuleStats(
             @PathVariable Long ruleId,
             @RequestParam(required = false) String startDate,
-            @RequestParam(required = false) String endDate) {
-        RuleFeedbackStatsDto stats = auditFeedbackService.getRuleStats(ruleId, startDate, endDate);
+            @RequestParam(required = false) String endDate,
+            @RequestParam(required = false, defaultValue = "document") String auditType) {
+        RuleFeedbackStatsDto stats = isOrderAuditType(auditType)
+                ? auditOrderFeedbackService.getRuleStats(ruleId, startDate, endDate)
+                : auditFeedbackService.getRuleStats(ruleId, startDate, endDate);
         return ResponseEntity.ok(stats);
     }
 
@@ -86,7 +93,12 @@ public class AuditFeedbackController {
     public ResponseEntity<List<Map<String, Object>>> getRuleFailures(
             @PathVariable Long ruleId,
             @RequestParam(required = false) String startDate,
-            @RequestParam(required = false) String endDate) {
+            @RequestParam(required = false) String endDate,
+            @RequestParam(required = false, defaultValue = "document") String auditType) {
+        if (isOrderAuditType(auditType)) {
+            return ResponseEntity.ok(getOrderRuleFailures(ruleId, startDate, endDate));
+        }
+
         List<AuditFeedback> feedbacks = auditFeedbackService.getRuleFailures(ruleId, startDate, endDate, 30);
         List<String> batchNos = feedbacks.stream()
                 .map(AuditFeedback::getAuditBatchNo)
@@ -127,5 +139,40 @@ public class AuditFeedbackController {
             result.add(item);
         }
         return ResponseEntity.ok(result);
+    }
+
+    private List<Map<String, Object>> getOrderRuleFailures(Long ruleId, String startDate, String endDate) {
+        List<AuditOrderFeedback> feedbacks = auditOrderFeedbackService.getRuleFailures(ruleId, startDate, endDate, 30);
+        Map<String, AuditOrderRecord> orderRecordByBatchNo = auditOrderFeedbackService.findOrderRecordsByBatchNo(feedbacks);
+
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (AuditOrderFeedback f : feedbacks) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("id", f.getId());
+            item.put("createdAt", f.getCreatedAt());
+            item.put("auditBatchNo", f.getAuditBatchNo());
+            item.put("feedbackType", f.getFeedbackType());
+            item.put("reason", f.getReason());
+            AuditOrderRecord orderRecord = orderRecordByBatchNo.get(f.getAuditBatchNo());
+            item.put("orderId", orderRecord != null ? orderRecord.getOrderId() : null);
+            item.put("ts", orderRecord != null ? orderRecord.getTs() : null);
+            try {
+                AuditResultDto dto = objectMapper.readValue(f.getResultsJson(), AuditResultDto.class);
+                item.put("summary", dto.getSummary());
+                item.put("issues", dto.getIssues() != null ? dto.getIssues() : new ArrayList<>());
+                item.put("confidence", dto.getConfidence());
+            } catch (JsonProcessingException e) {
+                log.warn("Failed to parse order feedback results_json: id={}", f.getId());
+                item.put("summary", f.getResultsJson());
+                item.put("issues", new ArrayList<>());
+                item.put("confidence", null);
+            }
+            result.add(item);
+        }
+        return result;
+    }
+
+    private boolean isOrderAuditType(String auditType) {
+        return "order".equalsIgnoreCase(auditType) || "ticket".equalsIgnoreCase(auditType);
     }
 }

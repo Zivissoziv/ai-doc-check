@@ -167,6 +167,10 @@ public class TicketController {
         String ruleGroupId = body.get("ruleGroupId");
         String auditMode = body.getOrDefault("auditMode", "document");
 
+        if ("ticket".equalsIgnoreCase(auditMode)) {
+            return ResponseEntity.badRequest().body(errorMap("Order audit must use /api/order/async-audit with orderId"));
+        }
+
         if (ticketId == null || ts == null || ruleGroupId == null) {
             return ResponseEntity.badRequest().body(errorMap("缺少必填参数: ticketId, ts, ruleGroupId"));
         }

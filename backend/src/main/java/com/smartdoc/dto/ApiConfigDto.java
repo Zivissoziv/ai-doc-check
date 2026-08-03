@@ -34,5 +34,8 @@ public class ApiConfigDto {
 
     private String ticketToken;
 
+    @Size(max = 500)
+    private String orderAuditEndpoint;
+
     private Boolean hasApiKey;
 }

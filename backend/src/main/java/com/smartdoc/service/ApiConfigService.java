@@ -54,6 +54,9 @@ public class ApiConfigService {
         if (dto.getTicketToken() != null) {
             config.setTicketToken(dto.getTicketToken());
         }
+        if (dto.getOrderAuditEndpoint() != null) {
+            config.setOrderAuditEndpoint(dto.getOrderAuditEndpoint());
+        }
 
         if (config.getId() == null) {
             apiConfigMapper.insert(config);
@@ -85,6 +88,7 @@ public class ApiConfigService {
                 .auditRole(config.getAuditRole())
                 .ticketEndpoint(config.getTicketEndpoint())
                 .ticketToken(config.getTicketToken())
+                .orderAuditEndpoint(config.getOrderAuditEndpoint())
                 .hasApiKey(config.hasApiKey())
                 .build();
     }

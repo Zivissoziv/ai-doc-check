@@ -32,6 +32,8 @@ public class AuditRequestDto {
 
     private String ticketId;
 
+    private String orderId;
+
     private String ts;
 
     private AuditSettingsDto settings;

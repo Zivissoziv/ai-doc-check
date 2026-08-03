@@ -53,6 +53,10 @@ public class ApiConfig {
     @TableField("ticket_token")
     private String ticketToken;
 
+    @Size(max = 500)
+    @TableField("order_audit_endpoint")
+    private String orderAuditEndpoint;
+
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

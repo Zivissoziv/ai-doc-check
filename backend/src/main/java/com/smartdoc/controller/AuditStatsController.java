@@ -25,8 +25,9 @@ public class AuditStatsController {
     @GetMapping("/stats")
     public ResponseEntity<Map<String, Object>> getStats(
             @RequestParam(required = false) String startDate,
-            @RequestParam(required = false) String endDate) {
-        return ResponseEntity.ok(auditStatsService.getStats(startDate, endDate));
+            @RequestParam(required = false) String endDate,
+            @RequestParam(required = false, defaultValue = "document") String auditType) {
+        return ResponseEntity.ok(auditStatsService.getStats(startDate, endDate, auditType));
     }
 
     @PostMapping("/stats/increment")
@@ -50,22 +51,25 @@ public class AuditStatsController {
     @GetMapping("/stats/daily")
     public ResponseEntity<List<Map<String, Object>>> getDailyStats(
             @RequestParam(required = false) String startDate,
-            @RequestParam(required = false) String endDate) {
-        return ResponseEntity.ok(auditStatsService.getDailyStats(startDate, endDate));
+            @RequestParam(required = false) String endDate,
+            @RequestParam(required = false, defaultValue = "document") String auditType) {
+        return ResponseEntity.ok(auditStatsService.getDailyStats(startDate, endDate, auditType));
     }
 
     @GetMapping("/stats/sources")
     public ResponseEntity<Map<String, Object>> getSourceStats(
             @RequestParam(required = false) String startDate,
-            @RequestParam(required = false) String endDate) {
-        return ResponseEntity.ok(auditStatsService.getSourceStats(startDate, endDate));
+            @RequestParam(required = false) String endDate,
+            @RequestParam(required = false, defaultValue = "document") String auditType) {
+        return ResponseEntity.ok(auditStatsService.getSourceStats(startDate, endDate, auditType));
     }
 
     @GetMapping("/stats/group/{groupId}")
     public ResponseEntity<Map<String, Object>> getGroupStats(
             @PathVariable String groupId,
             @RequestParam(required = false) String startDate,
-            @RequestParam(required = false) String endDate) {
-        return ResponseEntity.ok(auditStatsService.getGroupStats(groupId, startDate, endDate));
+            @RequestParam(required = false) String endDate,
+            @RequestParam(required = false, defaultValue = "document") String auditType) {
+        return ResponseEntity.ok(auditStatsService.getGroupStats(groupId, startDate, endDate, auditType));
     }
 }

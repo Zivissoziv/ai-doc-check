@@ -1064,6 +1064,36 @@ const FeedbackAPI = {
         return response.json();
     },
 
+    async saveOrderAuditResults(results, groupId, durationMs, orderId, ts) {
+        let url = '/api/order/feedback/save';
+        const params = [];
+        if (groupId) {
+            params.push('groupId=' + encodeURIComponent(groupId));
+        }
+        if (durationMs != null) {
+            params.push('durationMs=' + durationMs);
+        }
+        if (orderId) {
+            params.push('orderId=' + encodeURIComponent(orderId));
+        }
+        if (ts) {
+            params.push('ts=' + encodeURIComponent(ts));
+        }
+        if (params.length > 0) {
+            url += '?' + params.join('&');
+        }
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(results)
+        });
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || '淇濆瓨瀹℃牳缁撴灉澶辫触');
+        }
+        return response.json();
+    },
+
     async submitFeedback(feedbackId, feedbackType, reason) {
         const response = await fetch(`/api/feedback/${feedbackId}`, {
             method: 'PUT',
@@ -1077,11 +1107,25 @@ const FeedbackAPI = {
         return response.json();
     },
 
-    async getRuleStats(ruleId, startDate, endDate) {
+    async submitOrderFeedback(feedbackId, feedbackType, reason) {
+        const response = await fetch(`/api/order/feedback/${feedbackId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ feedbackType, reason: reason || '' })
+        });
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || '鎻愪氦鍙嶉澶辫触');
+        }
+        return response.json();
+    },
+
+    async getRuleStats(ruleId, startDate, endDate, auditType = 'document') {
         let url = `/api/feedback/stats/${ruleId}`;
         const params = [];
         if (startDate) params.push('startDate=' + encodeURIComponent(startDate));
         if (endDate) params.push('endDate=' + encodeURIComponent(endDate));
+        if (auditType) params.push('auditType=' + encodeURIComponent(auditType));
         if (params.length > 0) url += '?' + params.join('&');
         const response = await fetch(url);
         if (!response.ok) {
@@ -1097,6 +1141,16 @@ const FeedbackAPI = {
         if (!response.ok) {
             const err = await response.json();
             throw new Error(err.error || '查询历史审核记录失败');
+        }
+        return response.json();
+    },
+
+    async getAuditRecordByOrderIdAndTs(orderId, ts) {
+        const url = `/api/order/audit-record?orderId=${encodeURIComponent(orderId)}&ts=${encodeURIComponent(ts)}`;
+        const response = await fetch(url);
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || '鏌ヨ鍘嗗彶瀹℃牳璁板綍澶辫触');
         }
         return response.json();
     }

@@ -11,6 +11,8 @@ import com.smartdoc.entity.Rule;
 import com.smartdoc.service.AiAuditService;
 import com.smartdoc.service.ApiConfigService;
 import com.smartdoc.service.AuditFeedbackService;
+import com.smartdoc.service.AuditOrderFeedbackService;
+import com.smartdoc.service.AuditOrderRecordService;
 import com.smartdoc.service.AuditTicketRecordService;
 import com.smartdoc.service.DocumentParserService;
 import com.smartdoc.service.RuleGroupService;
@@ -54,6 +56,8 @@ public class AuditController {
     private final ApiConfigService apiConfigService;
     private final AuditFeedbackService auditFeedbackService;
     private final AuditTicketRecordService auditTicketRecordService;
+    private final AuditOrderFeedbackService auditOrderFeedbackService;
+    private final AuditOrderRecordService auditOrderRecordService;
     private final ObjectMapper objectMapper;
 
     private static final Pattern[] SECTION_TITLE_PATTERNS = {
@@ -96,6 +100,10 @@ public class AuditController {
             return ResponseEntity.unprocessableEntity().body(errorMap("无法解析文档内容"));
         }
 
+        if (isTicketAuditMode(request) && (request.getOrderId() == null || request.getOrderId().isEmpty())) {
+            return badRequest("Missing orderId for ticket audit");
+        }
+
         Map<String, Object> userData = resolveUserData(request);
         if (userData == null) {
             return ResponseEntity.unprocessableEntity().body(errorMap("无法解析Excel文件"));
@@ -109,6 +117,25 @@ public class AuditController {
                 isRepeatPrompt(request.getSettings()),
                 getBatchSize(request.getSettings())
             );
+
+            if (isTicketAuditMode(request)) {
+                List<com.smartdoc.entity.AuditOrderFeedback> savedFeedbacks =
+                        auditOrderFeedbackService.saveAuditResults(results, request.getRuleGroupId(), null);
+                for (int i = 0; savedFeedbacks != null && i < savedFeedbacks.size() && i < results.size(); i++) {
+                    results.get(i).set_feedbackId(savedFeedbacks.get(i).getId());
+                }
+                if (request.getTs() != null && !request.getTs().isEmpty()) {
+                    String batchNo = savedFeedbacks != null && !savedFeedbacks.isEmpty()
+                            ? savedFeedbacks.get(0).getAuditBatchNo()
+                            : java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+                    auditOrderRecordService.saveRecord(
+                            request.getOrderId(), request.getTs(), batchNo, "order_" + request.getOrderId());
+                }
+                Map<String, Object> successResponse = new HashMap<>();
+                successResponse.put("success", true);
+                successResponse.put("results", results);
+                return ResponseEntity.ok(successResponse);
+            }
 
             List<com.smartdoc.entity.AuditFeedback> savedFeedbacks = auditFeedbackService.saveAuditResults(results, request.getRuleGroupId());
             for (int i = 0; savedFeedbacks != null && i < savedFeedbacks.size() && i < results.size(); i++) {
@@ -338,6 +365,9 @@ public class AuditController {
 
         try {
             StringBuilder text = new StringBuilder("工单信息");
+            if (request.getOrderId() != null && !request.getOrderId().isEmpty()) {
+                text.append("\norderId: ").append(request.getOrderId());
+            }
             if (request.getTicketId() != null && !request.getTicketId().isEmpty()) {
                 text.append("\nticketId: ").append(request.getTicketId());
             }

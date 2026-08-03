@@ -33,6 +33,7 @@ class SmartDocApp {
         this.exactMatchMode = false;
         this._statsRequestToken = 0;
         this.ticketId = null;
+        this.orderId = null;
         this.ts = null;
         this.auditMode = localStorage.getItem('smartdoc_audit_mode') || 'document';
 
@@ -60,16 +61,30 @@ class SmartDocApp {
     }
     
     async init() {
+        const params = this.getUrlParams();
+        if (params.orderId) {
+            this.auditMode = 'ticket';
+        } else if (params.ticketId) {
+            this.auditMode = 'document';
+        }
+
         await this.loadRuleGroups();
         await this.loadPresetConfig();
         this.loadSettings();
         this.updateApiStatus();
-        
-        const params = this.getUrlParams();
-        if (params.ticketId) {
+
+        if (params.orderId) {
+            await this.loadFromOrder(params.orderId, params.ts);
+        } else if (params.ticketId) {
             await this.loadFromTicket(params.ticketId, params.ts);
         }
         AuditMode.apply(this, this.auditMode);
+    }
+
+    _makeTs() {
+        const d = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
     }
     
     _base64ToBlob(base64) {
@@ -192,6 +207,60 @@ class SmartDocApp {
             }
         } catch (err) {
             console.error('查询历史审核记录失败:', err);
+        }
+        return false;
+    }
+
+    async loadFromOrder(orderId, ts) {
+        UiHelpers.setStatus(`正在加载工单审核 ${orderId}...`, true);
+        this.orderId = orderId;
+        this.ts = ts || this._makeTs();
+        this.auditMode = 'ticket';
+
+        try {
+            const orderRes = await fetch(`/api/order/${orderId}`);
+            if (!orderRes.ok) {
+                const err = await orderRes.json();
+                throw new Error(err.error || '加载工单审核数据失败');
+            }
+            const orderInfo = await orderRes.json();
+            this.ticketData = orderInfo.data || {};
+            document.getElementById('excelLabel').textContent = '工单审核数据已加载';
+            document.getElementById('excelIcon').className = 'fas fa-database text-blue-500 text-sm';
+            this._updateDataPreviewButton();
+            this.refreshTicketAuditView();
+
+            UiHelpers.setStatus(`工单审核 ${orderId} 已加载`);
+            if (ts) {
+                try {
+                    const record = await FeedbackAPI.getAuditRecordByOrderIdAndTs(orderId, ts);
+                    if (record.exists && record.results && record.results.length > 0) {
+                        this._displayHistoricalResults(record);
+                    }
+                } catch (err) {
+                    console.error('查询工单审核历史记录失败:', err);
+                }
+            }
+        } catch (err) {
+            console.error('加载工单审核数据失败:', err);
+            if (ts && await this._tryDisplayHistoricalOrderAudit(orderId, ts)) {
+                UiHelpers.setStatus(`工单审核 ${orderId} 历史审核结果已加载`);
+                return;
+            }
+            UiHelpers.setStatus(`工单审核数据加载失败: ${err.message}`);
+            alert(`工单审核数据加载失败: ${err.message}`);
+        }
+    }
+
+    async _tryDisplayHistoricalOrderAudit(orderId, ts) {
+        try {
+            const record = await FeedbackAPI.getAuditRecordByOrderIdAndTs(orderId, ts);
+            if (record.exists && record.results && record.results.length > 0) {
+                this._displayHistoricalResults(record);
+                return true;
+            }
+        } catch (err) {
+            console.error('查询工单审核历史记录失败:', err);
         }
         return false;
     }
@@ -981,6 +1050,11 @@ class SmartDocApp {
             alert('请先加载工单数据');
             return;
         }
+
+        if (isTicketMode && !this.orderId) {
+            alert('请通过 orderId 进入工单审核');
+            return;
+        }
         
         const activeRules = this.rules.filter(r => r.enabled !== false);
         
@@ -1053,12 +1127,13 @@ class SmartDocApp {
             const auditRequest = {
                 ruleGroupId: this.currentRuleGroup,
                 documentText: isTicketMode
-                    ? TicketAuditView.toAuditText(this.ticketData, this.ticketId, this.ts)
+                    ? TicketAuditView.toAuditText(this.ticketData, this.orderId || this.ticketId, this.ts)
                     : this.document.text,
                 documentType: 'txt',
                 data: this.ticketData,
                 auditMode: this.auditMode,
                 ticketId: this.ticketId,
+                orderId: this.orderId,
                 ts: this.ts,
                 settings: {
                     endpoint: this.settings.endpoint,
@@ -1148,10 +1223,18 @@ class SmartDocApp {
                         summary: r.summary || ''
                     }));
                     const auditDuration = Date.now() - (this._auditStartTime || Date.now());
-                    const saveResponse = await FeedbackAPI.saveAuditResults(
-                        saveResults, this.currentRuleGroup, auditDuration,
-                        this.ticketId, this.ts
-                    );
+                    const saveResponse = isTicketMode
+                        ? await FeedbackAPI.saveOrderAuditResults(
+                            saveResults, this.currentRuleGroup, auditDuration,
+                            this.orderId, this.ts
+                        )
+                        : await FeedbackAPI.saveAuditResults(
+                            saveResults, this.currentRuleGroup, auditDuration,
+                            this.ticketId, this.ts
+                        );
+                    if (saveResponse.ts) {
+                        this.ts = saveResponse.ts;
+                    }
                     const feedbackIds = saveResponse.ids || [];
                     validResults.forEach((r, i) => {
                         r._feedbackId = feedbackIds[i];
@@ -1306,25 +1389,27 @@ class SmartDocApp {
     async switchAuditMode(mode) {
         const nextMode = mode === 'ticket' ? 'ticket' : 'document';
         AuditMode.apply(this, nextMode);
+        RulesManager.renderGroupSelector(this.ruleGroups, this.currentRuleGroup, 'ruleGroupSelect');
 
         if (this.currentRuleGroup) {
-            RulesManager.renderGroupSelector(this.ruleGroups, this.currentRuleGroup, 'ruleGroupSelect');
             await this.loadCurrentGroupRules();
         } else {
-            RulesManager.renderGroupSelector(this.ruleGroups, this.currentRuleGroup, 'ruleGroupSelect');
             this.renderRules();
             this.updateGroupLockUI();
         }
-
-        AuditMode.apply(this, nextMode);
     }
 
     refreshTicketAuditView() {
         if (typeof TicketAuditView !== 'undefined') {
-            TicketAuditView.render(this);
+            if (this.auditMode === 'ticket' && this.orderId) {
+                TicketAuditView.render(this);
+            } else if (this.auditMode === 'ticket') {
+                TicketAuditView.render({ ...this, ticketData: null, ticketId: null });
+            }
         }
         if (this.auditMode === 'ticket') {
-            AuditMode.setText('wordCount', `字段: ${AuditMode.getTicketFieldCount(this.ticketData)}`);
+            const fieldCount = this.orderId ? AuditMode.getTicketFieldCount(this.ticketData) : 0;
+            AuditMode.setText('wordCount', `字段: ${fieldCount}`);
         }
     }
 
@@ -1336,10 +1421,6 @@ class SmartDocApp {
     scrollToNode(nodeId) { UiHelpers.switchTab('preview'); setTimeout(() => UiHelpers.scrollToNode(nodeId), 100); }
     setStatus(text, loading = false) { UiHelpers.setStatus(text, loading); }
     exportHtmlReport() { ReportExporter.exportHtml(this.document, this.template, this.excelData, this.auditResults); }
-    showHelp() {
-        UiHelpers.toggleModal('helpModal', true);
-    }
-    closeHelp() { UiHelpers.toggleModal('helpModal', false); }
     
     showImportExportModal() { UiHelpers.toggleModal('importExportModal', true); }
     closeImportExportModal() { UiHelpers.toggleModal('importExportModal', false); }
@@ -1527,7 +1608,11 @@ class SmartDocApp {
         }
 
         try {
-            await FeedbackAPI.submitFeedback(result._feedbackId, feedbackType, reason);
+            if (this.auditMode === 'ticket') {
+                await FeedbackAPI.submitOrderFeedback(result._feedbackId, feedbackType, reason);
+            } else {
+                await FeedbackAPI.submitFeedback(result._feedbackId, feedbackType, reason);
+            }
             result._feedbackType = feedbackType;
             this.closeFeedbackModal();
 
@@ -1556,12 +1641,15 @@ class SmartDocApp {
         return { startDate: '', endDate: '' };
     }
 
-    _buildStatsUrl(baseUrl) {
+    _getStatsAuditType() {
+        return this.auditMode === 'ticket' ? 'order' : 'document';
+    }
+
+    _buildStatsUrl(baseUrl, includeDate = true) {
         const { startDate, endDate } = this._getDateRange();
-        const params = [];
-        if (startDate) params.push('startDate=' + encodeURIComponent(startDate));
-        if (endDate) params.push('endDate=' + encodeURIComponent(endDate));
-        if (params.length === 0) return baseUrl;
+        const params = ['auditType=' + encodeURIComponent(this._getStatsAuditType())];
+        if (includeDate && startDate) params.push('startDate=' + encodeURIComponent(startDate));
+        if (includeDate && endDate) params.push('endDate=' + encodeURIComponent(endDate));
         return baseUrl + '?' + params.join('&');
     }
 
@@ -1619,7 +1707,7 @@ class SmartDocApp {
                 fetch(this._buildStatsUrl('/api/stats')),
                 fetch(this._buildStatsUrl('/api/stats/daily')),
                 fetch('/api/config/rules'),
-                fetch('/api/stats'),
+                fetch(this._buildStatsUrl('/api/stats', false)),
                 fetch(this._buildStatsUrl('/api/stats/sources'))
             ]);
 
@@ -1645,12 +1733,13 @@ class SmartDocApp {
             // 丢弃过期请求的结果（防止并发覆盖）
             if (requestToken !== this._statsRequestToken) return;
 
-            const allTimeTotal = (allTimeStats.totalCount || 0) + 1000;
+            const allTimeTotal = (allTimeStats.totalCount || 0) + (this._getStatsAuditType() === 'order' ? 0 : 1000);
             const rangeTotal = stats.totalCount || 0;
+            const statsScopeLabel = this._getStatsAuditType() === 'order' ? '工单审核统计' : '文档审核统计';
 
             content.innerHTML = `
                 <div class="flex items-center justify-between mb-4">
-                    <div class="text-xs text-gray-400">统计分析</div>
+                    <div class="text-xs text-gray-400">${statsScopeLabel}</div>
                     <div class="flex items-center gap-1">
                         <button onclick="app._setQuickDate(7)" class="px-2 py-1 text-xs rounded ${!hasFilter || (this._statsDateRangeCache && this._statsDateRangeCache._quick === 7) ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}">近7天</button>
                         <button onclick="app._setQuickDate(30)" class="px-2 py-1 text-xs rounded ${this._statsDateRangeCache && this._statsDateRangeCache._quick === 30 ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}">近30天</button>
@@ -1753,7 +1842,14 @@ class SmartDocApp {
         }
 
         const group = this._statsGroupData.find(g => g.groupId === groupId);
-        const rules = ((group && group.rules) || []).slice().sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+        const expectedScope = this._getStatsAuditType() === 'order' ? 'ticket' : 'document';
+        const rules = ((group && group.rules) || [])
+            .filter(rule => {
+                if (!rule.auditScope) return expectedScope === 'document';
+                return String(rule.auditScope).toLowerCase() === expectedScope;
+            })
+            .slice()
+            .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 
         groupPanel.innerHTML = '<div class="text-center text-gray-400 py-4"><i class="fas fa-spinner fa-spin text-xl mb-1"></i><p class="text-xs">加载中...</p></div>';
 
@@ -1762,7 +1858,7 @@ class SmartDocApp {
                 fetch(this._buildStatsUrl(`/api/stats/group/${groupId}`)),
                 ...rules.map(r => {
                     const { startDate, endDate } = this._getDateRange();
-                    return FeedbackAPI.getRuleStats(r.id, startDate, endDate).catch(() => null);
+                    return FeedbackAPI.getRuleStats(r.id, startDate, endDate, this._getStatsAuditType()).catch(() => null);
                 })
             ]);
 
@@ -1850,7 +1946,9 @@ class SmartDocApp {
 
     _renderFeedbackReasonItem(item, index = 0) {
         const reason = this._normalizeInlineStatsText(item.reason || '未提供原因');
-        const link = this._renderTicketAuditLink(item.ticketId, item.ts, '查看结论', true);
+        const link = item.orderId
+            ? this._renderOrderAuditLink(item.orderId, item.ts, '查看结论', true)
+            : this._renderTicketAuditLink(item.ticketId, item.ts, '查看结论', true);
         return `<div class="flex items-center gap-2 text-xs leading-5 text-red-700">
             <span class="shrink-0 text-red-400">${index + 1}.</span>
             <span class="min-w-0 flex-1 truncate" title="${this._escapeStatsText(reason)}">${this._escapeStatsText(reason)}</span>
@@ -1861,6 +1959,17 @@ class SmartDocApp {
     _renderTicketAuditLink(ticketId, ts, label = '查看审核结论', asButton = false) {
         if (!ticketId || !ts) return '';
         const href = `/?ticketId=${encodeURIComponent(ticketId)}&ts=${encodeURIComponent(ts)}`;
+        const className = asButton
+            ? 'inline-flex items-center gap-1 rounded border border-blue-200 bg-white px-1.5 py-0.5 text-[11px] font-medium leading-4 text-blue-600 hover:border-blue-300 hover:bg-blue-50'
+            : 'inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline';
+        return `<a href="${href}" target="_blank" rel="noopener noreferrer" class="${className}">
+            <i class="fas fa-arrow-up-right-from-square"></i>${this._escapeStatsText(label)}
+        </a>`;
+    }
+
+    _renderOrderAuditLink(orderId, ts, label = '查看审核结论', asButton = false) {
+        if (!orderId || !ts) return '';
+        const href = `/?orderId=${encodeURIComponent(orderId)}&ts=${encodeURIComponent(ts)}`;
         const className = asButton
             ? 'inline-flex items-center gap-1 rounded border border-blue-200 bg-white px-1.5 py-0.5 text-[11px] font-medium leading-4 text-blue-600 hover:border-blue-300 hover:bg-blue-50'
             : 'inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline';
@@ -1928,6 +2037,7 @@ class SmartDocApp {
         const params = [];
         if (startDate) params.push('startDate=' + encodeURIComponent(startDate));
         if (endDate) params.push('endDate=' + encodeURIComponent(endDate));
+        params.push('auditType=' + encodeURIComponent(this._getStatsAuditType()));
         const qs = params.length > 0 ? '?' + params.join('&') : '';
 
         // 从按钮 data 属性读取规则描述
@@ -1949,9 +2059,12 @@ class SmartDocApp {
                 const summary = item.summary || '';
                 const issues = item.issues || [];
                 const ticketId = item.ticketId || '-';
+                const orderId = item.orderId || '-';
                 const ts = item.ts || '-';
                 const auditBatchNo = item.auditBatchNo || '-';
-                const ticketLink = this._renderTicketAuditLink(item.ticketId, item.ts);
+                const ticketLink = item.orderId
+                    ? this._renderOrderAuditLink(item.orderId, item.ts)
+                    : this._renderTicketAuditLink(item.ticketId, item.ts);
                 const feedbackReason = item.reason || '';
                 const issuesList = issues.length > 0
                     ? issues.map((iss, issueIdx) => this._renderIssueDetail(iss, issueIdx)).join('')
@@ -1964,7 +2077,7 @@ class SmartDocApp {
                     </div>
                     <div class="mb-2 text-xs text-gray-500 bg-gray-50 rounded p-2">
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-1">
-                            <div><span class="font-medium text-gray-600">ticketId:</span> ${this._escapeStatsText(ticketId)}</div>
+                            <div><span class="font-medium text-gray-600">${item.orderId ? 'orderId' : 'ticketId'}:</span> ${this._escapeStatsText(item.orderId ? orderId : ticketId)}</div>
                             <div><span class="font-medium text-gray-600">ts:</span> ${this._escapeStatsText(ts)}</div>
                             <div><span class="font-medium text-gray-600">batch:</span> ${this._escapeStatsText(auditBatchNo)}</div>
                         </div>
