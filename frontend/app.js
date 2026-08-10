@@ -36,6 +36,7 @@ class SmartDocApp {
         this.orderId = null;
         this.ts = null;
         this.auditMode = localStorage.getItem('smartdoc_audit_mode') || 'document';
+        this.trainedRules = [];
 
         this.init();
     }
@@ -649,6 +650,151 @@ class SmartDocApp {
         UiHelpers.toggleModal('ruleModal', true);
     }
     
+    showRuleTrainingModal() {
+        this.trainedRules = [];
+        const input = document.getElementById('ruleTrainingInput');
+        const results = document.getElementById('ruleTrainingResults');
+        const applyBtn = document.getElementById('ruleTrainingApplyBtn');
+        if (input) input.value = '';
+        if (results) {
+            results.innerHTML = `
+                <div class="text-center text-gray-400 py-8 text-sm">
+                    <i class="fas fa-wand-magic-sparkles text-3xl mb-2 opacity-30"></i>
+                    <p>粘贴人类审核报告后，AI 会提炼可复用的候选规则</p>
+                </div>`;
+        }
+        if (applyBtn) applyBtn.disabled = true;
+        UiHelpers.toggleModal('ruleTrainingModal', true);
+    }
+
+    closeRuleTrainingModal() {
+        UiHelpers.toggleModal('ruleTrainingModal', false);
+    }
+
+    async trainRulesFromReport() {
+        const input = document.getElementById('ruleTrainingInput');
+        const btn = document.getElementById('ruleTrainingGenerateBtn');
+        const reviewReport = (input?.value || '').trim();
+        if (!reviewReport) {
+            alert('请先粘贴人类审核报告或评审经验');
+            return;
+        }
+
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 正在训练';
+        }
+        UiHelpers.setStatus('正在从审核报告中提炼规则...', true);
+
+        try {
+            const data = await RuleTrainingAPI.train(reviewReport, this.auditMode);
+            this.trainedRules = data.rules || [];
+            this.renderRuleTrainingResults();
+            UiHelpers.setStatus(`已生成 ${this.trainedRules.length} 条候选规则`);
+        } catch (err) {
+            UiHelpers.setStatus('规则训练失败: ' + err.message);
+            alert('规则训练失败: ' + err.message);
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-wand-magic-sparkles"></i> 生成推荐规则';
+            }
+        }
+    }
+
+    renderRuleTrainingResults() {
+        const container = document.getElementById('ruleTrainingResults');
+        const applyBtn = document.getElementById('ruleTrainingApplyBtn');
+        if (!container) return;
+
+        if (!this.trainedRules.length) {
+            container.innerHTML = `
+                <div class="text-center text-gray-400 py-8 text-sm">
+                    <i class="fas fa-circle-info text-2xl mb-2 opacity-40"></i>
+                    <p>没有提炼出可复用规则，可补充更多问题原因、原文片段或修改建议后重试</p>
+                </div>`;
+            if (applyBtn) applyBtn.disabled = true;
+            return;
+        }
+
+        container.innerHTML = this.trainedRules.map((rule, idx) => {
+            const severityClass = rule.severity === 'error' ? 'red' : rule.severity === 'info' ? 'blue' : 'yellow';
+            const confidence = rule.confidence ?? 70;
+            return `
+                <label class="block border border-gray-200 rounded-xl p-4 bg-white hover:bg-gray-50 transition-colors cursor-pointer">
+                    <div class="flex items-start gap-3">
+                        <input type="checkbox" class="rule-training-check mt-1 w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500" data-index="${idx}" checked onchange="app.updateRuleTrainingApplyState()">
+                        <div class="min-w-0 flex-1">
+                            <div class="flex items-center gap-2 mb-2">
+                                <span class="font-semibold text-sm text-gray-900">${this._escapeStatsText(rule.name || '未命名规则')}</span>
+                                <span class="px-2 py-0.5 rounded-full bg-${severityClass}-100 text-${severityClass}-700 text-xs">${this._severityText(rule.severity)}</span>
+                                <span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 text-xs">置信度 ${confidence}%</span>
+                            </div>
+                            ${rule.riskType ? `<div class="text-xs text-gray-500 mb-1"><span class="font-medium text-gray-600">风险类型：</span>${this._escapeStatsText(rule.riskType)}</div>` : ''}
+                            ${rule.sourceInsight ? `<div class="text-xs text-gray-500 mb-1"><span class="font-medium text-gray-600">来源经验：</span>${this._escapeStatsText(rule.sourceInsight)}</div>` : ''}
+                            ${rule.triggerScenario ? `<div class="text-xs text-gray-500 mb-2"><span class="font-medium text-gray-600">触发场景：</span>${this._escapeStatsText(rule.triggerScenario)}</div>` : ''}
+                            <div class="text-xs text-gray-700 bg-gray-50 border border-gray-100 rounded-lg p-3 leading-relaxed whitespace-pre-wrap">${this._escapeStatsText(rule.prompt || '')}</div>
+                            ${(rule.positiveExample || rule.negativeExample) ? `
+                                <div class="grid grid-cols-2 gap-2 mt-2">
+                                    <div class="text-xs bg-red-50 text-red-700 rounded-lg p-2"><span class="font-medium">命中：</span>${this._escapeStatsText(rule.positiveExample || '-')}</div>
+                                    <div class="text-xs bg-green-50 text-green-700 rounded-lg p-2"><span class="font-medium">不命中：</span>${this._escapeStatsText(rule.negativeExample || '-')}</div>
+                                </div>` : ''}
+                        </div>
+                    </div>
+                </label>`;
+        }).join('');
+
+        this.updateRuleTrainingApplyState();
+    }
+
+    updateRuleTrainingApplyState() {
+        const applyBtn = document.getElementById('ruleTrainingApplyBtn');
+        if (!applyBtn) return;
+        const checkedCount = document.querySelectorAll('.rule-training-check:checked').length;
+        const locked = this._isCurrentGroupLocked();
+        applyBtn.disabled = checkedCount === 0 || locked;
+        applyBtn.textContent = locked ? '规则组已上锁' : `应用选中规则（${checkedCount}）`;
+    }
+
+    async applyTrainedRules() {
+        if (this._isCurrentGroupLocked()) {
+            alert('规则组已上锁，无法应用训练规则');
+            return;
+        }
+        const selected = Array.from(document.querySelectorAll('.rule-training-check:checked'))
+            .map(el => this.trainedRules[Number(el.dataset.index)])
+            .filter(Boolean);
+        if (!selected.length) {
+            alert('请至少选择一条候选规则');
+            return;
+        }
+
+        const startOrder = this.rules.length;
+        selected.forEach((rule, offset) => {
+            this.rules.push({
+                id: Date.now() + offset,
+                name: rule.name || `训练规则${startOrder + offset + 1}`,
+                prompt: rule.prompt || '',
+                severity: rule.severity || 'warning',
+                triggerCondition: null,
+                enabled: true,
+                sortOrder: startOrder + offset,
+                auditScope: this.auditMode
+            });
+        });
+
+        this.renderRules();
+        await this._autoSave();
+        this.closeRuleTrainingModal();
+        UiHelpers.setStatus(`已应用 ${selected.length} 条训练规则到当前规则组`);
+    }
+
+    _severityText(severity) {
+        if (severity === 'error') return '错误';
+        if (severity === 'info') return '提示';
+        return '警告';
+    }
+
     editRule(idx) {
         if (this._isCurrentGroupLocked()) {
             this.viewRule(idx);

@@ -211,6 +211,21 @@ const RulesManager = {
     }
 };
 
+const RuleTrainingAPI = {
+    async train(reviewReport, auditMode = 'document') {
+        const response = await fetch('/api/config/rules/train', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reviewReport, auditMode })
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || err.message || '规则训练失败');
+        }
+        return response.json();
+    }
+};
+
 const ConfigLoader = {
     async loadTemplateList() {
         return { 

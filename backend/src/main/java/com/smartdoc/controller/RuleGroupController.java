@@ -3,7 +3,10 @@ package com.smartdoc.controller;
 import com.smartdoc.dto.LockRequestDto;
 import com.smartdoc.dto.RuleGroupDto;
 import com.smartdoc.dto.RuleDto;
+import com.smartdoc.dto.RuleTrainingRequestDto;
+import com.smartdoc.dto.RuleTrainingResponseDto;
 import com.smartdoc.service.RuleGroupService;
+import com.smartdoc.service.RuleTrainingService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -27,6 +30,7 @@ import java.util.Map;
 public class RuleGroupController {
 
     private final RuleGroupService ruleGroupService;
+    private final RuleTrainingService ruleTrainingService;
 
     @GetMapping
     public ResponseEntity<Map<String, Object>> getAllRuleGroups() {
@@ -61,6 +65,11 @@ public class RuleGroupController {
         response.put("path", "config/rules/" + created.getGroupId() + ".json");
         
         return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/train")
+    public ResponseEntity<RuleTrainingResponseDto> trainRules(@Valid @RequestBody RuleTrainingRequestDto dto) {
+        return ResponseEntity.ok(ruleTrainingService.trainRules(dto.getReviewReport(), dto.getAuditMode()));
     }
 
     @PutMapping("/{groupId}")

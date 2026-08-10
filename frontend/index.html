@@ -227,6 +227,9 @@
                                 <i class="fas fa-trash-alt w-4 text-red-500"></i> 删除当前组
                             </button>
                             <hr class="my-1 border-gray-100">
+                            <button onclick="app.showRuleTrainingModal(); app.toggleGroupActions()" class="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 text-left">
+                                <i class="fas fa-wand-magic-sparkles w-4 text-emerald-500"></i> 规则训练
+                            </button>
                             <button onclick="app.showImportExportModal(); app.toggleGroupActions()" class="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 text-left">
                                 <i class="fas fa-exchange-alt w-4 text-purple-500"></i> 导入/导出规则
                             </button>
@@ -320,6 +323,56 @@
 </div>
 
 <!-- 设置模态框 -->
+<div id="ruleTrainingModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
+        <div class="p-6 border-b border-gray-100 flex justify-between items-center">
+            <div>
+                <h2 class="text-lg font-bold text-gray-900">
+                    <i class="fas fa-wand-magic-sparkles text-emerald-600 mr-2"></i>规则训练
+                </h2>
+                <p class="text-xs text-gray-500 mt-1">从人类审核报告中提炼可复用、可执行、可判断的审核规则</p>
+            </div>
+            <button onclick="app.closeRuleTrainingModal()" class="text-gray-400 hover:text-gray-600">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+
+        <div class="grid grid-cols-2 gap-0 min-h-0 flex-1">
+            <div class="p-6 border-r border-gray-100 flex flex-col min-h-0">
+                <label class="block text-sm font-medium text-gray-700 mb-2">人类审核报告 / 评审经验</label>
+                <textarea id="ruleTrainingInput" class="flex-1 min-h-[360px] w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm resize-none" placeholder="例如：合同中约定“项目完成后付款”，但没有说明完成标准、验收主体和付款期限，后续容易产生争议。建议补充验收标准、付款期限和异议处理流程。"></textarea>
+                <div class="mt-3 bg-emerald-50 border border-emerald-100 rounded-lg p-3 text-xs text-emerald-800 leading-relaxed">
+                    <i class="fas fa-circle-info mr-1"></i>
+                    建议粘贴包含“问题描述、风险原因、原文片段、修改建议”的审核报告。AI 会自动丢弃难以泛化的个案意见。
+                </div>
+            </div>
+
+            <div class="p-6 flex flex-col min-h-0">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-sm font-semibold text-gray-900">候选规则</h3>
+                    <button id="ruleTrainingGenerateBtn" onclick="app.trainRulesFromReport()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                        <i class="fas fa-wand-magic-sparkles"></i> 生成推荐规则
+                    </button>
+                </div>
+                <div id="ruleTrainingResults" class="flex-1 overflow-y-auto space-y-3 pr-1">
+                    <div class="text-center text-gray-400 py-8 text-sm">
+                        <i class="fas fa-wand-magic-sparkles text-3xl mb-2 opacity-30"></i>
+                        <p>粘贴人类审核报告后，AI 会提炼可复用的候选规则</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="p-6 border-t border-gray-100 flex justify-between items-center">
+            <p class="text-xs text-gray-500">应用后会追加到当前规则组，并沿用当前审核模式。</p>
+            <div class="flex gap-3">
+                <button onclick="app.closeRuleTrainingModal()" class="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg text-sm">取消</button>
+                <button id="ruleTrainingApplyBtn" onclick="app.applyTrainedRules()" disabled class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">应用选中规则（0）</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div id="settingsModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
     <div class="bg-white rounded-2xl shadow-2xl w-[600px] max-h-[80vh] flex flex-col">
         <div class="p-6 border-b border-gray-100 flex justify-between items-center">
