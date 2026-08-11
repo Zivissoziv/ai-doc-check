@@ -24,11 +24,12 @@
 - 新规则只是在已有规则上增加很小的措辞细节，但不能显著提升审核能力，视为重复；
 - 如果新规则覆盖的是更具体、独立、可判断的风险点，可以保留。
 
-每条规则的 prompt 必须包含：检查对象、判定标准、风险原因、输出要求（指出位置、问题、风险说明、修改建议）。
+每条规则的 prompt 必须包含：检查对象、判定标准、判定边界；不要在规则 prompt 中写风险原因、审核结果格式或输出字段要求。风险原因请写在 generalizedRisk 字段中用于外层展示。
 severity 只能是 error、warning、info。高概率造成合规、资金、法律、履约重大风险时用 error；一般风险用 warning；轻微提示用 info。
 auditScope 固定为 "{auditScope}"。
 
-请只输出 JSON，不要输出解释文字。输出格式：
+请只输出 JSON，不要输出解释文字。不要输出 confidence 或置信度字段。
+输出格式：
 {
   "duplicateHints": [
     "审核报告中的某条经验已被已有规则《规则名称》覆盖，因此未生成新规则"
@@ -40,11 +41,10 @@ auditScope 固定为 "{auditScope}"。
       "sourceInsight": "这条规则来自人类报告中的哪类审核经验",
       "generalizedRisk": "泛化后的风险描述",
       "triggerScenario": "什么情况下需要检查这条规则",
-      "prompt": "可直接用于AI审核的规则提示词",
+      "prompt": "只描述检查对象、判定标准和判定边界的规则提示词",
       "severity": "error|warning|info",
-      "positiveExample": "命中示例",
-      "negativeExample": "不命中示例",
-      "confidence": 0,
+      "passExample": "通过示例，即符合规则、不应提示风险的文本",
+      "failExample": "不通过示例，即违反规则、应提示风险的文本",
       "auditScope": "{auditScope}"
     }
   ]

@@ -25,11 +25,9 @@ public class RuleTrainingCandidateDto {
 
     private String severity;
 
-    private String positiveExample;
+    private String passExample;
 
-    private String negativeExample;
-
-    private Integer confidence;
+    private String failExample;
 
     private String auditScope;
 }

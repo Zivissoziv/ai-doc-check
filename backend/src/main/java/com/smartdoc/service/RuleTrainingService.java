@@ -175,9 +175,8 @@ public class RuleTrainingService {
                     .triggerScenario(node.path("triggerScenario").asText(""))
                     .prompt(prompt.trim())
                     .severity(normalizeSeverity(node.path("severity").asText("warning")))
-                    .positiveExample(node.path("positiveExample").asText(""))
-                    .negativeExample(node.path("negativeExample").asText(""))
-                    .confidence(clamp(node.path("confidence").asInt(70), 0, 100))
+                    .passExample(node.path("passExample").asText(""))
+                    .failExample(node.path("failExample").asText(""))
                     .auditScope(scope)
                     .build());
         }
@@ -224,7 +223,4 @@ public class RuleTrainingService {
         return text.length() <= maxLength ? text : text.substring(0, maxLength);
     }
 
-    private int clamp(int value, int min, int max) {
-        return Math.max(min, Math.min(max, value));
-    }
 }

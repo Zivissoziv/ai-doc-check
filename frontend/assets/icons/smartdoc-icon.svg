@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AI document sparkle icon">
+  <defs>
+    <linearGradient id="bg" x1="12" y1="6" x2="52" y2="58" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2563eb"/>
+      <stop offset="0.55" stop-color="#0f766e"/>
+      <stop offset="1" stop-color="#14b8a6"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="21" y1="14" x2="43" y2="49" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dff7f3"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#bg)"/>
+  <path d="M21 14h16l9 9v26a4 4 0 0 1-4 4H21a4 4 0 0 1-4-4V18a4 4 0 0 1 4-4Z" fill="url(#paper)"/>
+  <path d="M37 14v8a2 2 0 0 0 2 2h7" fill="#bff1ea"/>
+  <path d="M25 32h14M25 39h11" stroke="#0f766e" stroke-width="3" stroke-linecap="round"/>
+  <path d="M46 8l2.6 6.1L55 17l-6.4 2.9L46 26l-2.6-6.1L37 17l6.4-2.9L46 8Z" fill="#facc15"/>
+  <path d="M18 47l1.5 3.5L23 52l-3.5 1.5L18 57l-1.5-3.5L13 52l3.5-1.5L18 47Z" fill="#ffffff"/>
+</svg>
