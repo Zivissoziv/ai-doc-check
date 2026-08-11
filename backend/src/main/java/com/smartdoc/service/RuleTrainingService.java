@@ -2,6 +2,7 @@ package com.smartdoc.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartdoc.dto.RuleDto;
 import com.smartdoc.dto.RuleTrainingCandidateDto;
 import com.smartdoc.dto.RuleTrainingResponseDto;
 import com.smartdoc.entity.ApiConfig;
@@ -31,28 +32,64 @@ import java.util.regex.Pattern;
 public class RuleTrainingService {
 
     private final ApiConfigService apiConfigService;
+    private final RuleGroupService ruleGroupService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${smartdoc.audit.timeout:120}")
     private int timeout;
 
-    public RuleTrainingResponseDto trainRules(String reviewReport, String auditMode) {
+    public RuleTrainingResponseDto trainRules(String reviewReport, String auditMode, String groupId) {
         ApiConfig apiConfig = apiConfigService.getRawApiConfig();
         if (apiConfig == null || apiConfig.getEndpoint() == null || apiConfig.getEndpoint().trim().isEmpty()) {
             throw new IllegalArgumentException("请先配置AI API");
         }
 
         String scope = "ticket".equalsIgnoreCase(auditMode) ? "ticket" : "document";
-        String content = callLLM(buildTrainingPrompt(reviewReport, scope), apiConfig);
-        List<RuleTrainingCandidateDto> rules = parseRules(content, scope);
-        return RuleTrainingResponseDto.builder().rules(rules).build();
+        String existingRules = buildExistingRulesContext(groupId, scope);
+        String content = callLLM(buildTrainingPrompt(reviewReport, scope, existingRules), apiConfig);
+        JsonNode root = parseRoot(content);
+
+        return RuleTrainingResponseDto.builder()
+                .rules(parseRules(root, scope))
+                .duplicateHints(parseDuplicateHints(root))
+                .build();
     }
 
-    private String buildTrainingPrompt(String reviewReport, String scope) {
+    private String buildTrainingPrompt(String reviewReport, String scope, String existingRules) {
         Map<String, String> params = new HashMap<>();
         params.put("auditScope", scope);
         params.put("reviewReport", reviewReport);
+        params.put("existingRules", existingRules);
         return PromptTemplate.format("rule-training-user", params);
+    }
+
+    private String buildExistingRulesContext(String groupId, String scope) {
+        if (groupId == null || groupId.trim().isEmpty()) {
+            return "当前未指定规则组。";
+        }
+        try {
+            List<RuleDto> rules = ruleGroupService.getRulesByGroupId(groupId, scope);
+            if (rules == null || rules.isEmpty()) {
+                return "当前规则组暂无已有规则。";
+            }
+
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < rules.size(); i++) {
+                RuleDto rule = rules.get(i);
+                sb.append(i + 1)
+                        .append(". ")
+                        .append(rule.getName() != null ? rule.getName() : "")
+                        .append(" | 级别: ")
+                        .append(rule.getSeverity() != null ? rule.getSeverity() : "warning")
+                        .append("\n")
+                        .append(rule.getPrompt() != null ? rule.getPrompt() : "")
+                        .append("\n\n");
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            log.warn("加载规则组已有规则失败，规则训练将不进行重复规则上下文判断: {}", e.getMessage());
+            return "当前规则组已有规则加载失败。";
+        }
     }
 
     private String callLLM(String prompt, ApiConfig apiConfig) {
@@ -108,39 +145,58 @@ public class RuleTrainingService {
         }
     }
 
-    private List<RuleTrainingCandidateDto> parseRules(String content, String scope) {
+    private JsonNode parseRoot(String content) {
         try {
-            JsonNode rulesNode = objectMapper.readTree(content).path("rules");
-            List<RuleTrainingCandidateDto> rules = new ArrayList<>();
-            if (!rulesNode.isArray()) {
-                return rules;
-            }
-            for (JsonNode node : rulesNode) {
-                String name = trimToLength(node.path("name").asText(""), 100);
-                String prompt = node.path("prompt").asText("");
-                if (name.isEmpty() || prompt.trim().isEmpty()) {
-                    continue;
-                }
-                String severity = normalizeSeverity(node.path("severity").asText("warning"));
-                rules.add(RuleTrainingCandidateDto.builder()
-                        .name(name)
-                        .riskType(node.path("riskType").asText(""))
-                        .sourceInsight(node.path("sourceInsight").asText(""))
-                        .generalizedRisk(node.path("generalizedRisk").asText(""))
-                        .triggerScenario(node.path("triggerScenario").asText(""))
-                        .prompt(prompt.trim())
-                        .severity(severity)
-                        .positiveExample(node.path("positiveExample").asText(""))
-                        .negativeExample(node.path("negativeExample").asText(""))
-                        .confidence(clamp(node.path("confidence").asInt(70), 0, 100))
-                        .auditScope(scope)
-                        .build());
-            }
-            return rules;
+            return objectMapper.readTree(content);
         } catch (Exception e) {
             log.warn("解析规则训练结果失败: {}", e.getMessage());
             throw new RuntimeException("AI生成的规则格式无效，请重试", e);
         }
+    }
+
+    private List<RuleTrainingCandidateDto> parseRules(JsonNode root, String scope) {
+        List<RuleTrainingCandidateDto> rules = new ArrayList<>();
+        JsonNode rulesNode = root.path("rules");
+        if (!rulesNode.isArray()) {
+            return rules;
+        }
+
+        for (JsonNode node : rulesNode) {
+            String name = trimToLength(node.path("name").asText(""), 100);
+            String prompt = node.path("prompt").asText("");
+            if (name.isEmpty() || prompt.trim().isEmpty()) {
+                continue;
+            }
+            rules.add(RuleTrainingCandidateDto.builder()
+                    .name(name)
+                    .riskType(node.path("riskType").asText(""))
+                    .sourceInsight(node.path("sourceInsight").asText(""))
+                    .generalizedRisk(node.path("generalizedRisk").asText(""))
+                    .triggerScenario(node.path("triggerScenario").asText(""))
+                    .prompt(prompt.trim())
+                    .severity(normalizeSeverity(node.path("severity").asText("warning")))
+                    .positiveExample(node.path("positiveExample").asText(""))
+                    .negativeExample(node.path("negativeExample").asText(""))
+                    .confidence(clamp(node.path("confidence").asInt(70), 0, 100))
+                    .auditScope(scope)
+                    .build());
+        }
+        return rules;
+    }
+
+    private List<String> parseDuplicateHints(JsonNode root) {
+        List<String> hints = new ArrayList<>();
+        JsonNode duplicateNode = root.path("duplicateHints");
+        if (!duplicateNode.isArray()) {
+            return hints;
+        }
+        for (JsonNode node : duplicateNode) {
+            String value = node.asText("");
+            if (value != null && !value.trim().isEmpty()) {
+                hints.add(value.trim());
+            }
+        }
+        return hints;
     }
 
     private String repairJson(String content) {

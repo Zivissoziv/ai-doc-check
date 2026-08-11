@@ -14,4 +14,6 @@ import java.util.List;
 public class RuleTrainingResponseDto {
 
     private List<RuleTrainingCandidateDto> rules;
+
+    private List<String> duplicateHints;
 }

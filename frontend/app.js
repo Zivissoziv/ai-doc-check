@@ -37,6 +37,7 @@ class SmartDocApp {
         this.ts = null;
         this.auditMode = localStorage.getItem('smartdoc_audit_mode') || 'document';
         this.trainedRules = [];
+        this.ruleTrainingDuplicateHints = [];
 
         this.init();
     }
@@ -652,6 +653,7 @@ class SmartDocApp {
     
     showRuleTrainingModal() {
         this.trainedRules = [];
+        this.ruleTrainingDuplicateHints = [];
         const input = document.getElementById('ruleTrainingInput');
         const results = document.getElementById('ruleTrainingResults');
         const applyBtn = document.getElementById('ruleTrainingApplyBtn');
@@ -687,8 +689,9 @@ class SmartDocApp {
         UiHelpers.setStatus('正在从审核报告中提炼规则...', true);
 
         try {
-            const data = await RuleTrainingAPI.train(reviewReport, this.auditMode);
+            const data = await RuleTrainingAPI.train(reviewReport, this.auditMode, this.currentRuleGroup);
             this.trainedRules = data.rules || [];
+            this.ruleTrainingDuplicateHints = data.duplicateHints || [];
             this.renderRuleTrainingResults();
             UiHelpers.setStatus(`已生成 ${this.trainedRules.length} 条候选规则`);
         } catch (err) {
@@ -702,13 +705,31 @@ class SmartDocApp {
         }
     }
 
+    _renderRuleTrainingDuplicateHints() {
+        const hints = this.ruleTrainingDuplicateHints || [];
+        if (!hints.length) return '';
+        return `
+            <div class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                <div class="mb-1 font-semibold"><i class="fas fa-clone mr-1"></i>已有规则覆盖</div>
+                <div class="space-y-1">
+                    ${hints.map((hint, idx) => `
+                        <div class="flex gap-1.5">
+                            <span class="shrink-0">${idx + 1}.</span>
+                            <span>${this._escapeStatsText(hint)}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>`;
+    }
+
     renderRuleTrainingResults() {
         const container = document.getElementById('ruleTrainingResults');
         const applyBtn = document.getElementById('ruleTrainingApplyBtn');
         if (!container) return;
+        const duplicateHtml = this._renderRuleTrainingDuplicateHints();
 
         if (!this.trainedRules.length) {
-            container.innerHTML = `
+            container.innerHTML = duplicateHtml + `
                 <div class="text-center text-gray-400 py-8 text-sm">
                     <i class="fas fa-circle-info text-2xl mb-2 opacity-40"></i>
                     <p>没有提炼出可复用规则，可补充更多问题原因、原文片段或修改建议后重试</p>
@@ -717,7 +738,7 @@ class SmartDocApp {
             return;
         }
 
-        container.innerHTML = this.trainedRules.map((rule, idx) => {
+        const rulesHtml = this.trainedRules.map((rule, idx) => {
             const severityClass = rule.severity === 'error' ? 'red' : rule.severity === 'info' ? 'blue' : 'yellow';
             const confidence = rule.confidence ?? 70;
             return `
@@ -743,6 +764,7 @@ class SmartDocApp {
                     </div>
                 </label>`;
         }).join('');
+        container.innerHTML = duplicateHtml + rulesHtml;
 
         this.updateRuleTrainingApplyState();
     }
@@ -1273,7 +1295,12 @@ class SmartDocApp {
             const auditRequest = {
                 ruleGroupId: this.currentRuleGroup,
                 documentText: isTicketMode
-                    ? TicketAuditView.toAuditText(this.ticketData, this.orderId || this.ticketId, this.ts)
+                    ? TicketAuditView.toAuditText(
+                        this.ticketData,
+                        this.orderId,
+                        this.ts,
+                        'orderId'
+                    )
                     : this.document.text,
                 documentType: 'txt',
                 data: this.ticketData,

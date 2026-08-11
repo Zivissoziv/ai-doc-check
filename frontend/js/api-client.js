@@ -212,11 +212,11 @@ const RulesManager = {
 };
 
 const RuleTrainingAPI = {
-    async train(reviewReport, auditMode = 'document') {
+    async train(reviewReport, auditMode = 'document', groupId = null) {
         const response = await fetch('/api/config/rules/train', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ reviewReport, auditMode })
+            body: JSON.stringify({ reviewReport, auditMode, groupId })
         });
         if (!response.ok) {
             const err = await response.json().catch(() => ({}));

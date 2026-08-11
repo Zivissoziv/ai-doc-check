@@ -12,5 +12,7 @@ public class RuleTrainingRequestDto {
     @Size(max = 20000, message = "审核报告内容不能超过20000字")
     private String reviewReport;
 
+    private String groupId;
+
     private String auditMode = "document";
 }

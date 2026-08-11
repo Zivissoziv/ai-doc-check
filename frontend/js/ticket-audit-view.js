@@ -1,7 +1,7 @@
 const TicketAuditView = {
     render(app) {
         this.renderDirectory(app.ticketData, 'structureTree');
-        this.renderDetail(app.ticketData, app.ticketId, app.ts, 'ticketContent');
+        this.renderDetail(app.ticketData, app.orderId, app.ts, 'ticketContent');
     },
 
     renderDirectory(data, containerId) {
@@ -209,10 +209,10 @@ const TicketAuditView = {
         setTimeout(() => el.classList.remove('ticket-field-highlight'), 1800);
     },
 
-    toAuditText(data, ticketId, ts) {
+    toAuditText(data, auditId, ts, idLabel = 'ticketId') {
         const header = [
             '工单信息',
-            ticketId ? `ticketId: ${ticketId}` : '',
+            auditId ? `${idLabel}: ${auditId}` : '',
             ts ? `ts: ${ts}` : ''
         ].filter(Boolean).join('\n');
         return `${header}\n\n${JSON.stringify(data || {}, null, 2)}`;

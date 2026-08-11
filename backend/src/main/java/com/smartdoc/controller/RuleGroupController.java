@@ -69,7 +69,7 @@ public class RuleGroupController {
 
     @PostMapping("/train")
     public ResponseEntity<RuleTrainingResponseDto> trainRules(@Valid @RequestBody RuleTrainingRequestDto dto) {
-        return ResponseEntity.ok(ruleTrainingService.trainRules(dto.getReviewReport(), dto.getAuditMode()));
+        return ResponseEntity.ok(ruleTrainingService.trainRules(dto.getReviewReport(), dto.getAuditMode(), dto.getGroupId()));
     }
 
     @PutMapping("/{groupId}")
