@@ -39,7 +39,7 @@ const TicketAuditView = {
         const keys = this.getTopLevelKeys(data);
         if (keys.length === 0) {
             container.innerHTML = `
-                <div class="max-w-3xl mx-auto bg-white shadow-lg rounded-xl p-12 min-h-[800px]">
+                <div class="ticket-empty-sheet max-w-3xl mx-auto bg-white shadow-lg rounded-xl">
                     <div class="text-center text-gray-400 mt-32">
                         <i class="fas fa-clipboard-list text-6xl mb-4 opacity-20"></i>
                         <p>加载工单数据后开始审核</p>
@@ -49,7 +49,7 @@ const TicketAuditView = {
         }
 
         container.innerHTML = `
-            <div class="ticket-audit-sheet max-w-5xl mx-auto bg-white shadow-lg rounded-xl p-8 min-h-[800px]">
+            <div class="ticket-audit-sheet max-w-5xl mx-auto bg-white shadow-lg rounded-xl">
                 <div class="border-b border-gray-200 pb-5 mb-6">
                     <div class="flex items-start justify-between gap-4">
                         <div>

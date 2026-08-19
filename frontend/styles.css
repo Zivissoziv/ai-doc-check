@@ -1326,6 +1326,13 @@ body {
 
 .ticket-audit-sheet {
     color: #1f2937;
+    min-height: min(800px, calc(100vh - 12rem));
+    padding: 2rem;
+}
+
+.ticket-empty-sheet {
+    min-height: min(800px, calc(100vh - 12rem));
+    padding: 3rem;
 }
 
 .ticket-json-block {
@@ -1337,8 +1344,9 @@ body {
 }
 
 .ticket-json-scroll {
-    max-height: calc(100vh - 300px);
-    min-height: 520px;
+    height: clamp(260px, calc(100vh - 22rem), 640px);
+    max-height: calc(100vh - 16rem);
+    min-height: 0;
 }
 
 .ticket-json-tree {
@@ -1445,4 +1453,24 @@ body {
 .ticket-field-highlight {
     background: #dbeafe !important;
     box-shadow: inset 3px 0 0 #3b82f6;
+}
+
+@media (max-height: 720px), (max-width: 1024px) {
+    #view-ticket {
+        padding: 1rem;
+    }
+
+    .ticket-audit-sheet {
+        min-height: 0;
+        padding: 1rem;
+    }
+
+    .ticket-empty-sheet {
+        min-height: 0;
+        padding: 1.5rem;
+    }
+
+    .ticket-json-scroll {
+        height: clamp(220px, calc(100vh - 18rem), 520px);
+    }
 }
