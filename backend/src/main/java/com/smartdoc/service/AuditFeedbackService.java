@@ -65,7 +65,9 @@ public class AuditFeedbackService {
             }
             AuditFeedback feedback = AuditFeedback.builder()
                     .ruleId(result.getRuleId() != null ? result.getRuleId().longValue() : null)
-                    .groupId(groupId)
+                    // 优先用结果自带的组ID（默认组+选中组混合审核时按行归属），否则回退到请求级 groupId
+                    .groupId(result.getGroupId() != null && !result.getGroupId().isEmpty()
+                            ? result.getGroupId() : groupId)
                     .auditBatchNo(batchNo)
                     .durationMs(durationMs)
                     .pass(result.getPass())

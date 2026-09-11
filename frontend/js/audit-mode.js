@@ -84,7 +84,39 @@ const AuditMode = {
             this.toggle('view-ticket', false);
             TreeRenderer.render(app.document?.tree || app.template?.tree || [], 'structureTree');
             UiHelpers.switchTab('preview');
+            this._restoreDocumentAuditResults(app);
         }
+    },
+
+    /**
+     * 简报模式会把简报内容渲染进 auditResults 容器，切回文档审核时恢复原有审核结果；
+     * 无审核结果时恢复初始空状态提示
+     */
+    _restoreDocumentAuditResults(app) {
+        const container = document.getElementById('auditResults');
+        if (!container) return;
+
+        const hasResults = Array.isArray(app.auditResults) && app.auditResults.some(Boolean);
+        if (!hasResults) {
+            container.innerHTML = `
+                <div class="text-center text-gray-400 mt-32">
+                    <i class="fas fa-clipboard-check text-6xl mb-4 opacity-20"></i>
+                    <p>点击"运行AI审核"开始检查</p>
+                </div>`;
+            return;
+        }
+
+        container.innerHTML = '<div class="space-y-4" id="auditList"></div>';
+        const auditList = document.getElementById('auditList');
+        app.auditResults.forEach((result, i) => {
+            if (!result) return;
+            const placeholder = document.createElement('div');
+            placeholder.id = 'audit-rule-' + i;
+            auditList.appendChild(placeholder);
+            AiAudit.renderResult(result, placeholder, i);
+        });
+        const badge = document.getElementById('auditBadge');
+        if (badge) badge.classList.remove('hidden');
     },
 
     setModeButton(mode, active) {

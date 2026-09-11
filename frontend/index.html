@@ -256,8 +256,7 @@
                         <button onclick="app.toggleGroupActions(event)" class="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors" title="更多操作">
                             <i class="fas fa-ellipsis-v"></i>
                         </button>
-                        <div id="groupActionsDropdown" class="hidden absolute right-0 top-full mt-1 w-48 bg-white rounded-xl shadow-lg border border-gray-200 py-1 z-50">
-                            <button onclick="app.showEditGroupModal(); app.toggleGroupActions()" class="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 text-left">
+                        <div id="groupActionsDropdown" class="hidden absolute right-0 top-full mt-1 w-48 bg-white rounded-xl shadow-lg border border-gray-200 py-1 z-50">                            <button onclick="app.showEditGroupModal(); app.toggleGroupActions()" class="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 text-left">
                                 <i class="fas fa-edit w-4 text-green-500"></i> 编辑组名称
                             </button>
                             <button id="briefStyleMenuItem" onclick="app.showBriefStyleModal(); app.toggleGroupActions()" class="hidden w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 text-left">
@@ -285,6 +284,10 @@
                             </button>
                         </div>
                     </div>
+                    <span id="defaultGroupBadge" style="display:none"
+                        class="relative flex-shrink-0 w-5 h-5 rounded-full bg-gray-100 border border-gray-300 text-gray-500 text-xs font-bold items-center justify-center cursor-default"
+                        title="">默<span id="defaultGroupBadgeNum"
+                        class="hidden absolute -top-1.5 -right-1.5 min-w-[14px] h-[14px] px-0.5 rounded-full bg-blue-600 text-white text-[10px] leading-[14px] text-center font-semibold"></span></span>
                 </div>
 
             <!-- Excel/工单数据 -->
@@ -658,6 +661,14 @@
                 <label class="block text-sm font-medium text-gray-700 mb-1">规则组名称</label>
                 <input type="text" id="groupName" placeholder="例如：我的规则组"
                     class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm">
+            </div>
+
+            <div id="groupDefaultField" class="hidden">
+                <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                    <input type="checkbox" id="groupIsDefault" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                    <span class="font-medium">设为默认规则组</span>
+                </label>
+                <p class="text-xs text-gray-500 mt-1">审核时会先自动用默认规则组审一遍，再叠加当前选择的规则组；结果按组打标签区分</p>
             </div>
         </div>
         

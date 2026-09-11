@@ -143,6 +143,20 @@ const RulesManager = {
         return response.json();
     },
 
+    /**
+     * 设置默认规则组（同类型内互斥，原默认组自动取消）
+     */
+    async setDefaultGroup(groupId) {
+        const response = await fetch(`/api/config/rules/${encodeURIComponent(groupId)}/default`, {
+            method: 'PUT'
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || '设置默认规则组失败');
+        }
+        return response.json();
+    },
+
     async deleteGroup(groupId) {
         const response = await fetch(`/api/config/rules/${groupId}`, {
             method: 'DELETE'
@@ -915,6 +929,10 @@ const AiAudit = {
         const summary = result.summary || '';
         const isKeywordMiss = summary.startsWith('未匹配关键词:');
         const isSkipped = summary && (summary.startsWith('已跳过:') || summary.startsWith('触发条件'));
+        const groupTagName = result._groupName || result.groupName || '';
+        const groupTag = groupTagName
+            ? `<span class="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700" title="来自规则组：${groupTagName}">${groupTagName}</span>`
+            : '';
 
         if (isSkipped) {
             div.className = 'bg-gray-50 rounded-xl border border-gray-300 p-6 fade-in opacity-75';
@@ -935,6 +953,7 @@ const AiAudit = {
                             <h3 class="font-semibold text-gray-600">${result.ruleName}</h3>
                             <div class="flex items-center gap-2 text-xs text-gray-500">
                                 <span class="px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">${skipLabel}</span>
+                                ${groupTag}
                                 <span>置信度: ${result.confidence}%</span>
                             </div>
                         </div>
@@ -996,6 +1015,7 @@ const AiAudit = {
                         <h3 class="font-semibold text-gray-900">${result.ruleName}</h3>
                         <div class="flex items-center gap-2 text-xs text-gray-500">
                             <span class="px-2 py-0.5 rounded-full bg-${severityClass}-100 text-${severityClass}-700">${result.severity === 'error' ? '错误' : result.severity === 'warning' ? '警告' : '信息'}</span>
+                            ${groupTag}
                             ${keywordMissBadge}
                             <span>置信度: ${result.confidence}%</span>
                         </div>

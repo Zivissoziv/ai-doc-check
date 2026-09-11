@@ -187,6 +187,33 @@ public class RuleGroupService {
         return group.map(this::convertToDto).orElse(null);
     }
 
+    /**
+     * 设置默认规则组：同类型内互斥（原默认组自动取消）
+     */
+    public void setDefaultRuleGroup(String groupId) {
+        Optional<RuleGroup> group = ruleGroupMapper.findByGroupId(groupId);
+        if (!group.isPresent()) {
+            throw new BusinessException("规则组 " + groupId + " 不存在");
+        }
+
+        RuleGroup target = group.get();
+        if (Boolean.TRUE.equals(target.getIsLocked())) {
+            throw new BusinessException("规则组已上锁，无法设为默认");
+        }
+
+        String type = target.getGroupType() != null ? target.getGroupType() : Rule.GroupType.AUDIT.name();
+        for (RuleGroup sameType : ruleGroupMapper.findByGroupType(type)) {
+            if (Boolean.TRUE.equals(sameType.getIsDefault())) {
+                sameType.setIsDefault(false);
+                ruleGroupMapper.updateById(sameType);
+            }
+        }
+
+        target.setIsDefault(true);
+        ruleGroupMapper.updateById(target);
+        log.info("设置默认规则组: {} (type={})", groupId, type);
+    }
+
     @Transactional(readOnly = true)
     public boolean getLockStatus(String groupId) {
         Optional<RuleGroup> group = ruleGroupMapper.findByGroupId(groupId);

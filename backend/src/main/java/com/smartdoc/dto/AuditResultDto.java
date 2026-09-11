@@ -29,6 +29,16 @@ public class AuditResultDto {
 
     private String summary;
 
+    /**
+     * 所属规则组ID（默认组+选中组多次审核时用于区分结果归属）
+     */
+    private String groupId;
+
+    /**
+     * 所属规则组名称（前端展示用标签）
+     */
+    private String groupName;
+
     private Long _feedbackId;
 
     private String _feedbackType;

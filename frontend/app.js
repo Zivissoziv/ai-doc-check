@@ -260,6 +260,7 @@ class SmartDocApp {
             }
 
             RulesManager.renderGroupSelector(this.ruleGroups, this.currentRuleGroup, 'ruleGroupSelect');
+            this._updateDefaultGroupBadge();
 
             if (this.currentRuleGroup) {
                 await this.loadCurrentGroupRules();
@@ -531,6 +532,37 @@ class SmartDocApp {
                 UiHelpers.setStatus(`规则组加载失败: ${err.message}`);
             }
         }
+        this._updateDefaultGroupBadge();
+    }
+
+    /**
+     * "默"徽标：常驻灰色标识（不随选中组切换消失），仅文档审核模式显示，变更简报模式不显示。
+     * 设置了默认规则组时右上角显示数字角标"1"（表示已设置 1 个默认规则组）；未设置时无角标。
+     * 悬停可见默认规则组名称。
+     */
+    _updateDefaultGroupBadge() {
+        const badge = document.getElementById('defaultGroupBadge');
+        if (!badge) return;
+        const numEl = document.getElementById('defaultGroupBadgeNum');
+        const defId = this.defaultRuleGroup;
+        const defName = this.ruleGroups.find(g => g.groupId === defId)?.name || defId || '';
+
+        // 变更简报不走默认组叠加，不显示"默"徽标
+        if (this.auditMode === 'brief' || !defId) {
+            badge.style.display = 'none';
+            if (numEl) numEl.classList.add('hidden');
+            if (this.auditMode !== 'brief') {
+                badge.title = '未设置默认规则组。可在"编辑组名称"中勾选"设为默认规则组"';
+            }
+            return;
+        }
+
+        badge.style.display = 'flex';
+        if (numEl) {
+            numEl.textContent = '1';
+            numEl.classList.remove('hidden');
+        }
+        badge.title = `默认规则组：${defName}`;
     }
 
     async toggleRuleStatus(idx) {
@@ -860,6 +892,18 @@ class SmartDocApp {
         }
 
         document.getElementById('groupName').value = isCreate ? '' : (this.ruleGroups.find(g => g.groupId === this.currentRuleGroup)?.name || '');
+
+        const defaultField = document.getElementById('groupDefaultField');
+        if (isCreate || this.auditMode === 'brief') {
+            // 新建模式与变更简报模式（不走默认组叠加）不展示默认组选项
+            defaultField.classList.add('hidden');
+        } else {
+            const group = this.ruleGroups.find(g => g.groupId === this.currentRuleGroup);
+            this._groupWasDefault = !!group?.isDefault;
+            document.getElementById('groupIsDefault').checked = this._groupWasDefault;
+            defaultField.classList.remove('hidden');
+        }
+
         UiHelpers.toggleModal('groupModal', true);
     }
     
@@ -920,6 +964,25 @@ class SmartDocApp {
                 const group = this.ruleGroups.find(g => g.groupId === groupId);
                 if (group) group.name = groupName;
                 RulesManager.renderGroupSelector(this.ruleGroups, groupId, 'ruleGroupSelect');
+
+                // 勾选了"设为默认规则组"且当前还不是默认 → 调接口切换默认组
+                const wantsDefault = document.getElementById('groupIsDefault').checked;
+                if (wantsDefault && !this._groupWasDefault) {
+                    try {
+                        await RulesManager.setDefaultGroup(groupId);
+                        this.ruleGroups.forEach(g => { g.isDefault = g.groupId === groupId; });
+                        this.defaultRuleGroup = groupId;
+                        RulesManager.renderGroupSelector(this.ruleGroups, this.currentRuleGroup, 'ruleGroupSelect');
+                        this._updateDefaultGroupBadge();
+                        this.closeGroupModal();
+                        UiHelpers.setStatus('规则组已更新并设为默认');
+                    } catch (err) {
+                        alert('设置默认规则组失败: ' + err.message);
+                    }
+                    return;
+                }
+
+                this._updateDefaultGroupBadge();
                 this.closeGroupModal();
                 UiHelpers.setStatus('规则组名称已更新');
             } catch (err) {
@@ -949,11 +1012,16 @@ class SmartDocApp {
         }
 
         try {
-            await RulesManager.deleteGroup(this.currentRuleGroup);
-            this.ruleGroups = this.ruleGroups.filter(g => g.groupId !== this.currentRuleGroup);
+            const deletedGroupId = this.currentRuleGroup;
+            await RulesManager.deleteGroup(deletedGroupId);
+            this.ruleGroups = this.ruleGroups.filter(g => g.groupId !== deletedGroupId);
+            if (this.defaultRuleGroup === deletedGroupId) {
+                this.defaultRuleGroup = null;
+            }
             this.currentRuleGroup = this.ruleGroups[0]?.groupId;
             this._setSavedRuleGroup(this.currentRuleGroup);
             RulesManager.renderGroupSelector(this.ruleGroups, this.currentRuleGroup, 'ruleGroupSelect');
+            this._updateDefaultGroupBadge();
             await this.loadCurrentGroupRules();
             UiHelpers.setStatus('规则组已删除');
         } catch (err) {
@@ -1199,6 +1267,17 @@ class SmartDocApp {
             return;
         }
 
+        // 默认规则组自动叠加：默认组先审，再叠加用户选中的组；若选中组本身就是默认组则只审一次
+        const auditGroups = [];
+        if (this.defaultRuleGroup
+                && this.defaultRuleGroup !== this.currentRuleGroup
+                && this.ruleGroups.some(g => g.groupId === this.defaultRuleGroup
+                    && String(g.groupType || 'audit').toLowerCase() !== 'brief')) {
+            auditGroups.push(this.defaultRuleGroup);
+        }
+        auditGroups.push(this.currentRuleGroup);
+        this._multiGroupAudit = auditGroups.length > 1;
+
         this.isAuditing = true;
         this._auditStartTime = Date.now();
         const btn = document.getElementById('runAuditBtn');
@@ -1212,115 +1291,149 @@ class SmartDocApp {
 
         try {
             const auditList = document.getElementById('auditList');
-            const placeholders = syncedRules.map((rule, i) => {
-                const div = document.createElement('div');
-                div.id = 'audit-rule-' + i;
-                div.innerHTML = `
-                    <div class="bg-white rounded-xl border border-gray-200 p-6 animate-pulse">
-                        <div class="flex items-center gap-3 mb-4">
-                            <div class="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center">
-                                <i class="fas fa-spinner fa-spin text-gray-400"></i>
-                            </div>
-                            <div class="flex-1">
-                                <div class="h-4 bg-gray-200 rounded w-1/3 mb-2"></div>
-                                <div class="flex items-center gap-2">
-                                    <span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-400 text-xs">${rule.severity === 'error' ? '错误' : rule.severity === 'warning' ? '警告' : '信息'}</span>
-                                    <span class="text-xs text-gray-300"><i class="fas fa-spinner fa-spin"></i> 审核中...</span>
+            const placeholders = [];
+            let allResults = [];
+            let globalIdx = 0;
+
+            for (const groupId of auditGroups) {
+                const groupName = this.ruleGroups.find(g => g.groupId === groupId)?.name || groupId;
+
+                // 每组执行前拉取该组最新规则（选中组在前面已同步为最新，直接复用）
+                let groupRules;
+                if (groupId === this.currentRuleGroup) {
+                    groupRules = this.rules;
+                } else {
+                    const groupFreshRules = await RulesManager.loadFromServer(groupId, this.auditMode);
+                    groupRules = groupFreshRules && groupFreshRules.length > 0
+                        ? this._filterRulesForCurrentMode(groupFreshRules)
+                        : [];
+                }
+                const activeRules = groupRules.filter(r => r.enabled !== false);
+                if (activeRules.length === 0) {
+                    console.warn(`规则组 ${groupName}(${groupId}) 无启用的审核规则，已跳过`);
+                    continue;
+                }
+
+                const groupPlaceholders = activeRules.map((rule, i) => {
+                    const div = document.createElement('div');
+                    div.id = 'audit-rule-' + (globalIdx + i);
+                    div.innerHTML = `
+                        <div class="bg-white rounded-xl border border-gray-200 p-6 animate-pulse">
+                            <div class="flex items-center gap-3 mb-4">
+                                <div class="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center">
+                                    <i class="fas fa-spinner fa-spin text-gray-400"></i>
+                                </div>
+                                <div class="flex-1">
+                                    <div class="h-4 bg-gray-200 rounded w-1/3 mb-2"></div>
+                                    <div class="flex items-center gap-2">
+                                        <span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-400 text-xs">${rule.severity === 'error' ? '错误' : rule.severity === 'warning' ? '警告' : '信息'}</span>
+                                        <span class="text-xs text-gray-300"><i class="fas fa-spinner fa-spin"></i> 审核中...</span>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                        <div class="space-y-2">
-                            <div class="h-3 bg-gray-100 rounded w-full"></div>
-                            <div class="h-3 bg-gray-100 rounded w-2/3"></div>
-                        </div>
-                    </div>`;
-                auditList.appendChild(div);
-                return div;
-            });
-
-            const auditRequest = {
-                ruleGroupId: this.currentRuleGroup,
-                documentText: this.document.text,
-                documentType: 'txt',
-                data: this.ticketData,
-                auditMode: this.auditMode,
-                ticketId: this.ticketId,
-                ts: this.ts,
-                settings: {
-                    endpoint: this.settings.endpoint,
-                    model: this.settings.model,
-                    auditRole: this.settings.auditRole,
-                    repeatPrompt: this.settings.repeatPrompt,
-                    batchSize: this.settings.batchSize,
-                    temperature: this.settings.temperature
-                }
-            };
-
-            const batchSize = this.settings.batchSize || 0;
-            let allResults = [];
-
-            if (batchSize > 0) {
-                const response = await fetch('/api/audit/stream', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(auditRequest)
+                            <div class="space-y-2">
+                                <div class="h-3 bg-gray-100 rounded w-full"></div>
+                                <div class="h-3 bg-gray-100 rounded w-2/3"></div>
+                            </div>
+                        </div>`;
+                    auditList.appendChild(div);
+                    placeholders[globalIdx + i] = div;
+                    return div;
                 });
 
-                if (!response.ok) {
-                    throw new Error('审核请求失败');
-                }
+                const auditRequest = {
+                    ruleGroupId: groupId,
+                    documentText: this.document.text,
+                    documentType: 'txt',
+                    data: this.ticketData,
+                    auditMode: this.auditMode,
+                    ticketId: this.ticketId,
+                    ts: this.ts,
+                    settings: {
+                        endpoint: this.settings.endpoint,
+                        model: this.settings.model,
+                        auditRole: this.settings.auditRole,
+                        repeatPrompt: this.settings.repeatPrompt,
+                        batchSize: this.settings.batchSize,
+                        temperature: this.settings.temperature
+                    }
+                };
 
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = '';
+                const batchSize = this.settings.batchSize || 0;
 
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
+                if (batchSize > 0) {
+                    const response = await fetch('/api/audit/stream', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(auditRequest)
+                    });
 
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop();
+                    if (!response.ok) {
+                        throw new Error('审核请求失败');
+                    }
 
-                    for (const line of lines) {
-                        if (!line.trim()) continue;
-                        try {
-                            const parsed = JSON.parse(line);
-                            const idx = parsed.index;
-                            const result = parsed.result;
-                            if (idx != null && result) {
-                                this.auditResults[idx] = result;
-                                AiAudit.renderResult(result, placeholders[idx], idx);
-                                allResults[idx] = result;
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop();
+
+                        for (const line of lines) {
+                            if (!line.trim()) continue;
+                            try {
+                                const parsed = JSON.parse(line);
+                                const idx = globalIdx + parsed.index;
+                                const result = parsed.result;
+                                if (parsed.index != null && result) {
+                                    const tagged = this._multiGroupAudit
+                                        ? { ...result, _groupId: groupId, _groupName: groupName }
+                                        : result;
+                                    this.auditResults[idx] = tagged;
+                                    AiAudit.renderResult(tagged, placeholders[idx], idx);
+                                    allResults[idx] = tagged;
+                                }
+                            } catch (e) {
+                                console.error('解析流式结果失败:', e);
                             }
-                        } catch (e) {
-                            console.error('解析流式结果失败:', e);
                         }
                     }
+                } else {
+                    const response = await fetch('/api/audit', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(auditRequest)
+                    });
+
+                    if (!response.ok) {
+                        const err = await response.json();
+                        throw new Error(err.error || '审核请求失败');
+                    }
+
+                    const data = await response.json();
+                    (data.results || []).forEach((result, i) => {
+                        const idx = globalIdx + i;
+                        const tagged = this._multiGroupAudit
+                            ? { ...result, _groupId: groupId, _groupName: groupName }
+                            : result;
+                        this.auditResults[idx] = tagged;
+                        allResults[idx] = tagged;
+                        if (placeholders[idx]) {
+                            AiAudit.renderResult(tagged, placeholders[idx], idx);
+                        }
+                    });
                 }
-            } else {
-                const response = await fetch('/api/audit', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(auditRequest)
-                });
 
-                if (!response.ok) {
-                    const err = await response.json();
-                    throw new Error(err.error || '审核请求失败');
-                }
-
-                const data = await response.json();
-                allResults = data.results || [];
-
-                allResults.forEach((result, i) => {
-                    this.auditResults[i] = result;
-                    AiAudit.renderResult(result, placeholders[i], i);
-                });
+                globalIdx += activeRules.length;
             }
 
+            const validResults = allResults.filter(Boolean);
             try {
-                const validResults = allResults.filter(Boolean);
                 const needsSave = validResults.some(r => !r._feedbackId);
                 if (needsSave) {
                     const saveResults = validResults.map(r => ({
@@ -1331,7 +1444,9 @@ class SmartDocApp {
                         skipped: r.skipped,
                         confidence: r.confidence,
                         issues: r.issues || [],
-                        summary: r.summary || ''
+                        summary: r.summary || '',
+                        groupId: r._groupId || this.currentRuleGroup,
+                        groupName: r._groupName || null
                     }));
                     const auditDuration = Date.now() - (this._auditStartTime || Date.now());
                     const saveResponse = await FeedbackAPI.saveAuditResults(
@@ -1350,7 +1465,7 @@ class SmartDocApp {
                 console.error('保存审核结果失败:', err);
             }
 
-            UiHelpers.setStatus(`审核完成，共检查 ${syncedRules.length} 条规则`);
+            UiHelpers.setStatus(`审核完成，共检查 ${validResults.length} 条规则${this._multiGroupAudit ? '（默认规则组 + 当前规则组）' : ''}`);
             document.getElementById('auditBadge').classList.remove('hidden');
             UiHelpers.switchTab('audit');
 

@@ -84,6 +84,16 @@ public class RuleGroupController {
         return ResponseEntity.ok(updated);
     }
 
+    @PutMapping("/{groupId}/default")
+    public ResponseEntity<Map<String, Object>> setDefaultRuleGroup(@PathVariable String groupId) {
+        ruleGroupService.setDefaultRuleGroup(groupId);
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("success", true);
+        response.put("defaultGroup", groupId);
+        return ResponseEntity.ok(response);
+    }
+
     @DeleteMapping("/{groupId}")
     public ResponseEntity<Map<String, Object>> deleteRuleGroup(@PathVariable String groupId) {
         ruleGroupService.deleteRuleGroup(groupId);
