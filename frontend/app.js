@@ -35,6 +35,9 @@ class SmartDocApp {
         this.ticketId = null;
         this.orderId = null;
         this.ts = null;
+        this.orderList = [];
+        this.briefContent = null;
+        this._briefPollToken = 0;
         this.auditMode = localStorage.getItem('smartdoc_audit_mode') || 'document';
         this.trainedRules = [];
         this.ruleTrainingDuplicateHints = [];
@@ -48,7 +51,8 @@ class SmartDocApp {
     }
 
     _ruleGroupStorageKey() {
-        return 'smartdoc_current_group';
+        // 变更简报与审核模式使用独立的当前组记忆，避免互相串组
+        return this.auditMode === 'brief' ? 'smartdoc_current_group_brief' : 'smartdoc_current_group';
     }
 
     _getSavedRuleGroup() {
@@ -64,20 +68,14 @@ class SmartDocApp {
     
     async init() {
         const params = this.getUrlParams();
-        if (params.orderId) {
-            this.auditMode = 'ticket';
-        } else if (params.ticketId) {
-            this.auditMode = 'document';
-        }
+        this.auditMode = params.ticketId ? 'document' : this.auditMode;
 
         await this.loadRuleGroups();
         await this.loadPresetConfig();
         this.loadSettings();
         this.updateApiStatus();
 
-        if (params.orderId) {
-            await this.loadFromOrder(params.orderId, params.ts);
-        } else if (params.ticketId) {
+        if (params.ticketId) {
             await this.loadFromTicket(params.ticketId, params.ts);
         }
         AuditMode.apply(this, this.auditMode);
@@ -132,16 +130,8 @@ class SmartDocApp {
                 const docFile = new File([docBlob], fileName, { type: docBlob.type || 'application/octet-stream' });
                 this.document = await DocumentParser.parse(docFile);
                 DocumentRenderer.render(this.document, 'docContent');
-                if (this.auditMode === 'ticket') {
-                    this.refreshTicketAuditView();
-                } else {
-                    TreeRenderer.render(this.document?.tree || [], 'structureTree');
-                }
-                if (this.auditMode === 'ticket') {
-                    AuditMode.setText('wordCount', `字段: ${AuditMode.getTicketFieldCount(this.ticketData)}`);
-                } else {
-                    UiHelpers.updateWordCount(this.document.text?.length || 0);
-                }
+                TreeRenderer.render(this.document?.tree || [], 'structureTree');
+                UiHelpers.updateWordCount(this.document.text?.length || 0);
                 this.updateDocBtn(true, this.document.name);
                 this.compareStructure();
             }
@@ -213,60 +203,6 @@ class SmartDocApp {
         return false;
     }
 
-    async loadFromOrder(orderId, ts) {
-        UiHelpers.setStatus(`正在加载工单审核 ${orderId}...`, true);
-        this.orderId = orderId;
-        this.ts = ts || this._makeTs();
-        this.auditMode = 'ticket';
-
-        try {
-            const orderRes = await fetch(`/api/order/${orderId}`);
-            if (!orderRes.ok) {
-                const err = await orderRes.json();
-                throw new Error(err.error || '加载工单审核数据失败');
-            }
-            const orderInfo = await orderRes.json();
-            this.ticketData = orderInfo.data || {};
-            document.getElementById('excelLabel').textContent = '工单审核数据已加载';
-            document.getElementById('excelIcon').className = 'fas fa-database text-blue-500 text-sm';
-            this._updateDataPreviewButton();
-            this.refreshTicketAuditView();
-
-            UiHelpers.setStatus(`工单审核 ${orderId} 已加载`);
-            if (ts) {
-                try {
-                    const record = await FeedbackAPI.getAuditRecordByOrderIdAndTs(orderId, ts);
-                    if (record.exists && record.results && record.results.length > 0) {
-                        this._displayHistoricalResults(record);
-                    }
-                } catch (err) {
-                    console.error('查询工单审核历史记录失败:', err);
-                }
-            }
-        } catch (err) {
-            console.error('加载工单审核数据失败:', err);
-            if (ts && await this._tryDisplayHistoricalOrderAudit(orderId, ts)) {
-                UiHelpers.setStatus(`工单审核 ${orderId} 历史审核结果已加载`);
-                return;
-            }
-            UiHelpers.setStatus(`工单审核数据加载失败: ${err.message}`);
-            alert(`工单审核数据加载失败: ${err.message}`);
-        }
-    }
-
-    async _tryDisplayHistoricalOrderAudit(orderId, ts) {
-        try {
-            const record = await FeedbackAPI.getAuditRecordByOrderIdAndTs(orderId, ts);
-            if (record.exists && record.results && record.results.length > 0) {
-                this._displayHistoricalResults(record);
-                return true;
-            }
-        } catch (err) {
-            console.error('查询工单审核历史记录失败:', err);
-        }
-        return false;
-    }
-
     _displayHistoricalResults(record) {
         // 切换到审核结果 tab
         UiHelpers.switchTab('audit');
@@ -306,16 +242,25 @@ class SmartDocApp {
     
     async loadRuleGroups() {
         try {
-            const config = await RulesManager.getGroupsFromServer();
+            // 文档审核只加载 AUDIT 组，变更简报只加载 BRIEF 组，两套下拉彻底分开
+            const config = await RulesManager.getGroupsFromServer(this.auditMode === 'brief' ? 'brief' : 'audit');
             this.ruleGroups = config.groups || [];
             this.defaultRuleGroup = config.defaultGroup;
-            
+
             const savedGroup = this._getSavedRuleGroup();
             const groupExists = this.ruleGroups.some(g => g.groupId === savedGroup);
             this.currentRuleGroup = groupExists ? savedGroup : this.defaultRuleGroup;
-            
+            // 兜底：BRIEF 组可能没有默认组（is_default=false），此时取列表第一项，
+            // 避免下拉框"视觉上已选中"但状态为空的假选中
+            if (!this.currentRuleGroup && this.ruleGroups.length > 0) {
+                this.currentRuleGroup = this.ruleGroups[0].groupId;
+            }
+            if (this.currentRuleGroup) {
+                this._setSavedRuleGroup(this.currentRuleGroup);
+            }
+
             RulesManager.renderGroupSelector(this.ruleGroups, this.currentRuleGroup, 'ruleGroupSelect');
-            
+
             if (this.currentRuleGroup) {
                 await this.loadCurrentGroupRules();
             }
@@ -324,7 +269,7 @@ class SmartDocApp {
             UiHelpers.setStatus('加载规则组失败: ' + err.message);
         }
     }
-    
+
     async loadCurrentGroupRules(groupName = '') {
         const rules = await RulesManager.loadFromServer(this.currentRuleGroup, this.auditMode);
         this.rules = this._filterRulesForCurrentMode(rules || []);
@@ -337,7 +282,11 @@ class SmartDocApp {
     }
 
     _filterRulesForCurrentMode(rules) {
-        const expectedScope = this.auditMode === 'ticket' ? 'ticket' : 'document';
+        // 变更简报模式：只保留 BRIEF 类型总结规则
+        if (this.auditMode === 'brief') {
+            return (rules || []).filter(rule => String(rule.groupType || '').toLowerCase() === 'brief');
+        }
+        const expectedScope = 'document';
         return (rules || []).filter(rule => {
             if (!rule.auditScope) return expectedScope === 'document';
             return String(rule.auditScope).toLowerCase() === expectedScope;
@@ -445,11 +394,7 @@ class SmartDocApp {
     }
     
     _onTemplateLoaded(fileName) {
-        if (this.auditMode === 'ticket') {
-            this.refreshTicketAuditView();
-        } else {
-            TreeRenderer.render(this.template?.tree || [], 'structureTree');
-        }
+        TreeRenderer.render(this.template?.tree || [], 'structureTree');
         UiHelpers.setStatus(`模板已加载: ${fileName}`);
         this.updateTemplateBtn(true, fileName);
         this.compareStructure();
@@ -463,16 +408,8 @@ class SmartDocApp {
         try {
             this.document = await DocumentParser.parse(file);
             DocumentRenderer.render(this.document, 'docContent');
-            if (this.auditMode === 'ticket') {
-                this.refreshTicketAuditView();
-            } else {
-                TreeRenderer.render(this.document?.tree || [], 'structureTree');
-            }
-            if (this.auditMode === 'ticket') {
-                AuditMode.setText('wordCount', `字段: ${AuditMode.getTicketFieldCount(this.ticketData)}`);
-            } else {
-                UiHelpers.updateWordCount(this.document.text?.length || 0);
-            }
+            TreeRenderer.render(this.document?.tree || [], 'structureTree');
+            UiHelpers.updateWordCount(this.document.text?.length || 0);
             UiHelpers.setStatus(`文档已加载: ${file.name}`);
             this.updateDocBtn(true, file.name);
             this.compareStructure();
@@ -578,13 +515,13 @@ class SmartDocApp {
     renderRules() {
         RulesManager.renderList(this.rules, 'rulesList');
     }
-    
+
     async switchRuleGroup(groupId) {
         if (groupId === this.currentRuleGroup) return;
-        
+
         this.currentRuleGroup = groupId;
         this._setSavedRuleGroup(groupId);
-        
+
         const group = this.ruleGroups.find(g => g.groupId === groupId);
         if (group) {
             UiHelpers.setStatus('正在加载规则组...', true);
@@ -595,7 +532,7 @@ class SmartDocApp {
             }
         }
     }
-    
+
     async toggleRuleStatus(idx) {
         this.rules[idx].enabled = !this.rules[idx].enabled;
         this.renderRules();
@@ -610,7 +547,7 @@ class SmartDocApp {
         await this._autoSave();
         UiHelpers.setStatus('规则已删除');
     }
-    
+
     _setRuleModalReadonly(readonly) {
         ['ruleName', 'rulePrompt', 'ruleSeverity', 'ruleTriggerCondition'].forEach(id => {
             const el = document.getElementById(id);
@@ -638,6 +575,11 @@ class SmartDocApp {
         document.getElementById('rulePrompt').value = rule.prompt || '';
         document.getElementById('ruleSeverity').value = rule.severity || 'warning';
         document.getElementById('ruleTriggerCondition').value = rule.triggerCondition || '';
+        // 变更简报模式：总结规则无严重级别
+        const severityField = document.getElementById('ruleSeverityField');
+        if (severityField) severityField.classList.toggle('hidden', this.auditMode === 'brief');
+        const modalTitle = document.getElementById('ruleModalTitle');
+        if (modalTitle && this.auditMode === 'brief') modalTitle.textContent = '编辑总结规则';
     }
 
     addRule() {
@@ -648,6 +590,10 @@ class SmartDocApp {
         this._setRuleModalReadonly(false);
         this.currentEditingRule = null;
         this._fillRuleModal({ severity: 'warning' });
+        if (this.auditMode === 'brief') {
+            const title = document.getElementById('ruleModalTitle');
+            if (title) title.textContent = '新增总结规则';
+        }
         UiHelpers.toggleModal('ruleModal', true);
     }
     
@@ -842,7 +788,7 @@ class SmartDocApp {
         this._setRuleModalReadonly(true);
         UiHelpers.toggleModal('ruleModal', true);
     }
-    
+
     async saveRule() {
         if (this._ruleModalReadonly || this._isCurrentGroupLocked()) {
             alert('规则组已上锁，无法编辑规则');
@@ -851,27 +797,27 @@ class SmartDocApp {
         const name = document.getElementById('ruleName').value.trim();
         const prompt = document.getElementById('rulePrompt').value.trim();
         const severity = document.getElementById('ruleSeverity').value;
-        
+
         if (!name || !prompt) {
             alert('请填写完整信息');
             return;
         }
-        
+
         const triggerCondition = document.getElementById('ruleTriggerCondition').value.trim() || null;
         const isEditing = this.currentEditingRule !== null;
-        const rule = { 
+        const rule = {
             name, prompt, severity, triggerCondition,
             id: isEditing ? this.rules[this.currentEditingRule].id : Date.now(),
             sortOrder: isEditing ? this.rules[this.currentEditingRule].sortOrder : this.rules.length,
             enabled: isEditing ? this.rules[this.currentEditingRule].enabled !== false : true
         };
-        
+
         if (this.currentEditingRule !== null) {
             this.rules[this.currentEditingRule] = rule;
         } else {
             this.rules.push(rule);
         }
-        
+
         this.renderRules();
         this.closeRuleModal();
         await this._autoSave();
@@ -879,10 +825,10 @@ class SmartDocApp {
     
     async _autoSave() {
         if (!this.currentRuleGroup) return;
-        
+
         const group = this.ruleGroups.find(g => g.groupId === this.currentRuleGroup);
         const groupName = group ? group.name : '';
-        
+
         try {
             const savedRules = await RulesManager.saveToServer(this.currentRuleGroup, this.rules, groupName, this.auditMode);
             savedRules.forEach((sr, i) => {
@@ -896,15 +842,15 @@ class SmartDocApp {
             UiHelpers.setStatus(`保存失败: ${err.message}`);
         }
     }
-    
+
     _setupGroupModal(mode) {
         this._groupModalMode = mode;
         const isCreate = mode === 'create';
-        
+
         document.getElementById('groupModalTitle').textContent = isCreate ? '新建规则组' : '编辑规则组';
         document.getElementById('groupModalBtn').textContent = isCreate ? '创建' : '保存';
         document.getElementById('groupIdField').style.display = isCreate ? 'block' : 'none';
-        
+
         if (isCreate) {
             document.getElementById('groupId').value = '';
             document.getElementById('groupId').disabled = false;
@@ -912,7 +858,7 @@ class SmartDocApp {
             const group = this.ruleGroups.find(g => g.groupId === this.currentRuleGroup);
             document.getElementById('groupId').value = group?.groupId || '';
         }
-        
+
         document.getElementById('groupName').value = isCreate ? '' : (this.ruleGroups.find(g => g.groupId === this.currentRuleGroup)?.name || '');
         UiHelpers.toggleModal('groupModal', true);
     }
@@ -933,7 +879,7 @@ class SmartDocApp {
     async saveGroupModal() {
         const groupId = document.getElementById('groupId').value.trim();
         const groupName = document.getElementById('groupName').value.trim();
-        
+
         if (this._groupModalMode === 'create') {
             if (!groupId || !groupName) {
                 alert('请填写完整信息');
@@ -943,10 +889,11 @@ class SmartDocApp {
                 alert('规则组ID只能包含字母、数字、下划线和横线');
                 return;
             }
-            
+
             try {
-                await RulesManager.createGroup(groupId, groupName, []);
-                this.ruleGroups.push({ groupId: groupId, name: groupName });
+                const groupType = this.auditMode === 'brief' ? 'brief' : null;
+                await RulesManager.createGroup(groupId, groupName, [], groupType);
+                this.ruleGroups.push({ groupId: groupId, name: groupName, ...(groupType ? { groupType } : {}) });
                 this.currentRuleGroup = groupId;
                 this._setSavedRuleGroup(groupId);
                 this.rules = [];
@@ -962,7 +909,7 @@ class SmartDocApp {
                 alert('请填写规则组名称');
                 return;
             }
-            
+
             try {
                 const savedRules = await RulesManager.saveToServer(groupId, this.rules, groupName, this.auditMode);
                 savedRules.forEach((sr, i) => {
@@ -990,17 +937,17 @@ class SmartDocApp {
             alert('请先选择规则组');
             return;
         }
-        
+
         if (this.ruleGroups.length <= 1) {
             alert('至少保留一个规则组');
             return;
         }
-        
+
         const group = this.ruleGroups.find(g => g.groupId === this.currentRuleGroup);
         if (!confirm(`确定要删除规则组"${group?.name || this.currentRuleGroup}"吗？此操作不可恢复！`)) {
             return;
         }
-        
+
         try {
             await RulesManager.deleteGroup(this.currentRuleGroup);
             this.ruleGroups = this.ruleGroups.filter(g => g.groupId !== this.currentRuleGroup);
@@ -1013,14 +960,14 @@ class SmartDocApp {
             alert('删除失败: ' + err.message);
         }
     }
-    
+
     exportRules() {
         const group = this.ruleGroups.find(g => g.groupId === this.currentRuleGroup);
         if (!group) {
             alert('未找到当前规则组');
             return;
         }
-        
+
         const blob = new Blob([JSON.stringify(this.rules, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -1030,10 +977,10 @@ class SmartDocApp {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        
+
         UiHelpers.setStatus(`已导出 ${this.rules.length} 条规则`);
     }
-    
+
     importRules() {
         if (this._isCurrentGroupLocked()) {
             alert('规则组已上锁，无法导入规则');
@@ -1044,18 +991,18 @@ class SmartDocApp {
             alert('请先选择规则组');
             return;
         }
-        
+
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = '.json';
         input.onchange = async (e) => {
             const file = e.target.files[0];
             if (!file) return;
-            
+
             try {
                 const text = await file.text();
                 const importData = JSON.parse(text);
-                
+
                 let rules = [];
                 if (Array.isArray(importData)) {
                     rules = importData;
@@ -1064,13 +1011,13 @@ class SmartDocApp {
                 } else {
                     throw new Error('无效的规则文件格式');
                 }
-                
+
                 const confirmMsg = `即将导入 ${rules.length} 条规则到当前规则组「${group.name}」。\n\n这将覆盖当前规则组的所有现有规则（共 ${this.rules.length} 条），是否继续？`;
-                
+
                 if (!confirm(confirmMsg)) {
                     return;
                 }
-                
+
                 this.rules = rules;
                 const savedRules = await RulesManager.saveToServer(this.currentRuleGroup, this.rules, group.name, this.auditMode);
                 savedRules.forEach((sr, i) => {
@@ -1079,7 +1026,7 @@ class SmartDocApp {
                     }
                 });
                 this.renderRules();
-                
+
                 UiHelpers.setStatus(`已导入 ${this.rules.length} 条规则到「${group.name}」`);
             } catch (err) {
                 alert('导入失败: ' + err.message);
@@ -1208,29 +1155,23 @@ class SmartDocApp {
     }
     
     async runAudit() {
+        // 变更简报模式：走 AI 总结链路
+        if (this.auditMode === 'brief') {
+            return this.runBrief();
+        }
+
         if (this.isAuditing) {
             alert('正在审核中，请稍候...');
             return;
         }
-        
-        const isTicketMode = this.auditMode === 'ticket';
-        if (!isTicketMode && !this.document) {
+
+        if (!this.document) {
             alert('请先上传待审文档');
             return;
         }
 
-        if (isTicketMode && (!this.ticketData || Object.keys(this.ticketData).length === 0)) {
-            alert('请先加载工单数据');
-            return;
-        }
-
-        if (isTicketMode && !this.orderId) {
-            alert('请通过 orderId 进入工单审核');
-            return;
-        }
-        
         const activeRules = this.rules.filter(r => r.enabled !== false);
-        
+
         if (activeRules.length === 0) {
             alert('请至少开启一条审核规则');
             return;
@@ -1257,18 +1198,18 @@ class SmartDocApp {
             alert('请至少开启一条审核规则');
             return;
         }
-        
+
         this.isAuditing = true;
         this._auditStartTime = Date.now();
         const btn = document.getElementById('runAuditBtn');
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 审核中...';
-        
-        UiHelpers.setStatus(isTicketMode ? '正在运行工单审核...' : '正在运行AI审核...', true);
+
+        UiHelpers.setStatus('正在运行AI审核...', true);
         this.auditResults = [];
         const resultsContainer = document.getElementById('auditResults');
         resultsContainer.innerHTML = '<div class="space-y-4" id="auditList"></div>';
-        
+
         try {
             const auditList = document.getElementById('auditList');
             const placeholders = syncedRules.map((rule, i) => {
@@ -1299,19 +1240,11 @@ class SmartDocApp {
 
             const auditRequest = {
                 ruleGroupId: this.currentRuleGroup,
-                documentText: isTicketMode
-                    ? TicketAuditView.toAuditText(
-                        this.ticketData,
-                        this.orderId,
-                        this.ts,
-                        'orderId'
-                    )
-                    : this.document.text,
+                documentText: this.document.text,
                 documentType: 'txt',
                 data: this.ticketData,
                 auditMode: this.auditMode,
                 ticketId: this.ticketId,
-                orderId: this.orderId,
                 ts: this.ts,
                 settings: {
                     endpoint: this.settings.endpoint,
@@ -1401,15 +1334,10 @@ class SmartDocApp {
                         summary: r.summary || ''
                     }));
                     const auditDuration = Date.now() - (this._auditStartTime || Date.now());
-                    const saveResponse = isTicketMode
-                        ? await FeedbackAPI.saveOrderAuditResults(
-                            saveResults, this.currentRuleGroup, auditDuration,
-                            this.orderId, this.ts
-                        )
-                        : await FeedbackAPI.saveAuditResults(
-                            saveResults, this.currentRuleGroup, auditDuration,
-                            this.ticketId, this.ts
-                        );
+                    const saveResponse = await FeedbackAPI.saveAuditResults(
+                        saveResults, this.currentRuleGroup, auditDuration,
+                        this.ticketId, this.ts
+                    );
                     if (saveResponse.ts) {
                         this.ts = saveResponse.ts;
                     }
@@ -1422,7 +1350,7 @@ class SmartDocApp {
                 console.error('保存审核结果失败:', err);
             }
 
-            UiHelpers.setStatus(`${isTicketMode ? '工单审核' : '审核'}完成，共检查 ${syncedRules.length} 条规则`);
+            UiHelpers.setStatus(`审核完成，共检查 ${syncedRules.length} 条规则`);
             document.getElementById('auditBadge').classList.remove('hidden');
             UiHelpers.switchTab('audit');
 
@@ -1555,45 +1483,381 @@ class SmartDocApp {
     }
     
     switchTab(tab) {
-        if (this.auditMode === 'ticket') {
+        if (this.auditMode === 'brief') {
             if (tab === 'preview') {
                 UiHelpers.switchTab('ticket');
                 return;
             }
             if (tab === 'compare') return;
         }
+        if (tab === 'briefHistory') {
+            this.loadBriefHistory();
+        }
         UiHelpers.switchTab(tab);
     }
+
+    /** 变更简报：加载最近 15 次简报记录 */
+    async loadBriefHistory() {
+        const container = document.getElementById('briefHistoryList');
+        try {
+            const res = await fetch('/api/order/brief-records?limit=15');
+            if (!res.ok) throw new Error('获取历史简报失败');
+            const data = await res.json();
+            this._briefHistoryRecords = data.records || [];
+            BriefView.renderHistoryList(this._briefHistoryRecords);
+        } catch (err) {
+            console.error('加载历史简报失败:', err);
+            if (container) {
+                container.innerHTML = `
+                    <div class="max-w-4xl mx-auto bg-red-50 border border-red-200 rounded-xl p-6 text-center text-red-600 text-sm">
+                        加载历史简报失败: ${err.message}
+                    </div>`;
+            }
+        }
+    }
+
+    /** 变更简报：点击历史记录，跳到 AI简报 tab 展示该简报 */
+    showBriefRecord(idx) {
+        const record = (this._briefHistoryRecords || [])[idx];
+        if (!record || !record.briefContent) {
+            alert('简报内容为空');
+            return;
+        }
+        this.briefContent = record.briefContent;
+        BriefView.renderBrief(this.briefContent, 'auditResults');
+        document.getElementById('auditBadge')?.classList.remove('hidden');
+        UiHelpers.switchTab('audit');
+        const tsText = record.ts ? `${record.ts.slice(0, 4)}-${record.ts.slice(4, 6)}-${record.ts.slice(6, 8)} ${record.ts.slice(8, 10)}:${record.ts.slice(10, 12)}` : '';
+        UiHelpers.setStatus(`已加载历史简报（${record.documentName || record.orderId || ''} ${tsText}）`);
+    }
     async switchAuditMode(mode) {
-        const nextMode = mode === 'ticket' ? 'ticket' : 'document';
+        const nextMode = mode === 'brief' ? 'brief' : 'document';
+        if (nextMode === this.auditMode) return;
         AuditMode.apply(this, nextMode);
+        // 切换模式后按类型重新加载规则组（brief 只加载总结规则组）
+        await this.loadRuleGroups();
         RulesManager.renderGroupSelector(this.ruleGroups, this.currentRuleGroup, 'ruleGroupSelect');
 
         if (this.currentRuleGroup) {
             await this.loadCurrentGroupRules();
         } else {
+            this.rules = [];
             this.renderRules();
             this.updateGroupLockUI();
         }
     }
 
+    /** 渲染中间「工单内容」详情（变更简报模式） */
     refreshTicketAuditView() {
-        if (typeof TicketAuditView !== 'undefined') {
-            if (this.auditMode === 'ticket' && this.orderId) {
-                TicketAuditView.render(this);
-            } else if (this.auditMode === 'ticket') {
-                TicketAuditView.render({ ...this, ticketData: null, ticketId: null });
+        if (typeof TicketAuditView !== 'undefined' && this.auditMode === 'brief') {
+            if (this.orderId) {
+                TicketAuditView.renderDetail(this.ticketData, this.orderId, this.ts, 'ticketContent');
+            } else {
+                TicketAuditView.renderDetail(null, null, null, 'ticketContent');
             }
-        }
-        if (this.auditMode === 'ticket') {
-            const fieldCount = this.orderId ? AuditMode.getTicketFieldCount(this.ticketData) : 0;
-            AuditMode.setText('wordCount', `字段: ${fieldCount}`);
+            AuditMode.setText('wordCount', `字段: ${AuditMode.getTicketFieldCount(this.ticketData)}`);
         }
     }
 
-    scrollToTicketField(key) {
+    /** 变更简报：更新左侧栏左下角工单总条数显示 */
+    _updateOrderTotalCount() {
+        const footer = document.getElementById('orderTotalFooter');
+        const countEl = document.getElementById('orderTotalCount');
+        if (!footer || !countEl) return;
+        const count = (this.orderList || []).length;
+        countEl.textContent = count;
+        footer.classList.toggle('hidden', count === 0);
+    }
+
+    /** 变更简报：快捷时段定义（小时级） */
+    _quickRangePresets() {
+        // 本周一 00:00
+        const weekStart = (base) => {
+            const day = base.getDay(); // 0 周日 ~ 6 周六
+            const d = new Date(base);
+            d.setDate(d.getDate() + (day === 0 ? -6 : 1 - day));
+            d.setHours(0, 0, 0, 0);
+            return d;
+        };
+        const ws = weekStart(new Date());
+        const at = (base, hour) => { const d = new Date(base); d.setHours(hour, 0, 0, 0); return d; };
+        const add = (base, days) => { const d = new Date(base); d.setDate(d.getDate() + days); return d; };
+        return {
+            y8t8:   { label: '昨天8时~今天8时',     start: () => at(add(new Date(), -1), 8),  end: () => at(new Date(), 8) },
+            t8t8:   { label: '今天8时~明天8时',     start: () => at(new Date(), 8),           end: () => at(add(new Date(), 1), 8) },
+            t18t18: { label: '今天18时~明天18时',   start: () => at(new Date(), 18),          end: () => at(add(new Date(), 1), 18) },
+            lf8m8:  { label: '上周五8时~本周一8时',  start: () => at(add(ws, -3), 8),          end: () => at(add(ws, 0), 8) },
+            f8m8:   { label: '本周五8时~下周一8时',  start: () => at(add(ws, 4), 8),           end: () => at(add(ws, 7), 8) },
+            f18m18: { label: '本周五18时~下周一18时', start: () => at(add(ws, 4), 18),         end: () => at(add(ws, 7), 18) },
+        };
+    }
+
+    /** Date -> datetime-local 输入值（yyyy-MM-ddTHH:mm） */
+    _toLocalInputValue(d) {
+        const pad = n => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+
+    /** datetime-local 值 -> 接口时间（yyyy-MM-dd HH:mm:ss） */
+    _toApiTime(v) {
+        if (!v) return v;
+        let s = String(v).replace('T', ' ');
+        if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(s)) s += ':00';
+        return s;
+    }
+
+    /** 变更简报：快捷设置下拉开关（点外关闭） */
+    toggleQuickRanges(event) {
+        if (event) event.stopPropagation();
+        const dropdown = document.getElementById('quickRangesDropdown');
+        if (!dropdown) return;
+        dropdown.classList.toggle('hidden');
+        if (!dropdown.classList.contains('hidden')) {
+            const hideDropdown = (e) => {
+                if (!dropdown.contains(e.target)) {
+                    dropdown.classList.add('hidden');
+                    document.removeEventListener('click', hideDropdown);
+                }
+            };
+            setTimeout(() => document.addEventListener('click', hideDropdown), 0);
+        }
+    }
+
+    /** 变更简报：应用快捷时段（仅填充时间，由用户自行点击搜索） */
+    applyQuickRange(key) {
+        const preset = this._quickRangePresets()[key];
+        if (!preset) return;
+        const startInput = document.getElementById('orderSearchStart');
+        const endInput = document.getElementById('orderSearchEnd');
+        if (!startInput || !endInput) return;
+        startInput.value = this._toLocalInputValue(preset.start());
+        endInput.value = this._toLocalInputValue(preset.end());
+        const dropdown = document.getElementById('quickRangesDropdown');
+        if (dropdown) dropdown.classList.add('hidden');
+        const hint = document.getElementById('orderSearchResult');
+        if (hint) hint.textContent = `已填充「${preset.label}」，点击"搜索工单"开始查询`;
+    }
+
+    /** 变更简报：按时间范围搜索工单列表 */
+    async searchOrders() {
+        const rawStart = document.getElementById('orderSearchStart').value;
+        const rawEnd = document.getElementById('orderSearchEnd').value;
+        if (!rawStart || !rawEnd) {
+            alert('请选择搜索的起止时间');
+            return;
+        }
+        const start = this._toApiTime(rawStart);
+        const end = this._toApiTime(rawEnd);
+
+        const btn = document.getElementById('orderSearchBtn');
+        const resultHint = document.getElementById('orderSearchResult');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 搜索中...';
+        resultHint.textContent = '搜索中...';
+
+        try {
+            const response = await fetch(`/api/order/search?startTime=${encodeURIComponent(start)}&endTime=${encodeURIComponent(end)}`);
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({}));
+                throw new Error(err.error || '搜索工单失败');
+            }
+            const data = await response.json();
+            this.orderList = data.orders || [];
+            resultHint.textContent = `共 ${this.orderList.length} 条工单（${start} ~ ${end}）`;
+            this._updateOrderTotalCount();
+            BriefView.renderOrderList(this.orderList, this.orderId);
+            AuditMode.setText('wordCount', `工单: ${this.orderList.length}`);
+            if (this.orderList.length === 0) {
+                UiHelpers.setStatus('未搜索到工单');
+            } else {
+                UiHelpers.setStatus(`搜索到 ${this.orderList.length} 条工单，已默认展示第一条`);
+                // 默认展示第一条工单，避免中间区域空置
+                await this.selectOrder(0, true);
+                AuditMode.setText('wordCount', `工单: ${this.orderList.length}`);
+            }
+        } catch (err) {
+            resultHint.textContent = '搜索失败: ' + err.message;
+            UiHelpers.setStatus('搜索工单失败: ' + err.message);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-search"></i> 搜索工单';
+        }
+    }
+
+    /** 变更简报：选中左侧列表中的工单，直接渲染详情（列表已含详情，无需再拉取） */
+    async selectOrder(idx, silent = false) {
+        const order = this.orderList[idx];
+        if (!order) return;
+
+        this.orderId = order.orderId || `#${idx + 1}`;
+        this.ts = this._makeTs();
+        this.ticketData = order.data || {};
+        this.briefContent = null;
+
+        BriefView.renderOrderList(this.orderList, this.orderId);
+        this.refreshTicketAuditView();
+        AuditMode.setText('wordCount', `字段: ${AuditMode.getTicketFieldCount(this.ticketData)}`);
         UiHelpers.switchTab('ticket');
-        setTimeout(() => TicketAuditView.scrollToField(key), 100);
+        if (!silent) {
+            UiHelpers.setStatus(`已加载工单 ${this.orderId}（AI评审作用于搜索到的所有工单，无需逐个选择）`);
+        }
+    }
+
+    /** 变更简报：简报风格弹窗（藏在规则组"..."菜单里） */
+    showBriefStyleModal() {
+        // 兜底：状态为空时从下拉框取当前选中值（防止"假选中"误报）
+        if (!this.currentRuleGroup) {
+            const select = document.getElementById('ruleGroupSelect');
+            if (select && select.value) {
+                this.currentRuleGroup = select.value;
+                this._setSavedRuleGroup(this.currentRuleGroup);
+            }
+        }
+        if (!this.currentRuleGroup) {
+            alert('请先选择规则组');
+            return;
+        }
+        const group = this.ruleGroups.find(g => g.groupId === this.currentRuleGroup);
+        if (!group) {
+            alert('未找到当前规则组');
+            return;
+        }
+        const input = document.getElementById('briefStyleInput');
+        if (input) input.value = group.briefStyle || '';
+        UiHelpers.toggleModal('briefStyleModal', true);
+    }
+
+    closeBriefStyleModal() {
+        UiHelpers.toggleModal('briefStyleModal', false);
+    }
+
+    /** 变更简报：保存简报风格到当前规则组 */
+    async saveBriefStyleModal() {
+        if (!this.currentRuleGroup) {
+            alert('请先选择规则组');
+            return;
+        }
+        const briefStyle = document.getElementById('briefStyleInput').value.trim();
+        const group = this.ruleGroups.find(g => g.groupId === this.currentRuleGroup);
+        if (!group) {
+            alert('未找到当前规则组');
+            return;
+        }
+        try {
+            await RulesManager.saveBriefStyle(this.currentRuleGroup, group.name, briefStyle);
+            group.briefStyle = briefStyle;
+            this.closeBriefStyleModal();
+            UiHelpers.setStatus('简报风格已保存');
+        } catch (err) {
+            alert('保存简报风格失败: ' + err.message);
+        }
+    }
+
+    /** 变更简报：对搜索结果中的所有工单提交 AI 评审，生成一份综合简报 */
+    async runBrief() {
+        if (!this.orderList || this.orderList.length === 0) {
+            alert('请先在左侧搜索工单，AI评审将作用于搜索到的所有工单');
+            return;
+        }
+        if (!this.currentRuleGroup) {
+            alert('请先选择总结规则组');
+            return;
+        }
+        const activeRules = this.rules.filter(r => r.enabled !== false);
+        if (activeRules.length === 0) {
+            alert('请至少开启一条总结规则');
+            return;
+        }
+        if (!this.settings.hasApiKey) {
+            alert('请先配置API密钥');
+            this.toggleSettings();
+            return;
+        }
+
+        this.isAuditing = true;
+        this.ts = this._makeTs();
+        const btn = document.getElementById('runAuditBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 评审中...';
+        UiHelpers.setStatus(`正在提交AI评审任务（共 ${this.orderList.length} 条工单）...`, true);
+
+        const resultsContainer = document.getElementById('auditResults');
+        resultsContainer.innerHTML = `
+            <div class="max-w-4xl mx-auto bg-white shadow-lg rounded-xl p-10 text-center text-gray-400">
+                <i class="fas fa-spinner fa-spin text-4xl mb-4 text-blue-500"></i>
+                <p class="text-sm">AI 正在评审 ${this.orderList.length} 条工单并生成本次变更简报，请稍候...</p>
+            </div>`;
+        UiHelpers.switchTab('audit');
+
+        const pollToken = ++this._briefPollToken;
+
+        try {
+            const response = await fetch('/api/order/async-summarize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ts: this.ts,
+                    ruleGroupId: this.currentRuleGroup,
+                    // 搜索结果已含完整详情，所有工单一次性直传，后端无需再按 orderId 拉取
+                    orders: this.orderList
+                })
+            });
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({}));
+                throw new Error(err.error || '提交评审任务失败');
+            }
+            const { taskId } = await response.json();
+
+            // 轮询任务状态
+            const maxAttempts = 150; // 2s * 150 = 5min
+            let finished = false;
+            for (let i = 0; i < maxAttempts; i++) {
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                if (pollToken !== this._briefPollToken) return; // 用户已切换模式
+
+                const statusRes = await fetch(`/api/order/async-brief-task/${encodeURIComponent(taskId)}`);
+                if (!statusRes.ok) continue;
+                const status = await statusRes.json();
+
+                if (status.status === 'COMPLETED') {
+                    finished = true;
+                    break;
+                }
+                if (status.status === 'FAILED') {
+                    throw new Error(status.errorMessage || 'AI评审失败');
+                }
+            }
+            if (!finished) {
+                throw new Error('AI评审超时，请稍后在简报记录中查看');
+            }
+
+            // 拉取综合简报正文（批次记录 orderId=ALL，按 ts 查询）
+            const briefRes = await fetch(`/api/order/brief-record?ts=${encodeURIComponent(this.ts)}`);
+            if (!briefRes.ok) throw new Error('获取简报内容失败');
+            const briefRecord = await briefRes.json();
+            if (!briefRecord.found || !briefRecord.briefContent) {
+                throw new Error('简报内容为空');
+            }
+
+            this.briefContent = briefRecord.briefContent;
+            BriefView.renderBrief(this.briefContent, 'auditResults');
+            document.getElementById('auditBadge').classList.remove('hidden');
+            UiHelpers.setStatus('AI简报已生成');
+        } catch (err) {
+            console.error('AI评审失败:', err);
+            resultsContainer.innerHTML = `
+                <div class="max-w-4xl mx-auto bg-red-50 border border-red-200 rounded-xl p-6 text-center text-red-600">
+                    <i class="fas fa-exclamation-triangle text-3xl mb-3"></i>
+                    <p class="text-sm">${err.message}</p>
+                </div>`;
+            UiHelpers.setStatus('AI评审失败: ' + err.message);
+        } finally {
+            if (pollToken === this._briefPollToken) {
+                this.isAuditing = false;
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-play"></i> <span id="runAuditBtnText">AI评审</span>';
+            }
+        }
     }
 
     scrollToNode(nodeId) { UiHelpers.switchTab('preview'); setTimeout(() => UiHelpers.scrollToNode(nodeId), 100); }
@@ -1786,11 +2050,7 @@ class SmartDocApp {
         }
 
         try {
-            if (this.auditMode === 'ticket') {
-                await FeedbackAPI.submitOrderFeedback(result._feedbackId, feedbackType, reason);
-            } else {
-                await FeedbackAPI.submitFeedback(result._feedbackId, feedbackType, reason);
-            }
+            await FeedbackAPI.submitFeedback(result._feedbackId, feedbackType, reason);
             result._feedbackType = feedbackType;
             this.closeFeedbackModal();
 
@@ -1820,7 +2080,7 @@ class SmartDocApp {
     }
 
     _getStatsAuditType() {
-        return this.auditMode === 'ticket' ? 'order' : 'document';
+        return 'document';
     }
 
     _buildStatsUrl(baseUrl, includeDate = true) {
@@ -1911,9 +2171,9 @@ class SmartDocApp {
             // 丢弃过期请求的结果（防止并发覆盖）
             if (requestToken !== this._statsRequestToken) return;
 
-            const allTimeTotal = (allTimeStats.totalCount || 0) + (this._getStatsAuditType() === 'order' ? 0 : 1000);
+            const allTimeTotal = (allTimeStats.totalCount || 0) + 1000;
             const rangeTotal = stats.totalCount || 0;
-            const statsScopeLabel = this._getStatsAuditType() === 'order' ? '工单审核统计' : '文档审核统计';
+            const statsScopeLabel = '文档审核统计';
 
             content.innerHTML = `
                 <div class="flex items-center justify-between mb-4">
@@ -2020,7 +2280,7 @@ class SmartDocApp {
         }
 
         const group = this._statsGroupData.find(g => g.groupId === groupId);
-        const expectedScope = this._getStatsAuditType() === 'order' ? 'ticket' : 'document';
+        const expectedScope = 'document';
         const rules = ((group && group.rules) || [])
             .filter(rule => {
                 if (!rule.auditScope) return expectedScope === 'document';

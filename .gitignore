@@ -16,3 +16,5 @@ logs/
 *.log
 scripts/*.docx
 scripts/~$*.docx
+.workbuddy/
+.playwright-cli/

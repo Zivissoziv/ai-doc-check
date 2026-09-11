@@ -27,6 +27,17 @@ public class RuleGroupDto {
     @Size(max = 100)
     private String name;
 
+    /**
+     * 规则组类型：audit=审核规则组 / brief=变更简报总结规则组（默认 audit，兼容旧请求）
+     */
+    @Builder.Default
+    private String groupType = "audit";
+
+    /**
+     * 简报风格（仅 brief 类型规则组使用，自由文本）
+     */
+    private String briefStyle;
+
     @Builder.Default
     private Boolean isDefault = false;
 

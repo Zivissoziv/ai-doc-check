@@ -1,32 +1,84 @@
 const AuditMode = {
     DOCUMENT: 'document',
-    TICKET: 'ticket',
+    BRIEF: 'brief',
 
     apply(app, mode) {
-        app.auditMode = mode === this.TICKET ? this.TICKET : this.DOCUMENT;
+        const validMode = mode === this.BRIEF ? this.BRIEF : this.DOCUMENT;
+        app.auditMode = validMode;
         localStorage.setItem('smartdoc_audit_mode', app.auditMode);
 
-        const isTicket = app.auditMode === this.TICKET;
-        this.setModeButton('document', !isTicket);
-        this.setModeButton('ticket', isTicket);
-        this.setText('appTitle', '智能审核工具');
-        this.setText('leftPanelTitle', isTicket ? '工单字段目录' : '文档结构');
-        this.setText('tabPreviewText', isTicket ? '工单信息' : '文档预览');
+        const isBrief = app.auditMode === this.BRIEF;
+
+        this.setModeButton('document', !isBrief);
+        this.setModeButton('brief', isBrief);
+        this.setText('leftPanelTitle', isBrief ? '搜索工单' : '文档结构');
+        this.setText('tabPreviewText', isBrief ? '工单内容' : '文档预览');
         this.setText('tabCompareText', '结构对比');
-        this.setText('tabAuditText', 'AI审核结果');
-        this.setText('runAuditBtnText', 'AI审核');
-        this.setText('wordCount', isTicket ? `字段: ${this.getTicketFieldCount(app.ticketData)}` : `字数: ${app.document?.text?.length || 0}`);
+        this.setText('tabAuditText', isBrief ? 'AI简报' : 'AI审核结果');
+        this.setText('runAuditBtnText', isBrief ? 'AI评审' : 'AI审核');
+        this.setText('wordCount', isBrief
+            ? `字段: ${this.getTicketFieldCount(app.ticketData)}`
+            : `字数: ${app.document?.text?.length || 0}`);
 
-        this.toggle('uploadArea', !isTicket);
-        this.toggle('dataSourceArea', !isTicket);
-        this.toggle('structureScore', !isTicket && !!app.document && !!app.template);
-        this.toggle('structureDiff', !isTicket && document.getElementById('structureDiff')?.style.display !== 'none');
-        this.toggle('tab-compare', !isTicket);
+        this.toggle('uploadArea', !isBrief);
+        this.toggle('dataSourceArea', !isBrief);
+        this.toggle('orderSearchArea', isBrief);
+        this.toggle('briefStyleMenuItem', isBrief);
+        this.toggle('tab-briefHistory', isBrief);
+        // 左侧栏左下角工单总条数：仅简报模式显示，有搜索结果时展示
+        if (isBrief) {
+            if (typeof app._updateOrderTotalCount === 'function') app._updateOrderTotalCount();
+        } else {
+            const footer = document.getElementById('orderTotalFooter');
+            if (footer) footer.classList.add('hidden');
+        }
+        this.toggle('structureScore', !isBrief && !!app.document && !!app.template);
+        this.toggle('structureDiff', !isBrief && document.getElementById('structureDiff')?.style.display !== 'none');
+        this.toggle('tab-compare', !isBrief);
+        this.toggle('ruleTrainingMenuItem', !isBrief);
 
-        if (isTicket) {
+        // 简报模式：切换规则弹窗标题与严重级别/触发条件显隐（总结规则无触发概念）
+        const severityField = document.getElementById('ruleSeverityField');
+        if (severityField) severityField.classList.toggle('hidden', isBrief);
+        const triggerField = document.getElementById('ruleTriggerField');
+        if (triggerField) triggerField.classList.toggle('hidden', isBrief);
+
+        // 总结规则不引用变量：弹窗文案引导用户填写总结要点
+        const promptLabel = document.getElementById('rulePromptLabel');
+        const promptInput = document.getElementById('rulePrompt');
+        const varHint = document.getElementById('ruleVariableHint');
+        const nameInput = document.getElementById('ruleName');
+        if (isBrief) {
+            if (promptLabel) promptLabel.textContent = '总结要点（自然语言）';
+            if (promptInput) promptInput.placeholder =
+                '描述这条总结规则要覆盖的要点，AI 会围绕这些要点从工单内容中提炼信息。例如：总结本次变更涉及的容量调整，包括变更前后的对比与影响范围。';
+            if (nameInput) nameInput.placeholder = '例如：容量变更说明';
+            if (varHint) varHint.classList.add('hidden');
+        } else {
+            if (promptLabel) promptLabel.textContent = '审核内容描述（自然语言）';
+            if (promptInput) promptInput.placeholder =
+                '请检查文档中是否包含敏感词，如发现请指出具体位置和修改建议... 支持使用 {{data.工作表.列名}} 引用Excel数据或 {{data.字段名}} 引用工单数据';
+            if (nameInput) nameInput.placeholder = '例如：检查敏感词';
+            if (varHint) varHint.classList.remove('hidden');
+        }
+
+        if (isBrief) {
             this.toggle('view-preview', false);
             this.toggle('view-compare', false);
-            app.refreshTicketAuditView();
+            this.toggle('structureTree', true);
+            // 默认搜索时间范围：最近 7 天（小时级）
+            if (!document.getElementById('orderSearchStart').value) {
+                const toLocal = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+                const end = new Date();
+                const start = new Date();
+                start.setDate(start.getDate() - 7);
+                document.getElementById('orderSearchStart').value = toLocal(start);
+                document.getElementById('orderSearchEnd').value = toLocal(end);
+            }
+            document.getElementById('orderSearchResult').textContent =
+                app.orderList && app.orderList.length > 0 ? `共 ${app.orderList.length} 条工单` : '输入起止时间后点击搜索';
+            BriefView.renderOrderList(app.orderList || [], app.orderId);
+            BriefView.renderBrief(app.briefContent, 'auditResults');
             UiHelpers.switchTab('ticket');
         } else {
             this.toggle('view-ticket', false);

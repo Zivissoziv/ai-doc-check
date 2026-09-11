@@ -33,17 +33,18 @@ public class RuleGroupController {
     private final RuleTrainingService ruleTrainingService;
 
     @GetMapping
-    public ResponseEntity<Map<String, Object>> getAllRuleGroups() {
-        List<RuleGroupDto> groups = ruleGroupService.getAllRuleGroups();
-        
+    public ResponseEntity<Map<String, Object>> getAllRuleGroups(
+            @RequestParam(required = false) String groupType) {
+        List<RuleGroupDto> groups = ruleGroupService.getAllRuleGroups(groupType);
+
         Map<String, Object> response = new HashMap<>();
         response.put("groups", groups);
-        
-        RuleGroupDto defaultGroup = ruleGroupService.getDefaultRuleGroup();
+
+        RuleGroupDto defaultGroup = ruleGroupService.getDefaultRuleGroup(groupType);
         if (defaultGroup != null) {
             response.put("defaultGroup", defaultGroup.getGroupId());
         }
-        
+
         return ResponseEntity.ok(response);
     }
 

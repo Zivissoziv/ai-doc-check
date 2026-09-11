@@ -1,11 +1,11 @@
 const UiHelpers = {
     switchTab(tab) {
-        const tabButtonMap = { preview: 'preview', compare: 'compare', ticket: 'preview', audit: 'audit' };
-        ['preview', 'compare', 'ticket', 'audit'].forEach(t => {
+        const tabButtonMap = { preview: 'preview', compare: 'compare', ticket: 'preview', audit: 'audit', briefHistory: 'briefHistory' };
+        ['preview', 'compare', 'ticket', 'audit', 'briefHistory'].forEach(t => {
             const view = document.getElementById(`view-${t}`);
             if (view) view.classList.add('hidden');
         });
-        ['preview', 'compare', 'audit'].forEach(t => {
+        ['preview', 'compare', 'audit', 'briefHistory'].forEach(t => {
             const tabEl = document.getElementById(`tab-${t}`);
             if (tabEl) {
                 const preserveHidden = tabEl.classList.contains('hidden');

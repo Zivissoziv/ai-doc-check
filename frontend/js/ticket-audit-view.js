@@ -1,38 +1,7 @@
+/** 变更简报：工单内容 JSON 详情渲染 */
 const TicketAuditView = {
-    render(app) {
-        this.renderDirectory(app.ticketData, 'structureTree');
-        this.renderDetail(app.ticketData, app.orderId, app.ts, 'ticketContent');
-    },
-
-    renderDirectory(data, containerId) {
-        const container = document.getElementById(containerId);
-        if (!container) return;
-
-        const keys = this.getTopLevelKeys(data);
-        if (keys.length === 0) {
-            container.innerHTML = `
-                <div class="text-center text-gray-400 mt-20">
-                    <i class="fas fa-diagram-project text-4xl mb-3 opacity-30"></i>
-                    <p class="text-sm">暂无工单数据</p>
-                    <p class="text-xs mt-2">通过工单链接或 ticketId 加载</p>
-                </div>`;
-            return;
-        }
-
-        container.innerHTML = `
-            <div class="space-y-1">
-                ${keys.map(key => `
-                    <button onclick="app.scrollToTicketField('${this.escapeAttr(key)}')"
-                        class="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-gray-100 text-left transition-colors group">
-                        <i class="fas ${this.iconForValue(data[key])} text-blue-500 text-xs"></i>
-                        <span class="text-sm truncate font-medium text-gray-900">${this.escapeHtml(key)}</span>
-                        <span class="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500">${this.typeLabel(data[key])}</span>
-                    </button>
-                `).join('')}
-            </div>`;
-    },
-
-    renderDetail(data, ticketId, ts, containerId) {
+    /** 渲染中间「工单内容」详情 */
+    renderDetail(data, orderId, ts, containerId) {
         const container = document.getElementById(containerId);
         if (!container) return;
 
@@ -42,7 +11,7 @@ const TicketAuditView = {
                 <div class="ticket-empty-sheet max-w-3xl mx-auto bg-white shadow-lg rounded-xl">
                     <div class="text-center text-gray-400 mt-32">
                         <i class="fas fa-clipboard-list text-6xl mb-4 opacity-20"></i>
-                        <p>加载工单数据后开始审核</p>
+                        <p>搜索并选择一个工单后查看内容</p>
                     </div>
                 </div>`;
             return;
@@ -53,8 +22,8 @@ const TicketAuditView = {
                 <div class="border-b border-gray-200 pb-5 mb-6">
                     <div class="flex items-start justify-between gap-4">
                         <div>
-                            <div class="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-2">工单审核</div>
-                            <h2 class="text-2xl font-bold text-gray-900">${this.escapeHtml(ticketId || '当前工单')}</h2>
+                            <div class="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-2">工单内容</div>
+                            <h2 class="text-2xl font-bold text-gray-900">${this.escapeHtml(orderId || '当前工单')}</h2>
                             <div class="flex flex-wrap gap-3 mt-3 text-xs text-gray-500">
                                 <span><i class="fas fa-key mr-1"></i>${keys.length} 个一级字段</span>
                                 ${ts ? `<span><i class="fas fa-clock mr-1"></i>${this.escapeHtml(ts)}</span>` : ''}
@@ -209,30 +178,9 @@ const TicketAuditView = {
         setTimeout(() => el.classList.remove('ticket-field-highlight'), 1800);
     },
 
-    toAuditText(data, auditId, ts, idLabel = 'ticketId') {
-        const header = [
-            '工单信息',
-            auditId ? `${idLabel}: ${auditId}` : '',
-            ts ? `ts: ${ts}` : ''
-        ].filter(Boolean).join('\n');
-        return `${header}\n\n${JSON.stringify(data || {}, null, 2)}`;
-    },
-
     getTopLevelKeys(data) {
         if (!data || typeof data !== 'object' || Array.isArray(data)) return [];
         return Object.keys(data);
-    },
-
-    iconForValue(value) {
-        if (Array.isArray(value)) return 'fa-list';
-        if (value && typeof value === 'object') return 'fa-folder-tree';
-        return 'fa-align-left';
-    },
-
-    typeLabel(value) {
-        if (Array.isArray(value)) return `数组 ${value.length}`;
-        if (value && typeof value === 'object') return `对象 ${Object.keys(value).length}`;
-        return '字段';
     },
 
     safeId(key) {

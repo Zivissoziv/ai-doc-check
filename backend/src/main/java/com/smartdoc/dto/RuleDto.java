@@ -36,4 +36,7 @@ public class RuleDto {
 
     @Builder.Default
     private String auditScope = "document";
+
+    @Builder.Default
+    private String groupType = "audit";
 }

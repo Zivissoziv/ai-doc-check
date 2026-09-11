@@ -15,6 +15,7 @@
     <script src="./js/api-client.js"></script>
     <script src="./js/ui-helpers.js"></script>
     <script src="./js/ticket-audit-view.js"></script>
+    <script src="./js/brief-view.js"></script>
     <script src="./js/audit-mode.js"></script>
 </head>
 <body class="bg-gray-50 text-gray-800 h-screen overflow-hidden">
@@ -28,7 +29,7 @@
         <h1 id="appTitle" class="font-bold text-lg text-gray-900">智能审核工具</h1>
         <div class="ml-2 flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 p-1">
             <button id="mode-document" onclick="app.switchAuditMode('document')" class="px-3 py-1.5 text-xs font-medium rounded-md bg-gray-900 text-white shadow-sm">文档审核</button>
-            <button id="mode-ticket" onclick="app.switchAuditMode('ticket')" class="px-3 py-1.5 text-xs font-medium rounded-md text-gray-600 hover:bg-gray-100">工单审核</button>
+            <button id="mode-brief" onclick="app.switchAuditMode('brief')" class="px-3 py-1.5 text-xs font-medium rounded-md text-gray-600 hover:bg-gray-100">变更简报</button>
         </div>
     </div>
     
@@ -78,8 +79,34 @@
                     </label>
                 </div>
             </div>
+
+            <!-- 变更简报：工单搜索区 -->
+            <div id="orderSearchArea" class="hidden space-y-2">
+                <input type="datetime-local" id="orderSearchStart" class="w-full px-2 py-1.5 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                <div class="text-center text-xs text-gray-400 leading-none">至</div>
+                <input type="datetime-local" id="orderSearchEnd" class="w-full px-2 py-1.5 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                <div class="flex items-center gap-2">
+                    <button id="orderSearchBtn" onclick="app.searchOrders()" class="flex-1 min-w-0 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2">
+                        <i class="fas fa-search"></i> 搜索工单
+                    </button>
+                    <div class="relative shrink-0">
+                        <button id="quickRangeBtn" onclick="app.toggleQuickRanges(event)" class="py-2 px-3 bg-white hover:bg-gray-50 border border-gray-200 rounded-lg text-xs font-medium text-gray-600 transition-colors flex items-center gap-1.5">
+                            <i class="fas fa-bolt text-yellow-500"></i> 快捷设置
+                        </button>
+                        <div id="quickRangesDropdown" class="hidden absolute right-0 top-full mt-1 w-48 bg-white rounded-xl shadow-lg border border-gray-200 py-1 z-50">
+                            <button onclick="app.applyQuickRange('y8t8')" class="quick-range-row">昨天8时 ~ 今天8时</button>
+                            <button onclick="app.applyQuickRange('t8t8')" class="quick-range-row">今天8时 ~ 明天8时</button>
+                            <button onclick="app.applyQuickRange('t18t18')" class="quick-range-row">今天18时 ~ 明天18时</button>
+                            <button onclick="app.applyQuickRange('lf8m8')" class="quick-range-row">上周五8时 ~ 本周一8时</button>
+                            <button onclick="app.applyQuickRange('f8m8')" class="quick-range-row">本周五8时 ~ 下周一8时</button>
+                            <button onclick="app.applyQuickRange('f18m18')" class="quick-range-row">本周五18时 ~ 下周一18时</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="orderSearchResult" class="text-xs text-gray-400"></div>
+            </div>
         </div>
-        
+
         <!-- 结构树 -->
         <div class="flex-1 overflow-y-auto p-4" id="structureTree">
             <div class="text-center text-gray-400 mt-20">
@@ -93,10 +120,15 @@
             <h3 class="text-xs font-semibold text-gray-500 uppercase mb-2">结构差异</h3>
             <div id="diffList" class="space-y-1 max-h-40 overflow-y-auto text-sm"></div>
         </div>
+
+        <!-- 变更简报：左下角工单总数 -->
+        <div id="orderTotalFooter" class="hidden border-t border-gray-200 px-4 py-2.5 bg-gray-50 text-xs font-medium text-gray-600">
+            <i class="fas fa-list-ol mr-1 text-gray-400"></i>工单总数: <span id="orderTotalCount" class="text-gray-900">0</span>
+        </div>
     </aside>
 
     <!-- 中央面板：文档预览与对比 -->
-    <main class="flex-1 flex flex-col bg-gray-50/50">
+    <main class="flex-1 min-w-0 flex flex-col bg-gray-50/50">
         <!-- 标签页 -->
         <div class="flex items-center gap-1 p-2 bg-white border-b border-gray-200">
             <button onclick="app.switchTab('preview')" id="tab-preview" class="px-4 py-2 text-sm font-medium rounded-lg bg-gray-100 text-gray-900">
@@ -109,10 +141,17 @@
                 <i class="fas fa-robot mr-1"></i> <span id="tabAuditText">AI审核结果</span>
                 <span id="auditBadge" class="hidden absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full"></span>
             </button>
+            <button onclick="app.switchTab('briefHistory')" id="tab-briefHistory" class="hidden px-4 py-2 text-sm font-medium rounded-lg text-gray-600 hover:bg-gray-50">
+                <i class="fas fa-history mr-1"></i> 历史简报
+            </button>
         </div>
 
         <!-- 内容区 -->
         <div class="flex-1 overflow-hidden relative">
+            <!-- 历史简报视图 -->
+            <div id="view-briefHistory" class="hidden h-full overflow-y-auto p-8">
+                <div id="briefHistoryList" class="max-w-4xl mx-auto space-y-3"></div>
+            </div>
             <!-- 预览视图 -->
             <div id="view-preview" class="h-full overflow-y-auto p-8">
                 <div id="docContent" class="max-w-3xl mx-auto bg-white shadow-lg rounded-xl p-12 min-h-[800px]">
@@ -164,13 +203,13 @@
                 </div>
             </div>
 
-            <!-- 工单信息视图 -->
+            <!-- 工单内容视图 -->
             <div id="view-ticket" class="hidden h-full overflow-y-auto p-8">
-                <div id="ticketContent">
+                <div id="ticketContent" class="min-w-0">
                     <div class="max-w-3xl mx-auto bg-white shadow-lg rounded-xl p-12 min-h-[800px]">
                         <div class="text-center text-gray-400 mt-32">
                             <i class="fas fa-clipboard-list text-6xl mb-4 opacity-20"></i>
-                            <p>加载工单数据后开始审核</p>
+                            <p>搜索并选择一个工单后查看内容</p>
                         </div>
                     </div>
                 </div>
@@ -209,7 +248,7 @@
         <div class="p-4 border-b border-gray-100">
             <!-- 规则组选择器 -->
             <div class="flex items-center gap-2 mb-3">
-                    <select id="ruleGroupSelect" onchange="app.switchRuleGroup(this.value)" 
+                    <select id="ruleGroupSelect" onchange="app.switchRuleGroup(this.value)"
                         class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                         <option value="default">默认规则</option>
                     </select>
@@ -221,6 +260,9 @@
                             <button onclick="app.showEditGroupModal(); app.toggleGroupActions()" class="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 text-left">
                                 <i class="fas fa-edit w-4 text-green-500"></i> 编辑组名称
                             </button>
+                            <button id="briefStyleMenuItem" onclick="app.showBriefStyleModal(); app.toggleGroupActions()" class="hidden w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 text-left">
+                                <i class="fas fa-pen-nib w-4 text-sky-500"></i> 简报风格
+                            </button>
                             <button onclick="app.showCreateGroupModal(); app.toggleGroupActions()" class="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 text-left">
                                 <i class="fas fa-plus w-4 text-blue-500"></i> 新建规则组
                             </button>
@@ -228,7 +270,7 @@
                                 <i class="fas fa-trash-alt w-4 text-red-500"></i> 删除当前组
                             </button>
                             <hr class="my-1 border-gray-100">
-                            <button onclick="app.showRuleTrainingModal(); app.toggleGroupActions()" class="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 text-left">
+                            <button id="ruleTrainingMenuItem" onclick="app.showRuleTrainingModal(); app.toggleGroupActions()" class="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 text-left">
                                 <i class="fas fa-wand-magic-sparkles w-4 text-emerald-500"></i> 规则训练
                             </button>
                             <button onclick="app.showImportExportModal(); app.toggleGroupActions()" class="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 text-left">
@@ -244,7 +286,7 @@
                         </div>
                     </div>
                 </div>
-            
+
             <!-- Excel/工单数据 -->
             <div id="dataSourceArea" class="mb-3">
                 <input type="file" id="excelInput" accept=".xlsx,.xls,.csv" class="hidden" onchange="app.handleExcelUpload(this)">
@@ -506,15 +548,15 @@
             </div>
             
             <div>
-                <label class="block text-sm font-medium text-gray-700 mb-2">审核内容描述（自然语言）</label>
-                <textarea id="rulePrompt" rows="6" placeholder="请检查文档中是否包含敏感词，如发现请指出具体位置和修改建议... 支持使用 {{data.工作表.列名}} 引用Excel数据或 {{data.字段名}} 引用工单数据" 
+                <label id="rulePromptLabel" class="block text-sm font-medium text-gray-700 mb-2">审核内容描述（自然语言）</label>
+                <textarea id="rulePrompt" rows="6" placeholder="请检查文档中是否包含敏感词，如发现请指出具体位置和修改建议... 支持使用 {{data.工作表.列名}} 引用Excel数据或 {{data.字段名}} 引用工单数据"
                     class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm resize-none"></textarea>
-                <div class="flex justify-between mt-1">
+                <div id="ruleVariableHint" class="flex justify-between mt-1">
                     <span class="text-xs text-gray-500">支持变量：{{data.工作表.列名}}, {{data.工单字段}}</span>
                 </div>
             </div>
             
-            <div>
+            <div id="ruleTriggerField">
                 <label class="block text-sm font-medium text-gray-700 mb-1">触发条件（可选）</label>
                 <input type="text" id="ruleTriggerCondition" placeholder='例如：{{data.状态}} == "已关闭"' 
                     class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
@@ -529,7 +571,7 @@
                 </div>
             </div>
             
-            <div>
+            <div id="ruleSeverityField">
                 <label class="block text-sm font-medium text-gray-700 mb-1">严重级别</label>
                 <select id="ruleSeverity" class="w-full px-3 py-2 border border-gray-300 rounded-lg">
                     <option value="error">错误 (必须修复)</option>
@@ -614,7 +656,7 @@
             
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">规则组名称</label>
-                <input type="text" id="groupName" placeholder="例如：我的规则组" 
+                <input type="text" id="groupName" placeholder="例如：我的规则组"
                     class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm">
             </div>
         </div>
@@ -622,6 +664,33 @@
         <div class="p-6 border-t border-gray-100 flex justify-end gap-3">
             <button onclick="app.closeGroupModal()" class="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg text-sm">取消</button>
             <button onclick="app.saveGroupModal()" id="groupModalBtn" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">创建</button>
+        </div>
+    </div>
+</div>
+
+<!-- 简报风格模态框（变更简报模式） -->
+<div id="briefStyleModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col">
+        <div class="p-6 border-b border-gray-100 flex justify-between items-center">
+            <h2 class="text-lg font-bold text-gray-900">简报风格</h2>
+            <button onclick="app.closeBriefStyleModal()" class="text-gray-400 hover:text-gray-600">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+
+        <div class="p-6 space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">参考简报 / 风格描述</label>
+                <textarea id="briefStyleInput" rows="6"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="可粘贴一段历史人工简报作为参考样例，AI 会模仿它的结构、章节与措辞生成新简报；也可以直接描述期望的风格与格式，例如：用中文分三段输出：变更概述、风险提示、后续动作。"></textarea>
+                <p class="text-xs text-gray-500 mt-1">保存到当前规则组，生成简报时作为参考样例引导 AI 输出</p>
+            </div>
+        </div>
+
+        <div class="p-6 border-t border-gray-100 flex justify-end gap-3">
+            <button onclick="app.closeBriefStyleModal()" class="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg text-sm">取消</button>
+            <button onclick="app.saveBriefStyleModal()" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">保存</button>
         </div>
     </div>
 </div>

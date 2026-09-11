@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS rule (
     sort_order INT DEFAULT 0 COMMENT '排序序号',
     trigger_condition VARCHAR(500) DEFAULT NULL COMMENT '触发条件',
     audit_scope VARCHAR(20) DEFAULT 'DOCUMENT' COMMENT '审核范围：DOCUMENT/TICKET',
+    group_type VARCHAR(20) NOT NULL DEFAULT 'AUDIT' COMMENT '规则类型：AUDIT=审核规则/BRIEF=变更简报总结规则',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     FOREIGN KEY (rule_group_id) REFERENCES rule_group(id) ON DELETE CASCADE,
@@ -131,3 +132,21 @@ CREATE TABLE IF NOT EXISTS audit_order_record (
     UNIQUE INDEX uk_order_task_id (task_id),
     INDEX idx_audit_order_batch_no (audit_batch_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='工单审核记录表';
+
+CREATE TABLE IF NOT EXISTS order_brief_record (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键',
+    order_id VARCHAR(100) NOT NULL COMMENT '工单ID',
+    ts VARCHAR(20) NOT NULL COMMENT '时间戳',
+    rule_group_id BIGINT DEFAULT NULL COMMENT '使用的总结规则组ID',
+    brief_batch_no VARCHAR(32) DEFAULT NULL COMMENT '总结批次号',
+    document_name VARCHAR(200) DEFAULT NULL COMMENT '文档名称',
+    task_id VARCHAR(36) DEFAULT NULL COMMENT '异步任务ID',
+    status VARCHAR(20) DEFAULT NULL COMMENT '任务状态：PENDING/RUNNING/COMPLETED/FAILED',
+    brief_content LONGTEXT DEFAULT NULL COMMENT 'AI简报内容（Markdown）',
+    error_message VARCHAR(1000) DEFAULT NULL COMMENT '失败原因',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    INDEX idx_brief_order_ts_created_at (order_id, ts, created_at),
+    UNIQUE INDEX uk_brief_task_id (task_id),
+    INDEX idx_brief_batch_no (brief_batch_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='变更简报总结记录表';

@@ -55,6 +55,13 @@ public class Rule {
     @Builder.Default
     private AuditScope auditScope = AuditScope.DOCUMENT;
 
+    /**
+     * 规则类型：AUDIT=审核规则 / BRIEF=变更简报总结规则
+     */
+    @TableField("group_type")
+    @Builder.Default
+    private String groupType = GroupType.AUDIT.name();
+
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 
@@ -73,5 +80,12 @@ public class Rule {
     public enum AuditScope {
         DOCUMENT,
         TICKET
+    }
+
+    public enum GroupType {
+        /** 审核规则 */
+        AUDIT,
+        /** 变更简报总结规则 */
+        BRIEF
     }
 }

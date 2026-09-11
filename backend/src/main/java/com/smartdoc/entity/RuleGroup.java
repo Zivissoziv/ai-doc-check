@@ -35,6 +35,19 @@ public class RuleGroup {
     @TableField("group_name")
     private String groupName;
 
+    /**
+     * 规则组类型：AUDIT=审核规则组 / BRIEF=变更简报总结规则组
+     */
+    @TableField("group_type")
+    @Builder.Default
+    private String groupType = GroupType.AUDIT.name();
+
+    /**
+     * 简报风格（仅 BRIEF 规则组使用，自由文本引导模型输出格式）
+     */
+    @TableField("brief_style")
+    private String briefStyle;
+
     @TableField("is_default")
     @Builder.Default
     private Boolean isDefault = false;
@@ -54,4 +67,14 @@ public class RuleGroup {
 
     @TableField(exist = false)
     private List<Rule> rules;
+
+    /**
+     * 规则组类型枚举
+     */
+    public enum GroupType {
+        /** 审核规则组 */
+        AUDIT,
+        /** 变更简报总结规则组 */
+        BRIEF
+    }
 }

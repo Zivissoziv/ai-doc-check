@@ -18,6 +18,12 @@ public interface RuleMapper extends BaseMapper<Rule> {
     @Select("SELECT * FROM rule WHERE rule_group_id = #{ruleGroupId} AND audit_scope = #{auditScope} ORDER BY sort_order")
     List<Rule> findByRuleGroupIdAndScope(@Param("ruleGroupId") Long ruleGroupId, @Param("auditScope") String auditScope);
 
+    @Select("SELECT * FROM rule WHERE rule_group_id = #{ruleGroupId} AND group_type = #{groupType} ORDER BY sort_order")
+    List<Rule> findByRuleGroupIdAndType(@Param("ruleGroupId") Long ruleGroupId, @Param("groupType") String groupType);
+
+    @Select("SELECT r.* FROM rule r JOIN rule_group rg ON r.rule_group_id = rg.id WHERE rg.group_id = #{groupId} AND r.group_type = #{groupType} ORDER BY r.sort_order")
+    List<Rule> findByGroupIdAndType(@Param("groupId") String groupId, @Param("groupType") String groupType);
+
     @Select("SELECT r.* FROM rule r JOIN rule_group rg ON r.rule_group_id = rg.id WHERE rg.group_id = #{groupId} ORDER BY r.sort_order")
     List<Rule> findByGroupId(@Param("groupId") String groupId);
 

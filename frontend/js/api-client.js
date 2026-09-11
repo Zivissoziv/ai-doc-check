@@ -59,8 +59,9 @@ const LockAPI = {
 };
 
 const RulesManager = {
-    async getGroupsFromServer() {
-        const response = await fetch('/api/config/rules');
+    async getGroupsFromServer(groupType = null) {
+        const url = groupType ? `/api/config/rules?groupType=${encodeURIComponent(groupType)}` : '/api/config/rules';
+        const response = await fetch(url);
         if (!response.ok) {
             throw new Error('获取规则组失败');
         }
@@ -104,12 +105,15 @@ const RulesManager = {
         return updatedGroup.rules || [];
     },
 
-    async createGroup(groupId, groupName, rules) {
+    async createGroup(groupId, groupName, rules, groupType = null) {
         const payload = {
             groupId: groupId,
             name: groupName,
             rules: rules || []
         };
+        if (groupType) {
+            payload.groupType = groupType;
+        }
 
         const response = await fetch('/api/config/rules', {
             method: 'POST',
@@ -119,6 +123,22 @@ const RulesManager = {
         if (!response.ok) {
             const err = await response.json();
             throw new Error(err.error || '创建规则组失败');
+        }
+        return response.json();
+    },
+
+    /**
+     * 仅更新简报风格（不携带 rules 字段，后端不会动规则列表；name 为必填校验字段）
+     */
+    async saveBriefStyle(groupId, name, briefStyle) {
+        const response = await fetch(`/api/config/rules/${encodeURIComponent(groupId)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ groupId, name, briefStyle })
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || '保存简报风格失败');
         }
         return response.json();
     },
@@ -156,6 +176,7 @@ const RulesManager = {
     },
 
     renderGroupSelector(groups, currentId, containerId) {
+        // 变更简报（单选）仍用原生 select
         const container = document.getElementById(containerId);
         if (!container) return;
 
@@ -192,12 +213,12 @@ const RulesManager = {
                             <i class="fas ${isLocked ? 'fa-eye' : 'fa-edit'} text-xs text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity"></i>
                         </div>
                         <div class="flex items-center gap-2 flex-shrink-0">
-                            <div onclick="${isLocked ? '' : `app.toggleRuleStatus(${originIdx})`}" 
+                            <div onclick="${isLocked ? '' : `app.toggleRuleStatus(${originIdx})`}"
                                 class="relative inline-flex h-5 w-9 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${isEnabled ? 'bg-blue-600' : 'bg-gray-200'} ${isLocked ? 'cursor-not-allowed opacity-60' : ''}"
                                 title="${isLocked ? '规则组已上锁' : (isEnabled ? '点击禁用' : '点击启用')}">
                                 <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${isEnabled ? 'translate-x-4' : 'translate-x-0'}"></span>
                             </div>
-                            <button onclick="${isLocked ? '' : `app.deleteRule(${originIdx})`}" 
+                            <button onclick="${isLocked ? '' : `app.deleteRule(${originIdx})`}"
                                 class="w-5 h-5 flex items-center justify-center text-gray-300 hover:text-red-500 transition-colors ${isLocked ? 'cursor-not-allowed opacity-30' : ''}"
                                 title="${isLocked ? '规则组已上锁' : '删除规则'}">
                                 <i class="fas fa-trash-alt text-xs"></i>
@@ -1079,36 +1100,6 @@ const FeedbackAPI = {
         return response.json();
     },
 
-    async saveOrderAuditResults(results, groupId, durationMs, orderId, ts) {
-        let url = '/api/order/feedback/save';
-        const params = [];
-        if (groupId) {
-            params.push('groupId=' + encodeURIComponent(groupId));
-        }
-        if (durationMs != null) {
-            params.push('durationMs=' + durationMs);
-        }
-        if (orderId) {
-            params.push('orderId=' + encodeURIComponent(orderId));
-        }
-        if (ts) {
-            params.push('ts=' + encodeURIComponent(ts));
-        }
-        if (params.length > 0) {
-            url += '?' + params.join('&');
-        }
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(results)
-        });
-        if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.error || '淇濆瓨瀹℃牳缁撴灉澶辫触');
-        }
-        return response.json();
-    },
-
     async submitFeedback(feedbackId, feedbackType, reason) {
         const response = await fetch(`/api/feedback/${feedbackId}`, {
             method: 'PUT',
@@ -1118,19 +1109,6 @@ const FeedbackAPI = {
         if (!response.ok) {
             const err = await response.json();
             throw new Error(err.error || '提交反馈失败');
-        }
-        return response.json();
-    },
-
-    async submitOrderFeedback(feedbackId, feedbackType, reason) {
-        const response = await fetch(`/api/order/feedback/${feedbackId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ feedbackType, reason: reason || '' })
-        });
-        if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.error || '鎻愪氦鍙嶉澶辫触');
         }
         return response.json();
     },
@@ -1160,13 +1138,4 @@ const FeedbackAPI = {
         return response.json();
     },
 
-    async getAuditRecordByOrderIdAndTs(orderId, ts) {
-        const url = `/api/order/audit-record?orderId=${encodeURIComponent(orderId)}&ts=${encodeURIComponent(ts)}`;
-        const response = await fetch(url);
-        if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.error || '鏌ヨ鍘嗗彶瀹℃牳璁板綍澶辫触');
-        }
-        return response.json();
-    }
 };
