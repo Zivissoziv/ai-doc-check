@@ -41,6 +41,16 @@ class SmartDocApp {
         this.auditMode = localStorage.getItem('smartdoc_audit_mode') || 'document';
         this.trainedRules = [];
         this.ruleTrainingDuplicateHints = [];
+        // 权限组（URL 参数 ?pgroup=xxx）：null 表示无限制，全部可见
+        this.permissionKey = null;
+        this.permission = null;
+        this.permissionGroups = [];
+        this.allRuleGroups = [];
+        this._settingsTab = 'api';
+        this._editingPermissionId = null;
+        this._permSelectedIds = new Set();
+        this._permAllVisible = true;
+        this._permChecklistGroups = [];
 
         this.init();
     }
@@ -70,6 +80,10 @@ class SmartDocApp {
         const params = this.getUrlParams();
         this.auditMode = params.ticketId ? 'document' : this.auditMode;
 
+        // 权限组先于规则组加载：规则组可见性依赖权限配置
+        await this._loadPermission();
+        this._applyPermissionVisibility();
+
         await this.loadRuleGroups();
         await this.loadPresetConfig();
         this.loadSettings();
@@ -79,6 +93,82 @@ class SmartDocApp {
             await this.loadFromTicket(params.ticketId, params.ts);
         }
         AuditMode.apply(this, this.auditMode);
+    }
+
+    // ==================== 权限组（页面可见性） ====================
+
+    /**
+     * 读取 URL 参数 ?pgroup=xxx 对应的权限组；未传或查不到 → 无限制（全部可见）
+     */
+    async _loadPermission() {
+        const permKey = this.getUrlParams().pgroup;
+        this.permissionKey = permKey || null;
+        this.permission = null;
+        if (!permKey) return;
+        // admin 为超管入口（仅用于开放权限设置页签），不做权限组查询与限制
+        if (permKey === 'admin') return;
+
+        try {
+            const result = await PermissionAPI.getByKey(permKey);
+            if (result && result.found && result.permissionGroup) {
+                this.permission = result.permissionGroup;
+            } else {
+                console.warn(`权限组 ${permKey} 不存在，按全部可见处理`);
+            }
+        } catch (err) {
+            console.error('加载权限组失败，按全部可见处理:', err);
+        }
+    }
+
+    _isBriefVisible() {
+        // admin 为超管入口，不受可见性限制；
+        // 变更简报需权限组显式开启（不传 pgroup 或权限组未勾选 → 默认不显示）
+        if (this._isAdmin()) return true;
+        return !!this.permission && this.permission.briefVisible === true;
+    }
+
+    /**
+     * 可见规则组集合；null 表示不限制（全部可见）
+     */
+    _visibleGroupIdSet() {
+        if (this._isAdmin()) return null;
+        const ids = this.permission && this.permission.visibleGroupIds;
+        if (!ids || ids.length === 0) return null;
+        return new Set(ids);
+    }
+
+    _filterGroupsByPermission(groups) {
+        const visible = this._visibleGroupIdSet();
+        if (!visible) return groups;
+        return groups.filter(g => visible.has(g.groupId));
+    }
+
+    /**
+     * 应用权限：变更简报不可见时隐藏模式切换器（只剩文档审核一种模式），并强制回文档审核；
+     * 权限设置页签仅 admin 权限组（?pgroup=admin）可见
+     */
+    _applyPermissionVisibility() {
+        const briefVisible = this._isBriefVisible();
+        const switcher = document.getElementById('modeSwitcher');
+        if (switcher) switcher.classList.toggle('hidden', !briefVisible);
+
+        if (!briefVisible && this.auditMode === 'brief') {
+            this.auditMode = 'document';
+            localStorage.setItem('smartdoc_audit_mode', 'document');
+        }
+
+        // 权限设置页签：仅 ?pgroup=admin 显示
+        const isAdmin = this._isAdmin();
+        const permTab = document.getElementById('settingsTab-perm');
+        if (permTab) permTab.classList.toggle('hidden', !isAdmin);
+        if (!isAdmin) this._settingsTab = 'api';
+    }
+
+    /**
+     * 管理员权限：URL 携带 ?pgroup=admin 才可进入权限设置
+     */
+    _isAdmin() {
+        return this.permissionKey === 'admin';
     }
 
     _makeTs() {
@@ -244,8 +334,14 @@ class SmartDocApp {
         try {
             // 文档审核只加载 AUDIT 组，变更简报只加载 BRIEF 组，两套下拉彻底分开
             const config = await RulesManager.getGroupsFromServer(this.auditMode === 'brief' ? 'brief' : 'audit');
-            this.ruleGroups = config.groups || [];
-            this.defaultRuleGroup = config.defaultGroup;
+            this.allRuleGroups = config.groups || [];
+            // 权限组过滤：不可见规则组不进入下拉与规则面板
+            this.ruleGroups = this._filterGroupsByPermission(this.allRuleGroups);
+            // 默认规则组若不可见则忽略，避免默认叠加审核越权
+            this.defaultRuleGroup = config.defaultGroup
+                && this.ruleGroups.some(g => g.groupId === config.defaultGroup)
+                ? config.defaultGroup
+                : null;
 
             const savedGroup = this._getSavedRuleGroup();
             const groupExists = this.ruleGroups.some(g => g.groupId === savedGroup);
@@ -937,7 +1033,9 @@ class SmartDocApp {
             try {
                 const groupType = this.auditMode === 'brief' ? 'brief' : null;
                 await RulesManager.createGroup(groupId, groupName, [], groupType);
-                this.ruleGroups.push({ groupId: groupId, name: groupName, ...(groupType ? { groupType } : {}) });
+                const newGroup = { groupId: groupId, name: groupName, ...(groupType ? { groupType } : {}) };
+                this.ruleGroups.push(newGroup);
+                this.allRuleGroups.push(newGroup);
                 this.currentRuleGroup = groupId;
                 this._setSavedRuleGroup(groupId);
                 this.rules = [];
@@ -1486,6 +1584,244 @@ class SmartDocApp {
         if (!modal.classList.contains('hidden')) {
             await this._loadApiConfig();
             this.loadSettings();
+            this.switchSettingsTab(this._settingsTab || 'api');
+        }
+    }
+
+    // ==================== 系统设置：页签切换 ====================
+
+    switchSettingsTab(tab) {
+        // 权限设置页签仅 admin 可见
+        const isPerm = tab === 'perm' && this._isAdmin();
+        this._settingsTab = isPerm ? 'perm' : 'api';
+
+        document.getElementById('settingsPanel-api')?.classList.toggle('hidden', isPerm);
+        document.getElementById('settingsPanel-perm')?.classList.toggle('hidden', !isPerm);
+        document.getElementById('settingsFooterApi')?.classList.toggle('hidden', isPerm);
+
+        const baseCls = 'px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors';
+        const apiBtn = document.getElementById('settingsTab-api');
+        const permBtn = document.getElementById('settingsTab-perm');
+        if (apiBtn) {
+            apiBtn.className = `${baseCls} ${isPerm ? 'border-transparent text-gray-500 hover:text-gray-800' : 'border-blue-600 text-blue-600'}`;
+        }
+        if (permBtn) {
+            const hidden = this._isAdmin() ? '' : 'hidden';
+            permBtn.className = `${baseCls} ${hidden} ${isPerm ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-800'}`;
+        }
+
+        if (isPerm) this.loadPermissionGroups();
+    }
+
+    // ==================== 系统设置：权限组管理 ====================
+
+    async loadPermissionGroups() {
+        try {
+            const result = await PermissionAPI.list();
+            this.permissionGroups = result.groups || [];
+        } catch (err) {
+            console.error('加载权限组失败:', err);
+            this.permissionGroups = [];
+        }
+        this.renderPermissionGroups();
+    }
+
+    renderPermissionGroups() {
+        const container = document.getElementById('permissionGroupList');
+        if (!container) return;
+
+        const groups = this.permissionGroups || [];
+        if (groups.length === 0) {
+            container.innerHTML = `
+                <div class="text-center text-gray-400 py-8 text-sm">
+                    <i class="fas fa-user-shield text-3xl mb-2 opacity-30"></i>
+                    <p>暂无权限组，点击「新增权限组」创建</p>
+                </div>`;
+            return;
+        }
+
+        container.innerHTML = groups.map(g => {
+            const visibleCount = (g.visibleGroupIds || []).length;
+            const scopeText = visibleCount === 0 ? '全部规则组可见' : `可见 ${visibleCount} 个规则组`;
+            const briefCls = g.briefVisible ? 'text-green-600' : 'text-gray-400';
+            const briefText = g.briefVisible ? '可见变更简报' : '不可见变更简报';
+            return `
+                <div class="border border-gray-200 rounded-xl p-3 hover:shadow-sm transition-shadow">
+                    <div class="flex items-start justify-between gap-3">
+                        <div class="min-w-0">
+                            <div class="flex items-center gap-2">
+                                <span class="font-medium text-sm text-gray-900">${g.permName}</span>
+                                <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-mono">?pgroup=${g.permKey}</span>
+                            </div>
+                            <div class="text-xs mt-1 flex items-center gap-2">
+                                <span class="${briefCls}"><i class="fas fa-${g.briefVisible ? 'eye' : 'eye-slash'} mr-1"></i>${briefText}</span>
+                                <span class="text-gray-300">|</span>
+                                <span class="text-gray-500"><i class="fas fa-layer-group mr-1"></i>${scopeText}</span>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-1 flex-shrink-0">
+                            <button onclick="app.showPermissionGroupModal(${g.id})" title="编辑"
+                                class="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
+                                <i class="fas fa-edit text-xs"></i>
+                            </button>
+                            <button onclick="app.deletePermissionGroup(${g.id})" title="删除"
+                                class="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                                <i class="fas fa-trash-alt text-xs"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>`;
+        }).join('');
+    }
+
+    async showPermissionGroupModal(id = null) {
+        this._editingPermissionId = id;
+        const isEdit = id != null;
+
+        document.getElementById('permissionModalTitle').textContent = isEdit ? '编辑权限组' : '新增权限组';
+        document.getElementById('permissionModalBtn').textContent = isEdit ? '保存' : '创建';
+
+        // 待选规则组：审核组 + 简报组全量
+        try {
+            const [auditRes, briefRes] = await Promise.all([
+                RulesManager.getGroupsFromServer('audit'),
+                RulesManager.getGroupsFromServer('brief')
+            ]);
+            this._permChecklistGroups = [
+                ...((auditRes && auditRes.groups) || []),
+                ...((briefRes && briefRes.groups) || [])
+            ];
+        } catch (err) {
+            console.error('加载规则组列表失败:', err);
+            this._permChecklistGroups = [];
+        }
+
+        if (isEdit) {
+            const group = (this.permissionGroups || []).find(g => g.id === id) || {};
+            document.getElementById('permKey').value = group.permKey || '';
+            document.getElementById('permName').value = group.permName || '';
+            document.getElementById('permBriefVisible').checked = !!group.briefVisible;
+            this._permSelectedIds = new Set(group.visibleGroupIds || []);
+        } else {
+            document.getElementById('permKey').value = '';
+            document.getElementById('permName').value = '';
+            document.getElementById('permBriefVisible').checked = false;
+            this._permSelectedIds = new Set();
+        }
+
+        this.renderPermissionChecklist();
+        UiHelpers.toggleModal('permissionModal', true);
+    }
+
+    renderPermissionChecklist() {
+        const container = document.getElementById('permGroupChecklist');
+        if (!container) return;
+
+        const groups = this._permChecklistGroups || [];
+        this._permAllVisible = this._permSelectedIds.size === 0;
+
+        const allCheckbox = document.getElementById('permAllGroups');
+        if (allCheckbox) allCheckbox.checked = this._permAllVisible;
+
+        if (groups.length === 0) {
+            container.innerHTML = '<div class="text-xs text-gray-400 p-2">暂无规则组</div>';
+            return;
+        }
+
+        container.innerHTML = groups.map(g => {
+            const isBrief = String(g.groupType || 'audit').toLowerCase() === 'brief';
+            const typeLabel = isBrief
+                ? '<span class="text-xs px-1.5 py-0.5 rounded bg-sky-100 text-sky-700">简报</span>'
+                : '<span class="text-xs px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">审核</span>';
+            const checked = this._permAllVisible || this._permSelectedIds.has(g.groupId);
+            const disabled = this._permAllVisible ? 'disabled' : '';
+            const opacity = this._permAllVisible ? 'opacity-60' : '';
+            return `
+                <label class="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white cursor-pointer ${opacity}">
+                    <input type="checkbox" data-group-id="${g.groupId}" ${checked ? 'checked' : ''} ${disabled}
+                        onchange="app.togglePermissionGroupItem('${g.groupId}', this.checked)"
+                        class="w-3.5 h-3.5 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                    ${typeLabel}
+                    <span class="text-sm text-gray-700 truncate">${g.name || g.groupId}</span>
+                    ${g.locked ? '<i class="fas fa-lock text-xs text-orange-400"></i>' : ''}
+                </label>`;
+        }).join('');
+    }
+
+    togglePermissionAllGroups() {
+        const allVisible = document.getElementById('permAllGroups').checked;
+        this._permAllVisible = allVisible;
+        if (allVisible) {
+            this._permSelectedIds = new Set();
+        }
+        this.renderPermissionChecklist();
+    }
+
+    togglePermissionGroupItem(groupId, checked) {
+        if (checked) {
+            this._permSelectedIds.add(groupId);
+        } else {
+            this._permSelectedIds.delete(groupId);
+        }
+    }
+
+    closePermissionModal() {
+        UiHelpers.toggleModal('permissionModal', false);
+    }
+
+    async savePermissionGroup() {
+        const permKey = document.getElementById('permKey').value.trim();
+        const permName = document.getElementById('permName').value.trim();
+
+        if (!permKey || !permName) {
+            alert('请填写权限组标识和名称');
+            return;
+        }
+        if (!/^[a-zA-Z0-9_-]+$/.test(permKey)) {
+            alert('权限组标识只能包含字母、数字、下划线和横线');
+            return;
+        }
+
+        const payload = {
+            permKey: permKey,
+            permName: permName,
+            briefVisible: document.getElementById('permBriefVisible').checked,
+            visibleGroupIds: this._permAllVisible ? [] : Array.from(this._permSelectedIds)
+        };
+
+        const btn = document.getElementById('permissionModalBtn');
+        const originalText = btn.textContent;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 保存中';
+
+        try {
+            if (this._editingPermissionId != null) {
+                await PermissionAPI.update(this._editingPermissionId, payload);
+            } else {
+                await PermissionAPI.create(payload);
+            }
+            this.closePermissionModal();
+            await this.loadPermissionGroups();
+            UiHelpers.setStatus(`权限组「${permName}」已保存`);
+        } catch (err) {
+            alert('保存失败: ' + err.message);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = originalText;
+        }
+    }
+
+    async deletePermissionGroup(id) {
+        const group = (this.permissionGroups || []).find(g => g.id === id);
+        if (!confirm(`确定要删除权限组「${group?.permName || id}」吗？删除后使用 ?pgroup=${group?.permKey || ''} 的链接将变为全部可见。`)) {
+            return;
+        }
+        try {
+            await PermissionAPI.remove(id);
+            await this.loadPermissionGroups();
+            UiHelpers.setStatus('权限组已删除');
+        } catch (err) {
+            alert('删除失败: ' + err.message);
         }
     }
 
@@ -1648,6 +1984,10 @@ class SmartDocApp {
     async switchAuditMode(mode) {
         const nextMode = mode === 'brief' ? 'brief' : 'document';
         if (nextMode === this.auditMode) return;
+        if (nextMode === 'brief' && !this._isBriefVisible()) {
+            alert('当前权限组不可访问变更简报');
+            return;
+        }
         AuditMode.apply(this, nextMode);
         // 切换模式后按类型重新加载规则组（brief 只加载总结规则组）
         await this.loadRuleGroups();

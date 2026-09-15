@@ -58,6 +58,62 @@ const LockAPI = {
     }
 };
 
+const PermissionAPI = {
+    async list() {
+        const response = await fetch('/api/permission-groups');
+        if (!response.ok) {
+            throw new Error('获取权限组失败');
+        }
+        return response.json();
+    },
+
+    /**
+     * 按 URL 参数值取生效权限；查不到返回 { found: false }（属正常情况，调用方兜底为全部可见）
+     */
+    async getByKey(permKey) {
+        const response = await fetch(`/api/permission-groups/${encodeURIComponent(permKey)}`);
+        if (!response.ok) {
+            throw new Error('获取权限组失败');
+        }
+        return response.json();
+    },
+
+    async create(payload) {
+        const response = await fetch('/api/permission-groups', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || '创建权限组失败');
+        }
+        return response.json();
+    },
+
+    async update(id, payload) {
+        const response = await fetch(`/api/permission-groups/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || '保存权限组失败');
+        }
+        return response.json();
+    },
+
+    async remove(id) {
+        const response = await fetch(`/api/permission-groups/${id}`, { method: 'DELETE' });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || '删除权限组失败');
+        }
+        return response.json();
+    }
+};
+
 const RulesManager = {
     async getGroupsFromServer(groupType = null) {
         const url = groupType ? `/api/config/rules?groupType=${encodeURIComponent(groupType)}` : '/api/config/rules';

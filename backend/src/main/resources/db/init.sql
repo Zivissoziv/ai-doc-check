@@ -150,3 +150,15 @@ CREATE TABLE IF NOT EXISTS order_brief_record (
     UNIQUE INDEX uk_brief_task_id (task_id),
     INDEX idx_brief_batch_no (brief_batch_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='变更简报总结记录表';
+
+CREATE TABLE IF NOT EXISTS permission_group (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键',
+    perm_key VARCHAR(64) NOT NULL UNIQUE COMMENT 'URL参数值（?pgroup=xxx）',
+    perm_name VARCHAR(100) NOT NULL COMMENT '权限组名称',
+    brief_visible BOOLEAN NOT NULL DEFAULT FALSE COMMENT '是否可见变更简报入口',
+    visible_group_ids TEXT DEFAULT NULL COMMENT '可见规则组ID列表(JSON数组)，NULL/空=全部可见',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    INDEX idx_perm_key (perm_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='权限组表';
+
