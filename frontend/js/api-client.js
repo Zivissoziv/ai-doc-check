@@ -432,11 +432,13 @@ const DocumentParser = {
             const rawContent = this._readDocxParagraphText(p);
             const numPr = this._getDocxParagraphNumbering(p, numbering);
             let prefix = this._formatDocxNumberPrefix(numbering, numPr, counters);
+            const outlineLevel = this._getDocxParagraphOutlineLevel(p, numbering);
             if (!prefix) {
-                prefix = this._formatDocxOutlineNumberPrefix(
-                    this._getDocxParagraphOutlineLevel(p, numbering),
-                    outlineCounters
-                );
+                prefix = this._formatDocxOutlineNumberPrefix(outlineLevel, outlineCounters);
+            }
+            // 段落自带序号时不再叠加自动编号，避免 "1.2.3. 2.3 数据准备" 这类重复前缀
+            if (this._hasOwnNumberPrefix(rawContent, outlineLevel >= 0)) {
+                prefix = '';
             }
             const content = this._joinDocxNumberPrefix(prefix, rawContent);
 
@@ -776,6 +778,38 @@ const DocumentParser = {
             }
         });
         return result;
+    },
+
+    /**
+     * 段落文本是否自带序号（如 "2.3 数据准备"、"4.4数据库应急"、"第3章 总则"）。
+     * 自带序号时不再叠加自动编号前缀，避免出现 "1.2.3. 2.3 数据准备" 这类重复。
+     * 与后端 DocumentParserService.hasOwnNumberPrefix 保持同一套规则。
+     *
+     * @param {boolean} headingLike 是否标题类段落（有大纲级别）。标题允许多级序号紧贴文字
+     *        （"4.4数据库应急"），非标题段落要求序号后有分隔符，避免误判 "3.5倍增长" 这类内容。
+     */
+    _hasOwnNumberPrefix(text, headingLike = false) {
+        if (!text) return false;
+        const trimmed = text.trimStart();
+        if (!trimmed) return false;
+
+        const other = '\\(?\\s*\\d+\\s*[\\)）]'
+            + '|\\(?\\s*[一二三四五六七八九十百]+\\s*[\\)）]?\\s*[\\.、]'
+            + '|[（(]\\s*[一二三四五六七八九十百]+\\s*[)）]'
+            + '|第\\s*[一二三四五六七八九十百\\d]+\\s*[章节条款]'
+            + '|[①-⑳]\\s*'
+            + '|[A-Za-z]\\s*[\\)\\.、]\\s+'
+            + '|[IVXivx]+\\s*[\\)\\.、]\\s+';
+        const numeric = headingLike
+            ? '\\d+(?:\\.\\d+)+\\s*[\\.、,，:：]?\\s*'
+                + '|\\d+\\s*[\\.、,，:：]\\s*'
+                + '|\\d+\\s+'
+            : '\\d+(?:\\.\\d+)*\\s*[\\.、,，:：]?\\s+';
+
+        const matched = trimmed.match(new RegExp('^(?:' + numeric + '|' + other + ')'));
+        if (!matched) return false;
+        // 序号后面必须还有正文，避免把孤立序号误判
+        return trimmed.length > matched[0].length;
     },
 
     _joinDocxNumberPrefix(prefix, content) {

@@ -172,8 +172,14 @@ public class DocumentParserService {
             String paraText = readParagraphText(p);
             NumberingRef numberingRef = getParagraphNumbering(p, xpath, numbering);
             String prefix = formatNumberPrefix(numbering, numberingRef, counters);
+            int outlineLevel = getParagraphOutlineLevel(p, xpath, numbering);
             if (prefix.isEmpty()) {
-                prefix = formatOutlineNumberPrefix(getParagraphOutlineLevel(p, xpath, numbering), outlineCounters);
+                prefix = formatOutlineNumberPrefix(outlineLevel, outlineCounters);
+            }
+            // 段落文本自带序号（如 "2.3 数据准备"、"4.4数据库应急"）时不再叠加自动编号，
+            // 否则会出现 "1.2.3. 2.3 数据准备" 这类重复前缀
+            if (hasOwnNumberPrefix(paraText, outlineLevel >= 0)) {
+                prefix = "";
             }
             String content = joinNumberPrefix(prefix, paraText);
 
@@ -534,6 +540,57 @@ public class DocumentParserService {
             }
         }
         return result.toString();
+    }
+
+    /**
+     * 段落文本自带的序号前缀模式。
+     * NUMBER_BODY_STRICT：序号后必须有空白/标点分隔（列表项等非标题段落用，避免误伤）。
+     * NUMBER_BODY_GLUED：标题段落用，允许多级序号紧贴文字（"4.4数据库应急"、"3.2.2投产后技术检查方案"）。
+     * NUMBER_BODY_OTHER：括号数字、中文数字、"第X章节条款"、圈码、字母、罗马数字等通用形态。
+     */
+    private static final String NUMBER_BODY_STRICT = "\\d+(?:\\.\\d+)*\\s*[\\.、,，:：]?\\s+";
+
+    private static final String NUMBER_BODY_GLUED =
+            "\\d+(?:\\.\\d+)+\\s*[\\.、,，:：]?\\s*"
+                    + "|\\d+\\s*[\\.、,，:：]\\s*"
+                    + "|\\d+\\s+";
+
+    private static final String NUMBER_BODY_OTHER =
+            "[\\(（]\\s*\\d+\\s*[\\)）]\\s*"
+                    + "|[\\(（]?\\s*[一二三四五六七八九十百]+\\s*[\\)）]?\\s*[\\.、]\\s*"
+                    + "|第\\s*[一二三四五六七八九十百\\d]+\\s*[章节条款]"
+                    + "|[①-⑳]\\s*"
+                    + "|[A-Za-z]\\s*[\\)\\.、]\\s+"
+                    + "|[IVXivx]+\\s*[\\)\\.、]\\s+";
+
+    private static final java.util.regex.Pattern OWN_NUMBER_PREFIX =
+            java.util.regex.Pattern.compile("^(?:" + NUMBER_BODY_STRICT + "|" + NUMBER_BODY_OTHER + ")");
+
+    private static final java.util.regex.Pattern OWN_NUMBER_PREFIX_GLUED =
+            java.util.regex.Pattern.compile("^(?:" + NUMBER_BODY_GLUED + "|" + NUMBER_BODY_OTHER + ")");
+
+    /**
+     * 判断段落文本是否已经自带序号（如 "2.3 数据准备"、"4.4数据库应急"、"第3章 总则"）。
+     * 自带序号时不再叠加自动编号前缀，避免出现 "1.2.3. 2.3 数据准备" 这类重复。
+     *
+     * @param headingLike 是否为标题类段落（有大纲级别）。标题才允许"序号紧贴文字"的宽松匹配，
+     *                    列表项等非标题段落要求序号后有分隔符，避免把 "3.5倍增长" 这类内容误判成序号。
+     */
+    private boolean hasOwnNumberPrefix(String text, boolean headingLike) {
+        if (text == null) {
+            return false;
+        }
+        String trimmed = text.replaceFirst("^\\s+", "");
+        if (trimmed.isEmpty()) {
+            return false;
+        }
+        java.util.regex.Matcher matcher =
+                (headingLike ? OWN_NUMBER_PREFIX_GLUED : OWN_NUMBER_PREFIX).matcher(trimmed);
+        if (!matcher.find()) {
+            return false;
+        }
+        // 序号后面必须还有正文，避免把 "1." 这类孤立内容误判成标题序号
+        return trimmed.length() > matcher.end();
     }
 
     private String joinNumberPrefix(String prefix, String content) {
