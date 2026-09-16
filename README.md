@@ -25,6 +25,15 @@
 
 ![AI审核结果界面](screenshots/audit-results.png)
 
+### 变更简报
+对接变更管理系统工单接口，按时间范围搜索工单并生成 AI 变更简报。
+
+- 工单搜索：支持 GET/POST 可配置，兼容多层嵌套与分页包裹的响应结构
+- 工单 ID / 名称字段内置内网变更系统别名（`cchrreleased` / `applicationsystem`）
+- 全程仅调用一次工单接口，搜索结果整份直传后端生成简报
+- 规则训练：粘贴训练材料总结规则语义，候选规则可应用到简报规则组
+- 支持默认规则组叠加审核（文档审核模式）
+
 ### 统计分析
 全局调用统计，按规则组/规则筛选不准确反馈详情及原因。
 
@@ -190,6 +199,14 @@ start.bat
 | GET | `/api/stats/inaccurate` | 获取不准确反馈详情 |
 | PUT | `/api/config/rules/{groupId}/lock` | 上锁规则组 |
 | POST | `/api/config/rules/{groupId}/unlock` | 解锁规则组 |
+| PUT | `/api/config/rules/{groupId}/default` | 设为默认规则组（同类型互斥） |
+| POST | `/api/config/rules/{groupId}/train` | 规则训练（总结材料生成候选规则） |
+| GET | `/api/order/test-connection` | 工单接口连通性测试 |
+| GET | `/api/order/search` | 按时间范围搜索工单（`startTime`/`endTime`） |
+| POST | `/api/order/async-summarize` | 生成变更简报（异步） |
+| GET | `/api/order/async-brief-task/{taskId}` | 查询简报任务状态 |
+| GET | `/api/order/brief-record` | 查询单份历史简报 |
+| GET | `/api/order/brief-records` | 查询历史简报列表 |
 
 ## 打包部署
 

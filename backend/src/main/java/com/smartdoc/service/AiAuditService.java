@@ -37,6 +37,11 @@ import java.util.stream.Collectors;
 @Service
 public class AiAuditService {
 
+    /**
+     * 送入提示词的文档正文最大字符数，超出部分不参与审核（中文按字符计，10 万字 ≈ 一份长篇手册）。
+     */
+    private static final int MAX_DOCUMENT_CHARS = 100000;
+
     @Value("${smartdoc.audit.timeout:120}")
     private int timeout;
 
@@ -318,7 +323,7 @@ public class AiAuditService {
                 i, rule.getRuleName(), rule.getSeverity().name().toLowerCase(), prompt));
         }
 
-        String docContent = documentText.substring(0, Math.min(documentText.length(), 10000));
+        String docContent = documentText.substring(0, Math.min(documentText.length(), MAX_DOCUMENT_CHARS));
 
         Map<String, String> promptParams = new HashMap<>();
         promptParams.put("documentContent", docContent);

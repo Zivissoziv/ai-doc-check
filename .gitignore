@@ -18,3 +18,6 @@ scripts/*.docx
 scripts/~$*.docx
 .workbuddy/
 .playwright-cli/
+
+# UI 测试脚本运行产物的截图
+scripts/*.png

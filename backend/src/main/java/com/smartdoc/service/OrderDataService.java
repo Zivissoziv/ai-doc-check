@@ -15,6 +15,11 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.Charset;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -95,11 +100,33 @@ public class OrderDataService {
             method = HttpMethod.GET;
         }
 
-        ResponseEntity<String> response = rt.exchange(url, method, entity, String.class);
+        // 以字节接收，自行决定解码字符集：上游 Content-Type 常不带 charset，
+        // RestTemplate 的 StringHttpMessageConverter 此时默认按 ISO-8859-1 解码，中文会变乱码
+        ResponseEntity<byte[]> response = rt.exchange(url, method, entity, byte[].class);
         if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
             throw new RuntimeException("Order audit service returned: " + response.getStatusCode());
         }
-        return objectMapper.readTree(response.getBody());
+        String bodyText = decodeBody(response.getHeaders().getContentType(), response.getBody());
+        return objectMapper.readTree(bodyText);
+    }
+
+    /**
+     * 响应体解码：优先用响应头声明的 charset；未声明时先严格校验 UTF-8，
+     * 校验失败（非法 UTF-8 序列）再按 GBK 兜底，兼容老系统的中文编码。
+     */
+    private String decodeBody(MediaType contentType, byte[] bytes) {
+        if (contentType != null && contentType.getCharset() != null) {
+            return new String(bytes, contentType.getCharset());
+        }
+        try {
+            return StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(bytes)).toString();
+        } catch (CharacterCodingException e) {
+            log.warn("Order response is not valid UTF-8, falling back to GBK decoding");
+            return new String(bytes, Charset.forName("GBK"));
+        }
     }
 
     /**
@@ -287,10 +314,10 @@ public class OrderDataService {
     }
 
     /**
-     * 工单 ID 字段别名（按优先级）。`cchrreleased` 为变更管理系统实际使用的字段名。
+     * 工单 ID 字段别名（按优先级）。`cchrreleaseid` 为变更管理系统实际使用的字段名。
      */
     private static final String[] ORDER_ID_KEYS = {
-            "orderId", "order_id", "cchrreleased", "cchrReleased", "releaseId",
+            "orderId", "order_id", "cchrreleaseid", "cchrReleaseid", "releaseId",
             "orderNo", "order_no", "id"
     };
 
