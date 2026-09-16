@@ -161,7 +161,7 @@ class SmartDocApp {
         const isAdmin = this._isAdmin();
         const permTab = document.getElementById('settingsTab-perm');
         if (permTab) permTab.classList.toggle('hidden', !isAdmin);
-        if (!isAdmin) this._settingsTab = 'api';
+        if (!isAdmin && this._settingsTab === 'perm') this._settingsTab = 'api';
     }
 
     /**
@@ -404,6 +404,56 @@ class SmartDocApp {
         this.settings.model = apiConfig.model || API_DEFAULTS.model;
         this.settings.auditRole = apiConfig.auditRole || API_DEFAULTS.auditRole;
         this.settings.hasApiKey = apiConfig.hasApiKey || false;
+
+        // 工单接口配置
+        this.settings.orderAuditEndpoint = apiConfig.orderAuditEndpoint || '';
+        this.settings.orderHttpMethod = (apiConfig.orderHttpMethod || 'GET').toUpperCase();
+        this.settings.orderListBody = apiConfig.orderListBody || '';
+        this.settings.orderDetailBody = apiConfig.orderDetailBody || '';
+        this.settings.ticketEndpoint = apiConfig.ticketEndpoint || '';
+
+        const endpointInput = document.getElementById('orderAuditEndpoint');
+        if (endpointInput) endpointInput.value = this.settings.orderAuditEndpoint;
+        const methodSelect = document.getElementById('orderHttpMethod');
+        if (methodSelect) methodSelect.value = this.settings.orderHttpMethod;
+        const listBody = document.getElementById('orderListBody');
+        if (listBody) listBody.value = this.settings.orderListBody;
+        const detailBody = document.getElementById('orderDetailBody');
+        if (detailBody) detailBody.value = this.settings.orderDetailBody;
+        const ticketInput = document.getElementById('ticketEndpoint');
+        if (ticketInput) ticketInput.value = this.settings.ticketEndpoint;
+        this.toggleOrderBodyFields();
+    }
+
+    /** POST 时才显示请求体编辑区 */
+    toggleOrderBodyFields() {
+        const isPost = (document.getElementById('orderHttpMethod')?.value || 'GET').toUpperCase() === 'POST';
+        document.getElementById('orderBodyFields')?.classList.toggle('hidden', !isPost);
+    }
+
+    async testOrderEndpoint() {
+        const btn = document.getElementById('orderTestBtn');
+        const result = document.getElementById('orderTestResult');
+        if (btn) btn.disabled = true;
+        if (result) {
+            result.className = 'text-xs text-gray-500';
+            result.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>正在测试...';
+        }
+        try {
+            const data = await ConfigAPI.testOrderEndpoint();
+            if (result) {
+                result.className = 'text-xs text-green-600';
+                const sample = data.sampleOrderId ? `，示例：${data.sampleOrderId}${data.sampleDocumentName ? ' / ' + data.sampleDocumentName : ''}` : '';
+                result.innerHTML = `<i class="fas fa-check-circle mr-1"></i>连通正常（${data.method || 'GET'}），返回 ${data.total} 条工单${sample}`;
+            }
+        } catch (err) {
+            if (result) {
+                result.className = 'text-xs text-red-600';
+                result.innerHTML = `<i class="fas fa-times-circle mr-1"></i>${err.message}`;
+            }
+        } finally {
+            if (btn) btn.disabled = false;
+        }
     }
     
     async loadPresetConfig() {
@@ -725,18 +775,38 @@ class SmartDocApp {
         UiHelpers.toggleModal('ruleModal', true);
     }
     
-    showRuleTrainingModal() {
+    async showRuleTrainingModal() {
         this.trainedRules = [];
         this.ruleTrainingDuplicateHints = [];
+        const isBrief = this.auditMode === 'brief';
         const input = document.getElementById('ruleTrainingInput');
         const results = document.getElementById('ruleTrainingResults');
         const applyBtn = document.getElementById('ruleTrainingApplyBtn');
-        if (input) input.value = '';
+        if (input) {
+            input.value = '';
+            input.placeholder = isBrief
+                ? '例如：粘贴一份你认为写得好的变更简报（Markdown 或纯文本），AI 会从中提炼“这类变更要总结哪些信息”。'
+                : '例如：合同中约定“项目完成后付款”，但没有说明完成标准、验收主体和付款期限，后续容易产生争议。建议补充验收标准、付款期限和异议处理流程。';
+        }
+
+        // 文案随模式切换：简报模式 = 从简报样例训练总结规则
+        this._setText('ruleTrainingTitle', isBrief ? '简报规则训练' : '规则训练');
+        this._setText('ruleTrainingSubtitle', isBrief
+            ? '从简报样例中提炼可复用的总结规则，用于未来生成口径一致的简报'
+            : '从人类审核报告中提炼可复用、可执行、可判断的审核规则');
+        this._setText('ruleTrainingInputLabel', isBrief ? '变更简报样例' : '人类审核报告 / 评审经验');
+        this._setHTML('ruleTrainingInputHint', isBrief
+            ? '<i class="fas fa-circle-info mr-1"></i>建议粘贴信息完整、结构清晰的简报（如从历史简报里复制一段）。AI 会提炼“这类变更要总结哪些信息”，并自动跳过与已有总结规则重复的部分。'
+            : '<i class="fas fa-circle-info mr-1"></i>建议粘贴包含“问题描述、风险原因、原文片段、修改建议”的审核报告。AI 会自动丢弃难以泛化的个案意见。');
+        this._setText('ruleTrainingFooterNote', isBrief
+            ? '应用后会追加到当前简报规则组，作为总结规则参与后续简报生成。'
+            : '应用后会追加到当前规则组，并沿用当前审核模式。');
+
         if (results) {
             results.innerHTML = `
                 <div class="text-center text-gray-400 py-8 text-sm">
                     <i class="fas fa-wand-magic-sparkles text-3xl mb-2 opacity-30"></i>
-                    <p>粘贴人类审核报告后，AI 会提炼可复用的候选规则</p>
+                    <p>${isBrief ? '粘贴简报样例后，AI 会提炼可复用的总结规则' : '粘贴人类审核报告后，AI 会提炼可复用的候选规则'}</p>
                 </div>`;
         }
         if (applyBtn) {
@@ -746,6 +816,16 @@ class SmartDocApp {
         UiHelpers.toggleModal('ruleTrainingModal', true);
     }
 
+    _setText(id, value) {
+        const el = document.getElementById(id);
+        if (el) el.textContent = value;
+    }
+
+    _setHTML(id, value) {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = value;
+    }
+
     closeRuleTrainingModal() {
         UiHelpers.toggleModal('ruleTrainingModal', false);
     }
@@ -753,9 +833,10 @@ class SmartDocApp {
     async trainRulesFromReport() {
         const input = document.getElementById('ruleTrainingInput');
         const btn = document.getElementById('ruleTrainingGenerateBtn');
+        const isBrief = this.auditMode === 'brief';
         const reviewReport = (input?.value || '').trim();
         if (!reviewReport) {
-            alert('请先粘贴人类审核报告或评审经验');
+            alert(isBrief ? '请先粘贴一份变更简报样例' : '请先粘贴人类审核报告或评审经验');
             return;
         }
 
@@ -763,7 +844,7 @@ class SmartDocApp {
             btn.disabled = true;
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 正在训练';
         }
-        UiHelpers.setStatus('正在从审核报告中提炼规则...', true);
+        UiHelpers.setStatus(isBrief ? '正在从历史简报中提炼总结规则...' : '正在从审核报告中提炼规则...', true);
 
         try {
             const data = await RuleTrainingAPI.train(reviewReport, this.auditMode, this.currentRuleGroup);
@@ -799,17 +880,36 @@ class SmartDocApp {
             </div>`;
     }
 
+    /**
+     * 候选规则卡片字段标签：简报模式是"总结规则"语义，与审核规则区分
+     */
+    _trainingLabels() {
+        if (this.auditMode === 'brief') {
+            return {
+                riskType: '总结维度', sourceInsight: '来源简报', generalizedRisk: '要点说明',
+                triggerScenario: '适用场景', passExample: '完整示例', failExample: '缺失示例',
+                severityHidden: true, emptyHint: '没有提炼出可复用的总结规则，可换一份历史简报或补充期望的简报结构后重试',
+            };
+        }
+        return {
+            riskType: '风险类型', sourceInsight: '来源经验', generalizedRisk: '风险原因',
+            triggerScenario: '触发场景', passExample: '通过', failExample: '不通过',
+            severityHidden: false, emptyHint: '没有提炼出可复用规则，可补充更多问题原因、原文片段或修改建议后重试',
+        };
+    }
+
     renderRuleTrainingResults() {
         const container = document.getElementById('ruleTrainingResults');
         const applyBtn = document.getElementById('ruleTrainingApplyBtn');
         if (!container) return;
         const duplicateHtml = this._renderRuleTrainingDuplicateHints();
+        const labels = this._trainingLabels();
 
         if (!this.trainedRules.length) {
             container.innerHTML = duplicateHtml + `
                 <div class="text-center text-gray-400 py-8 text-sm">
                     <i class="fas fa-circle-info text-2xl mb-2 opacity-40"></i>
-                    <p>没有提炼出可复用规则，可补充更多问题原因、原文片段或修改建议后重试</p>
+                    <p>${labels.emptyHint}</p>
                 </div>`;
             if (applyBtn) {
                 applyBtn.disabled = true;
@@ -820,6 +920,9 @@ class SmartDocApp {
 
         const rulesHtml = this.trainedRules.map((rule, idx) => {
             const severityClass = rule.severity === 'error' ? 'red' : rule.severity === 'info' ? 'blue' : 'yellow';
+            const severityBadge = labels.severityHidden
+                ? ''
+                : `<span class="px-2 py-0.5 rounded-full bg-${severityClass}-100 text-${severityClass}-700 text-xs">${this._severityText(rule.severity)}</span>`;
             return `
                 <label class="block border border-gray-200 rounded-xl p-4 bg-white hover:bg-gray-50 transition-colors cursor-pointer">
                     <div class="flex items-start gap-3">
@@ -827,17 +930,17 @@ class SmartDocApp {
                         <div class="min-w-0 flex-1">
                             <div class="flex items-center gap-2 mb-2">
                                 <span class="font-semibold text-sm text-gray-900">${this._escapeStatsText(rule.name || '未命名规则')}</span>
-                                <span class="px-2 py-0.5 rounded-full bg-${severityClass}-100 text-${severityClass}-700 text-xs">${this._severityText(rule.severity)}</span>
+                                ${severityBadge}
                             </div>
-                            ${rule.riskType ? `<div class="text-xs text-gray-500 mb-1"><span class="font-medium text-gray-600">风险类型：</span>${this._escapeStatsText(rule.riskType)}</div>` : ''}
-                            ${rule.sourceInsight ? `<div class="text-xs text-gray-500 mb-1"><span class="font-medium text-gray-600">来源经验：</span>${this._escapeStatsText(rule.sourceInsight)}</div>` : ''}
-                            ${rule.generalizedRisk ? `<div class="text-xs text-gray-500 mb-1"><span class="font-medium text-gray-600">风险原因：</span>${this._escapeStatsText(rule.generalizedRisk)}</div>` : ''}
-                            ${rule.triggerScenario ? `<div class="text-xs text-gray-500 mb-2"><span class="font-medium text-gray-600">触发场景：</span>${this._escapeStatsText(rule.triggerScenario)}</div>` : ''}
+                            ${rule.riskType ? `<div class="text-xs text-gray-500 mb-1"><span class="font-medium text-gray-600">${labels.riskType}：</span>${this._escapeStatsText(rule.riskType)}</div>` : ''}
+                            ${rule.sourceInsight ? `<div class="text-xs text-gray-500 mb-1"><span class="font-medium text-gray-600">${labels.sourceInsight}：</span>${this._escapeStatsText(rule.sourceInsight)}</div>` : ''}
+                            ${rule.generalizedRisk ? `<div class="text-xs text-gray-500 mb-1"><span class="font-medium text-gray-600">${labels.generalizedRisk}：</span>${this._escapeStatsText(rule.generalizedRisk)}</div>` : ''}
+                            ${rule.triggerScenario ? `<div class="text-xs text-gray-500 mb-2"><span class="font-medium text-gray-600">${labels.triggerScenario}：</span>${this._escapeStatsText(rule.triggerScenario)}</div>` : ''}
                             <div class="text-xs text-gray-700 bg-gray-50 border border-gray-100 rounded-lg p-3 leading-relaxed whitespace-pre-wrap">${this._escapeStatsText(rule.prompt || '')}</div>
                             ${(rule.passExample || rule.failExample) ? `
                                 <div class="grid grid-cols-2 gap-2 mt-2">
-                                    <div class="text-xs bg-green-50 text-green-700 rounded-lg p-2"><span class="font-medium">通过：</span>${this._escapeStatsText(rule.passExample || '-')}</div>
-                                    <div class="text-xs bg-red-50 text-red-700 rounded-lg p-2"><span class="font-medium">不通过：</span>${this._escapeStatsText(rule.failExample || '-')}</div>
+                                    <div class="text-xs bg-green-50 text-green-700 rounded-lg p-2"><span class="font-medium">${labels.passExample}：</span>${this._escapeStatsText(rule.passExample || '-')}</div>
+                                    <div class="text-xs bg-red-50 text-red-700 rounded-lg p-2"><span class="font-medium">${labels.failExample}：</span>${this._escapeStatsText(rule.failExample || '-')}</div>
                                 </div>` : ''}
                         </div>
                     </div>
@@ -1593,24 +1696,34 @@ class SmartDocApp {
     switchSettingsTab(tab) {
         // 权限设置页签仅 admin 可见
         const isPerm = tab === 'perm' && this._isAdmin();
-        this._settingsTab = isPerm ? 'perm' : 'api';
+        const isOrder = !isPerm && tab === 'order';
+        const target = isPerm ? 'perm' : (isOrder ? 'order' : 'api');
+        this._settingsTab = target;
 
-        document.getElementById('settingsPanel-api')?.classList.toggle('hidden', isPerm);
-        document.getElementById('settingsPanel-perm')?.classList.toggle('hidden', !isPerm);
-        document.getElementById('settingsFooterApi')?.classList.toggle('hidden', isPerm);
+        document.getElementById('settingsPanel-api')?.classList.toggle('hidden', target !== 'api');
+        document.getElementById('settingsPanel-order')?.classList.toggle('hidden', target !== 'order');
+        document.getElementById('settingsPanel-perm')?.classList.toggle('hidden', target !== 'perm');
+        document.getElementById('settingsFooterApi')?.classList.toggle('hidden', target !== 'api');
+        document.getElementById('settingsFooterOrder')?.classList.toggle('hidden', target !== 'order');
 
         const baseCls = 'px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors';
+        const activeCls = 'border-blue-600 text-blue-600';
+        const idleCls = 'border-transparent text-gray-500 hover:text-gray-800';
+
         const apiBtn = document.getElementById('settingsTab-api');
+        if (apiBtn) apiBtn.className = `${baseCls} ${target === 'api' ? activeCls : idleCls}`;
+
+        const orderBtn = document.getElementById('settingsTab-order');
+        if (orderBtn) orderBtn.className = `${baseCls} ${target === 'order' ? activeCls : idleCls}`;
+
         const permBtn = document.getElementById('settingsTab-perm');
-        if (apiBtn) {
-            apiBtn.className = `${baseCls} ${isPerm ? 'border-transparent text-gray-500 hover:text-gray-800' : 'border-blue-600 text-blue-600'}`;
-        }
         if (permBtn) {
-            const hidden = this._isAdmin() ? '' : 'hidden';
-            permBtn.className = `${baseCls} ${hidden} ${isPerm ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-800'}`;
+            const hiddenCls = this._isAdmin() ? '' : 'hidden';
+            permBtn.className = `${baseCls} ${hiddenCls} ${target === 'perm' ? activeCls : idleCls}`;
         }
 
-        if (isPerm) this.loadPermissionGroups();
+        if (target === 'order') this.toggleOrderBodyFields();
+        if (target === 'perm') this.loadPermissionGroups();
     }
 
     // ==================== 系统设置：权限组管理 ====================
@@ -1840,7 +1953,13 @@ class SmartDocApp {
         const config = {
             endpoint: document.getElementById('apiEndpoint').value,
             model: document.getElementById('apiModel').value,
-            auditRole: document.getElementById('auditRole').value || API_DEFAULTS.auditRole
+            auditRole: document.getElementById('auditRole').value || API_DEFAULTS.auditRole,
+            // 工单接口配置（变更简报取数 / 工单审核共用）
+            orderAuditEndpoint: document.getElementById('orderAuditEndpoint').value.trim(),
+            orderHttpMethod: (document.getElementById('orderHttpMethod').value || 'GET').toUpperCase(),
+            orderListBody: document.getElementById('orderListBody').value,
+            orderDetailBody: document.getElementById('orderDetailBody').value,
+            ticketEndpoint: document.getElementById('ticketEndpoint').value.trim()
         };
 
         if (apiKey) config.apiKey = apiKey;
@@ -1851,6 +1970,11 @@ class SmartDocApp {
             this.settings.endpoint = config.endpoint;
             this.settings.model = config.model;
             this.settings.auditRole = config.auditRole;
+            this.settings.orderAuditEndpoint = config.orderAuditEndpoint;
+            this.settings.orderHttpMethod = config.orderHttpMethod;
+            this.settings.orderListBody = config.orderListBody;
+            this.settings.orderDetailBody = config.orderDetailBody;
+            this.settings.ticketEndpoint = config.ticketEndpoint;
             if (apiKey) this.settings.hasApiKey = true;
 
             const batchSize = parseInt(document.getElementById('batchSize').value) || SETTINGS_DEFAULTS.batchSize;
@@ -2118,7 +2242,12 @@ class SmartDocApp {
             }
             const data = await response.json();
             this.orderList = data.orders || [];
-            resultHint.textContent = `共 ${this.orderList.length} 条工单（${start} ~ ${end}）`;
+            // 上游接口分页时，total 可能远大于本次返回条数，明确提示避免误以为取全了
+            const upstreamTotal = Number(data.upstreamTotal);
+            const totalHint = (!isNaN(upstreamTotal) && upstreamTotal > this.orderList.length)
+                ? `，上游共 ${upstreamTotal} 条（接口仅返回 ${this.orderList.length} 条）`
+                : '';
+            resultHint.textContent = `共 ${this.orderList.length} 条工单（${start} ~ ${end}）${totalHint}`;
             this._updateOrderTotalCount();
             BriefView.renderOrderList(this.orderList, this.orderId);
             AuditMode.setText('wordCount', `工单: ${this.orderList.length}`);

@@ -49,6 +49,9 @@ CREATE TABLE IF NOT EXISTS api_config (
     ticket_endpoint VARCHAR(500) DEFAULT NULL COMMENT '工单系统地址',
     ticket_token VARCHAR(500) DEFAULT NULL COMMENT '工单系统令牌',
     order_audit_endpoint VARCHAR(500) DEFAULT NULL COMMENT '工单审核数据接口地址',
+    order_http_method VARCHAR(10) NOT NULL DEFAULT 'GET' COMMENT '工单接口请求方法：GET/POST',
+    order_list_body TEXT DEFAULT NULL COMMENT '列表请求体模板(JSON)，支持 {startTime}/{start}/{endTime}/{end} 占位符',
+    order_detail_body TEXT DEFAULT NULL COMMENT '单条工单请求体模板(JSON)，支持 {id}/{orderId} 占位符；为空则复用列表模板',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='API配置表';

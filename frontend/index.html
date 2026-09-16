@@ -374,9 +374,9 @@
         <div class="p-6 border-b border-gray-100 flex justify-between items-center">
             <div>
                 <h2 class="text-lg font-bold text-gray-900">
-                    <i class="fas fa-wand-magic-sparkles text-emerald-600 mr-2"></i>规则训练
+                    <i class="fas fa-wand-magic-sparkles text-emerald-600 mr-2"></i><span id="ruleTrainingTitle">规则训练</span>
                 </h2>
-                <p class="text-xs text-gray-500 mt-1">从人类审核报告中提炼可复用、可执行、可判断的审核规则</p>
+                <p class="text-xs text-gray-500 mt-1" id="ruleTrainingSubtitle">从人类审核报告中提炼可复用、可执行、可判断的审核规则</p>
             </div>
             <button onclick="app.closeRuleTrainingModal()" class="text-gray-400 hover:text-gray-600">
                 <i class="fas fa-times text-xl"></i>
@@ -385,9 +385,9 @@
 
         <div class="grid grid-cols-2 gap-0 min-h-0 flex-1">
             <div class="p-6 border-r border-gray-100 flex flex-col min-h-0">
-                <label class="block text-sm font-medium text-gray-700 mb-2">人类审核报告 / 评审经验</label>
+                <label class="block text-sm font-medium text-gray-700 mb-2" id="ruleTrainingInputLabel">人类审核报告 / 评审经验</label>
                 <textarea id="ruleTrainingInput" class="flex-1 min-h-[360px] w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm resize-none" placeholder="例如：合同中约定“项目完成后付款”，但没有说明完成标准、验收主体和付款期限，后续容易产生争议。建议补充验收标准、付款期限和异议处理流程。"></textarea>
-                <div class="mt-3 bg-emerald-50 border border-emerald-100 rounded-lg p-3 text-xs text-emerald-800 leading-relaxed">
+                <div class="mt-3 bg-emerald-50 border border-emerald-100 rounded-lg p-3 text-xs text-emerald-800 leading-relaxed" id="ruleTrainingInputHint">
                     <i class="fas fa-circle-info mr-1"></i>
                     建议粘贴包含“问题描述、风险原因、原文片段、修改建议”的审核报告。AI 会自动丢弃难以泛化的个案意见。
                 </div>
@@ -410,7 +410,7 @@
         </div>
 
         <div class="p-6 border-t border-gray-100 flex justify-between items-center">
-            <p class="text-xs text-gray-500">应用后会追加到当前规则组，并沿用当前审核模式。</p>
+            <p class="text-xs text-gray-500" id="ruleTrainingFooterNote">应用后会追加到当前规则组，并沿用当前审核模式。</p>
             <div class="flex gap-3">
                 <button onclick="app.closeRuleTrainingModal()" class="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg text-sm">取消</button>
                 <button id="ruleTrainingApplyBtn" onclick="app.applyTrainedRules()" disabled class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">应用选中规则（0）</button>
@@ -433,6 +433,10 @@
             <button id="settingsTab-api" onclick="app.switchSettingsTab('api')"
                 class="px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors">
                 模型API设置
+            </button>
+            <button id="settingsTab-order" onclick="app.switchSettingsTab('order')"
+                class="px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors">
+                工单接口
             </button>
             <button id="settingsTab-perm" onclick="app.switchSettingsTab('perm')"
                 class="hidden px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors">
@@ -536,6 +540,63 @@
             </div>
         </div>
 
+        <!-- 工单接口面板 -->
+        <div id="settingsPanel-order" class="hidden space-y-4">
+            <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800 leading-relaxed">
+                <i class="fas fa-info-circle mr-1"></i>
+                变更简报的工单列表与工单审核共用这个接口；单条工单也从该接口返回数据，按 orderId 匹配。
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">工单列表接口地址</label>
+                <input type="text" id="orderAuditEndpoint" placeholder="http://localhost:8090/orders"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-mono text-sm">
+                <p class="text-xs text-gray-500 mt-1">
+                    支持占位符 <code class="px-1 bg-gray-100 rounded">{startTime}</code>
+                    <code class="px-1 bg-gray-100 rounded">{endTime}</code>（详情调用还会替换
+                    <code class="px-1 bg-gray-100 rounded">{id}</code>）
+                </p>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">请求方法</label>
+                <select id="orderHttpMethod" onchange="app.toggleOrderBodyFields()"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm">
+                    <option value="GET">GET（时间作为查询参数）</option>
+                    <option value="POST">POST（时间放在请求体）</option>
+                </select>
+            </div>
+
+            <div id="orderBodyFields" class="hidden space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">列表请求体（JSON）</label>
+                    <textarea id="orderListBody" rows="4" placeholder='{"startTime": "{startTime}", "endTime": "{endTime}"}'
+                        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-mono text-xs resize-y"></textarea>
+                    <p class="text-xs text-gray-500 mt-1">留空则默认发送 <code class="px-1 bg-gray-100 rounded">{"startTime":"…","endTime":"…"}</code></p>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">单条工单请求体（JSON，可选）</label>
+                    <textarea id="orderDetailBody" rows="3" placeholder='{"orderId": "{id}"}'
+                        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-mono text-xs resize-y"></textarea>
+                    <p class="text-xs text-gray-500 mt-1">
+                        留空且列表模板含 <code class="px-1 bg-gray-100 rounded">{id}</code> 时复用列表模板，否则默认
+                        <code class="px-1 bg-gray-100 rounded">{"orderId":"{id}"}</code>
+                    </p>
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">
+                    工单系统地址 <span class="text-xs text-gray-400 font-normal">（?ticketId= 深链加载用，可留空）</span>
+                </label>
+                <input type="text" id="ticketEndpoint" placeholder="http://127.0.0.1:18080/ticket/{id}"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-mono text-sm">
+            </div>
+
+            <p class="text-xs text-gray-400">测试连接使用最近 7 天的时间范围，请先保存设置再测试。</p>
+        </div>
+
         <!-- 权限设置面板 -->
         <div id="settingsPanel-perm" class="hidden space-y-4">
             <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800 leading-relaxed">
@@ -563,6 +624,19 @@
             <button onclick="app.saveSettings()" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">
                 保存设置
             </button>
+        </div>
+
+        <div id="settingsFooterOrder" class="hidden p-6 border-t border-gray-100 flex items-center justify-between gap-3">
+            <span id="orderTestResult" class="text-xs text-gray-500"></span>
+            <div class="flex gap-3">
+                <button onclick="app.testOrderEndpoint()" id="orderTestBtn"
+                    class="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium">
+                    <i class="fas fa-vial mr-1"></i>测试工单接口
+                </button>
+                <button onclick="app.saveSettings()" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">
+                    保存设置
+                </button>
+            </div>
         </div>
     </div>
 </div>

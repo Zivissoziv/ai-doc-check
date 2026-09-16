@@ -35,7 +35,8 @@ const AuditMode = {
         this.toggle('structureScore', !isBrief && !!app.document && !!app.template);
         this.toggle('structureDiff', !isBrief && document.getElementById('structureDiff')?.style.display !== 'none');
         this.toggle('tab-compare', !isBrief);
-        this.toggle('ruleTrainingMenuItem', !isBrief);
+        // 规则训练已挪到变更简报：只允许用历史简报训练总结规则
+        this.toggle('ruleTrainingMenuItem', isBrief);
 
         // 简报模式：切换规则弹窗标题与严重级别/触发条件显隐（总结规则无触发概念）
         const severityField = document.getElementById('ruleSeverityField');

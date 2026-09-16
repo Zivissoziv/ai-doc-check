@@ -65,6 +65,51 @@ public class OrderController {
     }
 
     /**
+     * 测试工单接口连通性：用当前配置按时间范围拉一次列表，返回条数与样例。
+     * 未传时间时默认最近 7 天。
+     */
+    @GetMapping("/test-connection")
+    public ResponseEntity<Map<String, Object>> testOrderEndpoint(
+            @RequestParam(required = false) String startTime,
+            @RequestParam(required = false) String endTime) {
+        ApiConfig config = apiConfigService.getRawApiConfig();
+        if (config == null || config.getOrderAuditEndpoint() == null || config.getOrderAuditEndpoint().isEmpty()) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(errorMap("Order audit service is not configured, please set orderAuditEndpoint"));
+        }
+
+        java.time.format.DateTimeFormatter fmt = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+        java.time.LocalDateTime end = java.time.LocalDateTime.now();
+        java.time.LocalDateTime start = end.minusDays(7);
+        String startValue = (startTime == null || startTime.trim().isEmpty()) ? start.format(fmt) : startTime.trim();
+        String endValue = (endTime == null || endTime.trim().isEmpty()) ? end.format(fmt) : endTime.trim();
+
+        try {
+            Map<String, Object> meta = orderDataService.searchOrdersWithMeta(config, startValue, endValue);
+            List<Map<String, Object>> orders = (List<Map<String, Object>>) meta.get("orders");
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("method", config.getOrderHttpMethod() == null ? "GET" : config.getOrderHttpMethod().toUpperCase());
+            response.put("startTime", startValue);
+            response.put("endTime", endValue);
+            response.put("total", orders.size());
+            response.put("upstreamTotal", meta.get("upstreamTotal"));
+            if (!orders.isEmpty()) {
+                Map<String, Object> first = orders.get(0);
+                response.put("sampleOrderId", first.get("orderId"));
+                response.put("sampleDocumentName", first.get("documentName"));
+            }
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("Failed to test order endpoint: {}", e.getMessage(), e);
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(response);
+        }
+    }
+
+    /**
      * 变更简报：按时间范围搜索工单列表（复用 order_audit_endpoint，返回 order JSON list，含详情）
      */
     @GetMapping("/search")
@@ -81,10 +126,12 @@ public class OrderController {
         }
 
         try {
-            List<Map<String, Object>> orders = orderDataService.searchOrders(config, startTime.trim(), endTime.trim());
+            Map<String, Object> meta = orderDataService.searchOrdersWithMeta(config, startTime.trim(), endTime.trim());
+            List<Map<String, Object>> orders = (List<Map<String, Object>>) meta.get("orders");
             Map<String, Object> response = new HashMap<>();
             response.put("orders", orders);
             response.put("total", orders.size());
+            response.put("upstreamTotal", meta.get("upstreamTotal"));
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("Failed to search orders: {}", e.getMessage(), e);

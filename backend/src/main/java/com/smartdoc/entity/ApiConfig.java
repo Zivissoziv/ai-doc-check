@@ -1,6 +1,7 @@
 package com.smartdoc.entity;
 
 import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
@@ -56,6 +57,25 @@ public class ApiConfig {
     @Size(max = 500)
     @TableField("order_audit_endpoint")
     private String orderAuditEndpoint;
+
+    /**
+     * 工单接口请求方法：GET / POST
+     */
+    @TableField("order_http_method")
+    private String orderHttpMethod = "GET";
+
+    /**
+     * 列表请求体模板（POST 用），支持 {startTime}/{start}/{endTime}/{end} 占位符。
+     * updateStrategy=IGNORED：允许把模板清空（MyBatis-Plus 默认忽略 null 字段，会导致"清空"变成"不改动"）
+     */
+    @TableField(value = "order_list_body", updateStrategy = FieldStrategy.IGNORED)
+    private String orderListBody;
+
+    /**
+     * 单条工单请求体模板（POST 用），支持 {id}/{orderId} 占位符；为空则复用列表模板
+     */
+    @TableField(value = "order_detail_body", updateStrategy = FieldStrategy.IGNORED)
+    private String orderDetailBody;
 
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;

@@ -18,6 +18,18 @@ const ConfigAPI = {
             throw new Error(err.error || '保存API配置失败');
         }
         return response.json();
+    },
+
+    /**
+     * 测试工单列表接口连通性（不传时间则用最近 7 天）
+     */
+    async testOrderEndpoint() {
+        const response = await fetch('/api/order/test-connection');
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(data.error || '工单接口测试失败');
+        }
+        return data;
     }
 };
 

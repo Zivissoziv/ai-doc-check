@@ -44,9 +44,9 @@ public class RuleTrainingService {
             throw new IllegalArgumentException("请先配置AI API");
         }
 
-        String scope = "ticket".equalsIgnoreCase(auditMode) ? "ticket" : "document";
+        String scope = normalizeScope(auditMode);
         String existingRules = buildExistingRulesContext(groupId, scope);
-        String content = callLLM(buildTrainingPrompt(reviewReport, scope, existingRules), apiConfig);
+        String content = callLLM(buildTrainingPrompt(reviewReport, scope, existingRules), apiConfig, scope);
         JsonNode root = parseRoot(content);
 
         return RuleTrainingResponseDto.builder()
@@ -55,12 +55,24 @@ public class RuleTrainingService {
                 .build();
     }
 
+    /**
+     * 训练范围：brief=变更简报总结规则 / ticket=工单审核规则 / document=文档审核规则
+     */
+    private String normalizeScope(String auditMode) {
+        if ("brief".equalsIgnoreCase(auditMode)) {
+            return "brief";
+        }
+        return "ticket".equalsIgnoreCase(auditMode) ? "ticket" : "document";
+    }
+
     private String buildTrainingPrompt(String reviewReport, String scope, String existingRules) {
         Map<String, String> params = new HashMap<>();
         params.put("auditScope", scope);
         params.put("reviewReport", reviewReport);
         params.put("existingRules", existingRules);
-        return PromptTemplate.format("rule-training-user", params);
+        // 变更简报（brief）用总结规则专用模板，其余沿用审核规则模板
+        String template = "brief".equals(scope) ? "rule-training-brief-user" : "rule-training-user";
+        return PromptTemplate.format(template, params);
     }
 
     private String buildExistingRulesContext(String groupId, String scope) {
@@ -92,7 +104,7 @@ public class RuleTrainingService {
         }
     }
 
-    private String callLLM(String prompt, ApiConfig apiConfig) {
+    private String callLLM(String prompt, ApiConfig apiConfig, String scope) {
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("model", apiConfig.getModel());
         requestBody.put("temperature", 0.1);
@@ -100,7 +112,8 @@ public class RuleTrainingService {
         List<Map<String, String>> messages = new ArrayList<>();
         Map<String, String> systemMessage = new HashMap<>();
         systemMessage.put("role", "system");
-        systemMessage.put("content", PromptTemplate.format("rule-training-system", null));
+        String systemTemplate = "brief".equals(scope) ? "rule-training-brief-system" : "rule-training-system";
+        systemMessage.put("content", PromptTemplate.format(systemTemplate, null));
         messages.add(systemMessage);
 
         Map<String, String> userMessage = new HashMap<>();
@@ -174,7 +187,8 @@ public class RuleTrainingService {
                     .generalizedRisk(node.path("generalizedRisk").asText(""))
                     .triggerScenario(node.path("triggerScenario").asText(""))
                     .prompt(prompt.trim())
-                    .severity(normalizeSeverity(node.path("severity").asText("warning")))
+                    // 变更简报的总结规则没有严重级别概念，统一置为 info
+                    .severity("brief".equals(scope) ? "info" : normalizeSeverity(node.path("severity").asText("warning")))
                     .passExample(node.path("passExample").asText(""))
                     .failExample(node.path("failExample").asText(""))
                     .auditScope(scope)

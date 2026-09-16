@@ -57,6 +57,16 @@ public class ApiConfigService {
         if (dto.getOrderAuditEndpoint() != null) {
             config.setOrderAuditEndpoint(dto.getOrderAuditEndpoint());
         }
+        if (dto.getOrderHttpMethod() != null && !dto.getOrderHttpMethod().trim().isEmpty()) {
+            config.setOrderHttpMethod(normalizeHttpMethod(dto.getOrderHttpMethod()));
+        }
+        // 请求体模板允许清空（空字符串 = 清空为 NULL）
+        if (dto.getOrderListBody() != null) {
+            config.setOrderListBody(emptyToNull(dto.getOrderListBody()));
+        }
+        if (dto.getOrderDetailBody() != null) {
+            config.setOrderDetailBody(emptyToNull(dto.getOrderDetailBody()));
+        }
 
         if (config.getId() == null) {
             apiConfigMapper.insert(config);
@@ -89,8 +99,19 @@ public class ApiConfigService {
                 .ticketEndpoint(config.getTicketEndpoint())
                 .ticketToken(config.getTicketToken())
                 .orderAuditEndpoint(config.getOrderAuditEndpoint())
+                .orderHttpMethod(config.getOrderHttpMethod() == null ? "GET" : config.getOrderHttpMethod().toUpperCase())
+                .orderListBody(config.getOrderListBody())
+                .orderDetailBody(config.getOrderDetailBody())
                 .hasApiKey(config.hasApiKey())
                 .build();
+    }
+
+    private String normalizeHttpMethod(String method) {
+        return "POST".equalsIgnoreCase(method.trim()) ? "POST" : "GET";
+    }
+
+    private String emptyToNull(String value) {
+        return value == null || value.trim().isEmpty() ? null : value;
     }
 
     @Transactional(readOnly = true)
