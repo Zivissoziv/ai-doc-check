@@ -47,7 +47,11 @@ public class OrderDataService {
 
         String url;
         if (dedicatedDetailUrl) {
-            url = applyPlaceholders(endpoint, Map.of("id", orderId, "orderId", orderId));
+            // 注意：不要用 Map.of()，它属于 Java 9+ API，本工程编译目标为 1.8
+            Map<String, String> detailVars = new HashMap<>();
+            detailVars.put("id", orderId);
+            detailVars.put("orderId", orderId);
+            url = applyPlaceholders(endpoint, detailVars);
             log.info("Fetching order detail via dedicated url: {}", url);
         } else {
             url = buildListUrl(config, null, null);

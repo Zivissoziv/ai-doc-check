@@ -409,7 +409,6 @@ class SmartDocApp {
         this.settings.orderAuditEndpoint = apiConfig.orderAuditEndpoint || '';
         this.settings.orderHttpMethod = (apiConfig.orderHttpMethod || 'GET').toUpperCase();
         this.settings.orderListBody = apiConfig.orderListBody || '';
-        this.settings.orderDetailBody = apiConfig.orderDetailBody || '';
         this.settings.ticketEndpoint = apiConfig.ticketEndpoint || '';
 
         const endpointInput = document.getElementById('orderAuditEndpoint');
@@ -418,8 +417,6 @@ class SmartDocApp {
         if (methodSelect) methodSelect.value = this.settings.orderHttpMethod;
         const listBody = document.getElementById('orderListBody');
         if (listBody) listBody.value = this.settings.orderListBody;
-        const detailBody = document.getElementById('orderDetailBody');
-        if (detailBody) detailBody.value = this.settings.orderDetailBody;
         const ticketInput = document.getElementById('ticketEndpoint');
         if (ticketInput) ticketInput.value = this.settings.ticketEndpoint;
         this.toggleOrderBodyFields();
@@ -1958,7 +1955,6 @@ class SmartDocApp {
             orderAuditEndpoint: document.getElementById('orderAuditEndpoint').value.trim(),
             orderHttpMethod: (document.getElementById('orderHttpMethod').value || 'GET').toUpperCase(),
             orderListBody: document.getElementById('orderListBody').value,
-            orderDetailBody: document.getElementById('orderDetailBody').value,
             ticketEndpoint: document.getElementById('ticketEndpoint').value.trim()
         };
 
@@ -1973,7 +1969,6 @@ class SmartDocApp {
             this.settings.orderAuditEndpoint = config.orderAuditEndpoint;
             this.settings.orderHttpMethod = config.orderHttpMethod;
             this.settings.orderListBody = config.orderListBody;
-            this.settings.orderDetailBody = config.orderDetailBody;
             this.settings.ticketEndpoint = config.ticketEndpoint;
             if (apiKey) this.settings.hasApiKey = true;
 
