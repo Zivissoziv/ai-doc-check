@@ -16,11 +16,6 @@ SAMPLE_BRIEF = """【变更情况说明】
 def get(url, timeout=20):
     return json.load(urllib.request.urlopen(url, timeout=timeout))
 
-def post(url, payload, timeout=30):
-    req = urllib.request.Request(url, data=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
-                                 headers={'Content-Type': 'application/json'}, method='POST')
-    return json.load(urllib.request.urlopen(req, timeout=timeout))
-
 def put_style(style):
     group = next(g for g in get(BASE + '/api/config/rules?groupType=brief')['groups'] if g['groupId'] == GID)
     req = urllib.request.Request(BASE + '/api/config/rules/' + GID + '?auditMode=brief',
@@ -28,29 +23,41 @@ def put_style(style):
         headers={'Content-Type': 'application/json'}, method='PUT')
     urllib.request.urlopen(req, timeout=20)
 
+def summarize(orders, ts):
+    """流式生成简报，返回完整正文（读 NDJSON 事件流）"""
+    req = urllib.request.Request(BASE + '/api/order/summarize-stream',
+        data=json.dumps({'ts': ts, 'ruleGroupId': GID, 'orders': orders}, ensure_ascii=False).encode('utf-8'),
+        headers={'Content-Type': 'application/json'}, method='POST')
+    resp = urllib.request.urlopen(req, timeout=600)
+    content = ''
+    for raw in resp:
+        line = raw.decode('utf-8').strip()
+        if not line:
+            continue
+        evt = json.loads(line)
+        if evt.get('type') == 'delta':
+            content += evt.get('text', '')
+        elif evt.get('type') == 'error':
+            print('   错误:', evt.get('message')); sys.exit(1)
+        elif evt.get('type') == 'done':
+            content = evt.get('briefContent') or content
+    return content
+
 try:
     # 1. 设置人工简报样例作为参考
     put_style(SAMPLE_BRIEF)
     print('1. 已设置人工简报样例作为参考简报')
 
-    # 2. 搜索并批量评审
+    # 2. 搜索并流式生成简报
     orders = get(BASE + '/api/order/search?startTime=2026-09-01%2000:00:00&endTime=2026-09-07%2023:59:59')['orders']
     ts = time.strftime('%Y%m%d%H%M%S')
-    res = post(BASE + '/api/order/async-summarize', {'ts': ts, 'ruleGroupId': GID, 'orders': orders})
-    task_id = res['taskId']
-    print('2. 提交任务:', task_id)
+    print('2. 开始流式生成，工单数:', len(orders))
+    streamed = summarize(orders, ts)
 
-    for i in range(90):
-        time.sleep(3)
-        t = get(BASE + '/api/order/async-brief-task/' + task_id)
-        if t['status'] in ('COMPLETED', 'FAILED'):
-            print('3. 任务:', t['status'], '轮询', i + 1, '次')
-            if t['status'] == 'FAILED':
-                print('   错误:', t.get('errorMessage')); sys.exit(1)
-            break
-
+    # 3. 与落库内容对照
     rec = get(BASE + '/api/order/brief-record?ts=' + ts)
     content = rec.get('briefContent') or ''
+    print('3. 落库状态:', rec.get('status'), '| 流式 %d 字 / 落库 %d 字' % (len(streamed), len(content)))
     print('4. 简报长度:', len(content))
     print('--- 简报全文 ---')
     print(content[:1200])

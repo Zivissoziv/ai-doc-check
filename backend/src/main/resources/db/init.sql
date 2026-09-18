@@ -165,3 +165,12 @@ CREATE TABLE IF NOT EXISTS permission_group (
     INDEX idx_perm_key (perm_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='权限组表';
 
+
+CREATE TABLE IF NOT EXISTS prompt_override (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键',
+    prompt_key VARCHAR(64) NOT NULL UNIQUE COMMENT '提示词模板名（对应 prompts/{key}.prompt）',
+    content TEXT NOT NULL COMMENT '用户自定义的提示词内容（含 {id} 形式占位符）',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    INDEX idx_prompt_key (prompt_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='提示词自定义覆盖表';

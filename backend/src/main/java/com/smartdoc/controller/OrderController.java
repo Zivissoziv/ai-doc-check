@@ -1,5 +1,6 @@
 package com.smartdoc.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartdoc.dto.AsyncOrderTaskStatusDto;
 import com.smartdoc.dto.AuditFeedbackDto;
 import com.smartdoc.dto.AuditOrderRecordDto;
@@ -15,6 +16,7 @@ import com.smartdoc.service.OrderSummaryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -46,6 +48,7 @@ public class OrderController {
     private final AuditOrderRecordService auditOrderRecordService;
     private final AuditOrderFeedbackService auditOrderFeedbackService;
     private final OrderSummaryService orderSummaryService;
+    private final ObjectMapper objectMapper;
 
     @GetMapping("/{orderId}")
     public ResponseEntity<Map<String, Object>> getOrder(@PathVariable String orderId) {
@@ -211,13 +214,15 @@ public class OrderController {
     }
 
     /**
-     * 变更简报：提交异步 AI 总结任务
+     * 变更简报：流式生成（NDJSON，与 /api/audit/stream 同方案）。
+     * 事件序列：{"type":"start"} → {"type":"status"} → {"type":"delta","text":..}* → {"type":"done",...}
+     * 失败时 {"type":"error","message":..}，任务记录同步落库为 FAILED。
      */
-    @PostMapping("/async-summarize")
-    public ResponseEntity<Map<String, Object>> submitAsyncSummarize(@RequestBody Map<String, Object> body) {
+    @PostMapping("/summarize-stream")
+    public ResponseEntity<org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody> summarizeStream(
+            @RequestBody Map<String, Object> body) {
         String ts = normalizeTs(asString(body.get("ts")));
         String ruleGroupId = asString(body.get("ruleGroupId"));
-        // 综合简报：前端把搜索结果中的所有工单一次性直传（每项含 orderId/data/documentName）
         List<Map<String, Object>> orders = asMapList(body.get("orders"));
         if (orders == null || orders.isEmpty()) {
             // 兼容旧的单工单直传格式
@@ -231,32 +236,87 @@ public class OrderController {
                 orders.add(item);
             }
         }
-
         if (orders == null || orders.isEmpty() || ruleGroupId == null || ruleGroupId.isEmpty()) {
-            return ResponseEntity.badRequest().body(errorMap("Missing required params: orders, ruleGroupId"));
+            return ResponseEntity.badRequest().contentType(MediaType.APPLICATION_NDJSON)
+                    .body(errorStream("Missing required params: orders, ruleGroupId"));
         }
 
-        log.info("Submit order async summarize: ts={}, ruleGroupId={}, orderCount={}",
-                ts, ruleGroupId, orders.size());
-        String taskId = orderSummaryService.createAsyncTask(ts, ruleGroupId, orders);
+        final String fTaskId;
+        try {
+            fTaskId = orderSummaryService.createSyncTask(ts, ruleGroupId);
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).contentType(MediaType.APPLICATION_NDJSON)
+                    .body(errorStream(e.getMessage()));
+        }
+        final String fTs = ts;
+        final String fRuleGroupId = ruleGroupId;
+        final List<Map<String, Object>> fOrders = orders;
 
-        Map<String, Object> response = new HashMap<>();
-        response.put("taskId", taskId);
-        response.put("ts", ts);
-        response.put("status", "PENDING");
-        return ResponseEntity.accepted().body(response);
+        org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody streamBody = outputStream -> {
+            try {
+                writeNdjson(outputStream, "start", java.util.Collections.singletonMap("taskId", fTaskId));
+                orderSummaryService.markRunning(fTaskId);
+
+                OrderSummaryService.SummaryPrep prep = orderSummaryService.prepareSummary(fRuleGroupId, fOrders);
+                writeNdjson(outputStream, "status",
+                        java.util.Collections.singletonMap("message", "已整理 " + prep.orderCount + " 条工单，开始生成简报..."));
+
+                ApiConfig apiConfig = apiConfigService.getRawApiConfig();
+                String brief = orderSummaryService.streamLLMForSummary(
+                        prep.orderJson, prep.rulesList, prep.briefStyle, apiConfig,
+                        text -> {
+                            try {
+                                writeNdjson(outputStream, "delta", java.util.Collections.singletonMap("text", text));
+                            } catch (Exception e) {
+                                log.warn("Write delta event failed: {}", e.getMessage());
+                            }
+                        });
+                if (brief == null || brief.trim().isEmpty()) {
+                    throw new RuntimeException("LLM returned empty brief");
+                }
+
+                OrderSummaryService.SummaryResult result = orderSummaryService.completeSummary(fTaskId, prep, brief);
+                Map<String, Object> done = new HashMap<>();
+                done.put("briefContent", brief);
+                done.put("documentName", result.documentName);
+                done.put("briefBatchNo", result.briefBatchNo);
+                done.put("ts", fTs);
+                writeNdjson(outputStream, "done", done);
+                log.info("Streaming order summary completed: taskId={}, ts={}", fTaskId, fTs);
+            } catch (Exception e) {
+                log.error("Streaming order summary failed: taskId={}, error={}", fTaskId, e.getMessage(), e);
+                orderSummaryService.markFailed(fTaskId, e.getMessage());
+                try {
+                    writeNdjson(outputStream, "error",
+                            java.util.Collections.singletonMap("message",
+                                    e.getMessage() == null ? "简报生成失败" : e.getMessage()));
+                } catch (Exception ignored) {
+                }
+            }
+        };
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_NDJSON)
+                .body(streamBody);
     }
 
     /**
-     * 变更简报：轮询 AI 总结任务状态
+     * 参数/并发校验失败时的最小事件流：只发一条 error 事件，
+     * 保证前端始终按同一套 NDJSON 规则解析（响应体不能再用 Map，否则与 StreamingResponseBody 冲突）。
      */
-    @GetMapping("/async-brief-task/{taskId}")
-    public ResponseEntity<?> getAsyncBriefTaskStatus(@PathVariable String taskId) {
-        AsyncOrderTaskStatusDto status = orderSummaryService.getTaskStatus(taskId);
-        if (status == null) {
-            return ResponseEntity.notFound().build();
+    private org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody errorStream(String message) {
+        return os -> writeNdjson(os, "error", java.util.Collections.singletonMap(
+                "message", message == null ? "简报生成失败" : message));
+    }
+
+    private void writeNdjson(java.io.OutputStream os, String type, Map<String, Object> extra) throws java.io.IOException {
+        Map<String, Object> evt = new HashMap<>();
+        evt.put("type", type);
+        if (extra != null) {
+            evt.putAll(extra);
         }
-        return ResponseEntity.ok(status);
+        os.write((objectMapper.writeValueAsString(evt) + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        os.flush();
     }
 
     /**

@@ -167,6 +167,8 @@ java -jar target/smartdoc-backend-1.0.0.jar --spring.profiles.active=prod
 
 ## API 接口
 
+> 完整接口清单（按 Controller 分组、与实际路由核对过）见仓库根目录 [README.md](../README.md#api-接口)，此处只列常用接口。
+
 ### 规则组管理
 
 | 方法 | 路径 | 描述 |

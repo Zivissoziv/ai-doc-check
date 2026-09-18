@@ -26,14 +26,43 @@ public class PromptTemplate {
      * @return 格式化后的完整提示词
      */
     public static String format(String name, Map<String, String> params) {
-        String template = CACHE.computeIfAbsent(name, PromptTemplate::loadFromFile);
-        String result = template;
+        return formatText(raw(name), params);
+    }
+
+    /**
+     * 对任意提示词文本做占位符替换（用于用户自定义提示词：内容来自数据库而非模板文件）。
+     * 占位符形如 {key}（单花括号），只替换 params 里出现的键。
+     */
+    public static String formatText(String template, Map<String, String> params) {
+        String result = template == null ? "" : template;
         if (params != null) {
             for (Map.Entry<String, String> entry : params.entrySet()) {
                 result = result.replace("{" + entry.getKey() + "}", entry.getValue() != null ? entry.getValue() : "");
             }
         }
         return result;
+    }
+
+    /**
+     * 读取模板原始内容（不做替换），用于前端展示「内置默认值」。
+     */
+    public static String raw(String name) {
+        return CACHE.computeIfAbsent(name, PromptTemplate::loadFromFile);
+    }
+
+    /**
+     * 模板是否存在（用于校验前端传来的 promptKey 合法性）。
+     */
+    public static boolean exists(String name) {
+        if (name == null || name.trim().isEmpty()) {
+            return false;
+        }
+        try {
+            loadFromFile(name);
+            return true;
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     private static String loadFromFile(String name) {

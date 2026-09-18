@@ -811,6 +811,22 @@ class SmartDocApp {
             applyBtn.textContent = this._isCurrentGroupLocked() ? '规则组已上锁' : '应用选中规则（0）';
         }
         UiHelpers.toggleModal('ruleTrainingModal', true);
+        // 按钮上标出当前是否用了自定义提示词
+        this._refreshRuleTrainingPromptBadge();
+    }
+
+    /** 「提示词调整」按钮角标：提示当前是内置默认还是已自定义 */
+    async _refreshRuleTrainingPromptBadge() {
+        const btn = document.getElementById('ruleTrainingPromptBtn');
+        if (!btn) return;
+        try {
+            const data = await PromptTemplateAPI.get(this._ruleTrainingPromptKey());
+            btn.innerHTML = data.isCustom
+                ? '<i class="fas fa-sliders"></i> 提示词调整 <span class="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 text-xs">已自定义</span>'
+                : '<i class="fas fa-sliders"></i> 提示词调整';
+        } catch (e) {
+            // 读取失败不打扰用户，保持默认文案
+        }
     }
 
     _setText(id, value) {
@@ -825,6 +841,102 @@ class SmartDocApp {
 
     closeRuleTrainingModal() {
         UiHelpers.toggleModal('ruleTrainingModal', false);
+    }
+
+    /**
+     * 规则训练的提示词模板名：按当前审核范围区分（与后端 RuleTrainingService.normalizeScope 对应）
+     */
+    _ruleTrainingPromptKey() {
+        return this.auditMode === 'brief' ? 'rule-training-brief-user' : 'rule-training-user';
+    }
+
+    /** 打开「提示词调整」弹窗，载入当前生效内容（自定义优先，否则内置默认） */
+    async openRuleTrainingPromptModal() {
+        const key = this._ruleTrainingPromptKey();
+        this._setText('ruleTrainingPromptScope', this.auditMode === 'brief' ? '当前范围：变更简报' : '当前范围：文档/工单审核');
+        UiHelpers.toggleModal('ruleTrainingPromptModal', true);
+
+        const textarea = document.getElementById('ruleTrainingPromptContent');
+        const statusEl = document.getElementById('ruleTrainingPromptStatus');
+        const placeholdersEl = document.getElementById('ruleTrainingPromptPlaceholders');
+        if (placeholdersEl) placeholdersEl.innerHTML = '<span class="text-emerald-700">加载中...</span>';
+
+        try {
+            const data = await PromptTemplateAPI.get(key);
+            if (textarea) textarea.value = data.content || '';
+            this._ruleTrainingPromptDefault = data.defaultContent || '';
+            if (statusEl) {
+                statusEl.textContent = data.isCustom ? '已自定义' : '内置默认';
+                statusEl.className = data.isCustom
+                    ? 'text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700'
+                    : 'text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500';
+            }
+            if (placeholdersEl) {
+                const list = data.placeholders || [];
+                placeholdersEl.innerHTML = list.length
+                    ? list.map(p => `<span class="px-2 py-0.5 rounded bg-white border border-emerald-200 font-mono text-emerald-700" title="${p.desc}">${p.name}</span>
+                        <span class="text-emerald-700">${p.desc}</span>`).join('')
+                    : '<span class="text-emerald-700">无</span>';
+            }
+        } catch (err) {
+            if (textarea) textarea.value = '';
+            if (statusEl) statusEl.textContent = '加载失败';
+            UiHelpers.setStatus('加载提示词失败: ' + err.message);
+            alert('加载提示词失败: ' + err.message);
+        }
+    }
+
+    closeRuleTrainingPromptModal() {
+        UiHelpers.toggleModal('ruleTrainingPromptModal', false);
+    }
+
+    /** 保存自定义提示词（内容为空 = 恢复默认） */
+    async saveRuleTrainingPrompt() {
+        const key = this._ruleTrainingPromptKey();
+        const textarea = document.getElementById('ruleTrainingPromptContent');
+        const btn = document.getElementById('ruleTrainingPromptSaveBtn');
+        const content = textarea ? textarea.value : '';
+        if (!content.trim()) {
+            // 内容清空等于恢复默认，交给 reset 走确认
+            this.resetRuleTrainingPrompt();
+            return;
+        }
+
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = '保存中...';
+        }
+        try {
+            await PromptTemplateAPI.save(key, content);
+            UiHelpers.setStatus('提示词已保存，下次生成推荐规则时生效');
+            this.closeRuleTrainingPromptModal();
+        } catch (err) {
+            alert('保存提示词失败: ' + err.message);
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '保存';
+            }
+        }
+    }
+
+    /** 恢复内置默认提示词 */
+    async resetRuleTrainingPrompt() {
+        if (!confirm('确定恢复为内置默认提示词？当前自定义内容会被删除。')) return;
+        const key = this._ruleTrainingPromptKey();
+        const textarea = document.getElementById('ruleTrainingPromptContent');
+        const statusEl = document.getElementById('ruleTrainingPromptStatus');
+        try {
+            const data = await PromptTemplateAPI.save(key, '');
+            if (textarea) textarea.value = data.content || this._ruleTrainingPromptDefault || '';
+            if (statusEl) {
+                statusEl.textContent = '内置默认';
+                statusEl.className = 'text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500';
+            }
+            UiHelpers.setStatus('已恢复内置默认提示词');
+        } catch (err) {
+            alert('恢复默认失败: ' + err.message);
+        }
     }
 
     async trainRulesFromReport() {
@@ -1812,11 +1924,14 @@ class SmartDocApp {
             document.getElementById('permName').value = group.permName || '';
             document.getElementById('permBriefVisible').checked = !!group.briefVisible;
             this._permSelectedIds = new Set(group.visibleGroupIds || []);
+            // 「全部可见」是独立状态：只有后端未返回可见组列表时才算全部可见
+            this._permAllVisible = this._permSelectedIds.size === 0;
         } else {
             document.getElementById('permKey').value = '';
             document.getElementById('permName').value = '';
             document.getElementById('permBriefVisible').checked = false;
             this._permSelectedIds = new Set();
+            this._permAllVisible = true;
         }
 
         this.renderPermissionChecklist();
@@ -1828,10 +1943,10 @@ class SmartDocApp {
         if (!container) return;
 
         const groups = this._permChecklistGroups || [];
-        this._permAllVisible = this._permSelectedIds.size === 0;
 
+        // 注意：此处不能再用“选中集合为空”反推「全部可见」，否则取消勾选会被立刻改回
         const allCheckbox = document.getElementById('permAllGroups');
-        if (allCheckbox) allCheckbox.checked = this._permAllVisible;
+        if (allCheckbox) allCheckbox.checked = !!this._permAllVisible;
 
         if (groups.length === 0) {
             container.innerHTML = '<div class="text-xs text-gray-400 p-2">暂无规则组</div>';
@@ -1862,7 +1977,12 @@ class SmartDocApp {
         const allVisible = document.getElementById('permAllGroups').checked;
         this._permAllVisible = allVisible;
         if (allVisible) {
+            // 「全部可见」= 不限制，清空显式列表
             this._permSelectedIds = new Set();
+        } else if (this._permSelectedIds.size === 0) {
+            // 取消「全部可见」时，把“全可见”展开成显式全选，用户再按需取消
+            const groups = this._permChecklistGroups || [];
+            this._permSelectedIds = new Set(groups.map(g => g.groupId));
         }
         this.renderPermissionChecklist();
     }
@@ -1889,6 +2009,12 @@ class SmartDocApp {
         }
         if (!/^[a-zA-Z0-9_-]+$/.test(permKey)) {
             alert('权限组标识只能包含字母、数字、下划线和横线');
+            return;
+        }
+
+        // 后端约定：空列表 == 全部可见，所以非「全部可见」时不允许提交空列表
+        if (!this._permAllVisible && this._permSelectedIds.size === 0) {
+            alert('请至少勾选一个可见规则组，或勾选「全部可见」');
             return;
         }
 
@@ -2369,9 +2495,11 @@ class SmartDocApp {
         UiHelpers.switchTab('audit');
 
         const pollToken = ++this._briefPollToken;
+        // 流式渲染期间允许用户切走：pollToken 不匹配时停止渲染，但流读取本身无法取消
 
         try {
-            const response = await fetch('/api/order/async-summarize', {
+            // 与文档审核一致的流式方案：NDJSON 事件流，边生成边渲染
+            const response = await fetch('/api/order/summarize-stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -2382,45 +2510,67 @@ class SmartDocApp {
                 })
             });
             if (!response.ok) {
-                const err = await response.json().catch(() => ({}));
-                throw new Error(err.error || '提交评审任务失败');
+                // 400/409 时后端同样返回一条 error 事件（NDJSON），尽量取出真实原因
+                const text = await response.text().catch(() => '');
+                let msg = '';
+                try {
+                    msg = JSON.parse(text.trim().split('\n')[0]).message || '';
+                } catch (e) { /* 非 NDJSON 响应则回退通用文案 */ }
+                throw new Error(msg || '提交评审任务失败');
             }
-            const { taskId } = await response.json();
 
-            // 轮询任务状态
-            const maxAttempts = 150; // 2s * 150 = 5min
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let brief = '';
             let finished = false;
-            for (let i = 0; i < maxAttempts; i++) {
-                await new Promise(resolve => setTimeout(resolve, 2000));
+            let lastRender = 0;
+            const renderThrottled = (force) => {
+                const now = Date.now();
+                if (force || now - lastRender > 300) {
+                    lastRender = now;
+                    BriefView.renderBrief(brief, 'auditResults');
+                }
+            };
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
                 if (pollToken !== this._briefPollToken) return; // 用户已切换模式
 
-                const statusRes = await fetch(`/api/order/async-brief-task/${encodeURIComponent(taskId)}`);
-                if (!statusRes.ok) continue;
-                const status = await statusRes.json();
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
 
-                if (status.status === 'COMPLETED') {
-                    finished = true;
-                    break;
-                }
-                if (status.status === 'FAILED') {
-                    throw new Error(status.errorMessage || 'AI评审失败');
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    let evt;
+                    try {
+                        evt = JSON.parse(line);
+                    } catch (e) {
+                        continue;
+                    }
+                    if (evt.type === 'delta' && evt.text) {
+                        brief += evt.text;
+                        renderThrottled(false);
+                    } else if (evt.type === 'done') {
+                        finished = true;
+                        if (evt.briefContent) brief = evt.briefContent;
+                    } else if (evt.type === 'error') {
+                        throw new Error(evt.message || 'AI评审失败');
+                    }
                 }
             }
+
+            if (pollToken !== this._briefPollToken) return;
             if (!finished) {
-                throw new Error('AI评审超时，请稍后在简报记录中查看');
+                throw new Error('AI评审连接中断，简报未生成完整');
             }
 
-            // 拉取综合简报正文（批次记录 orderId=ALL，按 ts 查询）
-            const briefRes = await fetch(`/api/order/brief-record?ts=${encodeURIComponent(this.ts)}`);
-            if (!briefRes.ok) throw new Error('获取简报内容失败');
-            const briefRecord = await briefRes.json();
-            if (!briefRecord.found || !briefRecord.briefContent) {
-                throw new Error('简报内容为空');
-            }
-
-            this.briefContent = briefRecord.briefContent;
+            renderThrottled(true);
+            this.briefContent = brief;
             BriefView.renderBrief(this.briefContent, 'auditResults');
-            document.getElementById('auditBadge').classList.remove('hidden');
+            document.getElementById('auditBadge')?.classList.remove('hidden');
             UiHelpers.setStatus('AI简报已生成');
         } catch (err) {
             console.error('AI评审失败:', err);

@@ -10,35 +10,33 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import javax.validation.constraints.NotBlank;
-import javax.validation.constraints.Size;
 import java.time.LocalDateTime;
 
+/**
+ * 提示词自定义覆盖：按模板名（prompt_key，对应 prompts/{key}.prompt）保存用户改过的提示词。
+ * 表中没有记录时一律使用 classpath 下的内置模板。
+ */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-@TableName("template")
-public class Template {
+@TableName("prompt_override")
+public class PromptOverride {
 
     @TableId(type = IdType.AUTO)
     private Long id;
 
-    @NotBlank
-    @Size(max = 200)
-    @TableField("template_name")
-    private String templateName;
+    /**
+     * 提示词模板名，如 rule-training-brief-user
+     */
+    @TableField("prompt_key")
+    private String promptKey;
 
-    @Size(max = 100)
-    @TableField("file_name")
-    private String fileName;
-
-    @TableField("description")
-    private String description;
-
-    @TableField("is_default")
-    @Builder.Default
-    private Boolean isDefault = false;
+    /**
+     * 用户自定义内容（含 {id} 形式占位符，替换逻辑与内置模板一致）
+     */
+    @TableField("content")
+    private String content;
 
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;

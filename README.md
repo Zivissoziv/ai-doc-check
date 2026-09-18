@@ -32,6 +32,7 @@
 - 工单 ID / 名称字段内置内网变更系统别名（`cchrreleased` / `applicationsystem`）
 - 全程仅调用一次工单接口，搜索结果整份直传后端生成简报
 - 规则训练：粘贴训练材料总结规则语义，候选规则可应用到简报规则组
+- 训练提示词可在界面调整（「提示词调整」按钮），按审核范围分别保存，支持一键恢复默认
 - 支持默认规则组叠加审核（文档审核模式）
 
 ### 统计分析
@@ -175,38 +176,79 @@ start.bat
 
 ## API 接口
 
+路由前缀与后端 Controller 一一对应（下表与代码核对过，改接口时请同步更新）。
+
+### 规则组与提示词（`RuleGroupController` / `PromptOverrideController` / `ApiConfigController`）
+
 | 方法 | 路径 | 描述 |
 |------|------|------|
-| GET | `/api/config/rules` | 获取所有规则组 |
-| GET | `/api/config/rules/{groupId}` | 获取指定规则组 |
+| GET | `/api/config/rules` | 获取所有规则组（可按 `groupType` 过滤） |
+| GET | `/api/config/rules/{groupId}` | 获取指定规则组（含规则） |
 | POST | `/api/config/rules` | 创建规则组 |
-| PUT | `/api/config/rules/{groupId}` | 更新规则组 |
+| PUT | `/api/config/rules/{groupId}` | 更新规则组（`?auditMode=`） |
 | DELETE | `/api/config/rules/{groupId}` | 删除规则组 |
+| POST | `/api/config/rules/{groupId}/lock` | 上锁规则组 |
+| POST | `/api/config/rules/{groupId}/unlock` | 解锁规则组 |
+| GET | `/api/config/rules/{groupId}/locked` | 查询规则组是否上锁 |
+| PUT | `/api/config/rules/{groupId}/default` | 设为默认规则组（同类型互斥） |
+| POST | `/api/config/rules/train` | 规则训练（从材料提炼候选规则） |
+| GET | `/api/config/prompts` | 可自定义的提示词清单 |
+| GET | `/api/config/prompts/{key}` | 读取提示词（自定义优先，含内置默认值） |
+| PUT | `/api/config/prompts/{key}` | 保存自定义提示词（内容为空 = 恢复默认） |
 | GET | `/api/config/api` | 获取 API 配置 |
 | PUT | `/api/config/api` | 更新 API 配置 |
-| POST | `/api/audit` | 执行文档审核 |
-| POST | `/api/audit/feedback` | 提交审核反馈 |
-| GET | `/api/audit/grouped` | 获取分组审核结果 |
-| GET | `/api/audit/records` | 获取审核工单记录 |
-| POST | `/api/audit/check-review` | 检查审核状态 |
+
+### 文档审核（`AuditController` / `AuditFeedbackController` / `AuditStatsController`）
+
+| 方法 | 路径 | 描述 |
+|------|------|------|
+| GET | `/api/rules` | 按规则组获取规则（审核用） |
+| POST | `/api/audit` | 执行文档审核（同步） |
+| POST | `/api/audit/stream` | 流式审核（NDJSON，逐条规则返回） |
+| POST | `/api/parse` | 解析文档结构（返回章节树） |
 | POST | `/api/proxy` | AI 代理请求 |
-| POST | `/api/template` | 上传模板文件 |
-| GET | `/api/template/list` | 获取模板列表 |
-| PUT | `/api/template/cache-control` | 更新模板缓存控制 |
-| POST | `/api/audit/async` | 异步提交审核 |
-| GET | `/api/audit/async/status` | 查询异步审核状态 |
-| GET | `/api/stats/summary` | 获取统计数据概览 |
-| GET | `/api/stats/inaccurate` | 获取不准确反馈详情 |
-| PUT | `/api/config/rules/{groupId}/lock` | 上锁规则组 |
-| POST | `/api/config/rules/{groupId}/unlock` | 解锁规则组 |
-| PUT | `/api/config/rules/{groupId}/default` | 设为默认规则组（同类型互斥） |
-| POST | `/api/config/rules/{groupId}/train` | 规则训练（总结材料生成候选规则） |
-| GET | `/api/order/test-connection` | 工单接口连通性测试 |
+| POST | `/api/feedback/save` | 保存审核反馈（批量） |
+| PUT | `/api/feedback/{id}` | 提交单条反馈 |
+| GET | `/api/feedback/stats/{ruleId}` | 规则的反馈统计 |
+| GET | `/api/feedback/failures/{ruleId}` | 规则的不准确反馈明细 |
+| GET | `/api/stats` | 统计数据概览 |
+| POST | `/api/stats/increment` | 累计调用次数 |
+| POST | `/api/stats/duration` | 记录审核耗时 |
+| GET | `/api/stats/daily` | 按日统计 |
+| GET | `/api/stats/sources` | 按来源统计 |
+| GET | `/api/stats/group/{groupId}` | 按规则组统计 |
+| GET | `/api/template/default` | 下载默认文档模板 |
+
+### 变更简报与工单（`OrderController` / `TicketController`）
+
+| 方法 | 路径 | 描述 |
+|------|------|------|
 | GET | `/api/order/search` | 按时间范围搜索工单（`startTime`/`endTime`） |
-| POST | `/api/order/async-summarize` | 生成变更简报（异步） |
-| GET | `/api/order/async-brief-task/{taskId}` | 查询简报任务状态 |
+| GET | `/api/order/test-connection` | 工单接口连通性测试 |
+| GET | `/api/order/{orderId}` | 取单条工单详情 |
+| GET | `/api/order/audit-record` | 查询工单审核记录 |
+| POST | `/api/order/async-audit` | 异步提交工单审核 |
+| GET | `/api/order/async-task/{taskId}` | 查询工单审核任务状态 |
+| POST | `/api/order/feedback/save` | 保存工单审核反馈 |
+| PUT | `/api/order/feedback/{id}` | 提交单条工单反馈 |
+| POST | `/api/order/summarize-stream` | 流式生成变更简报（NDJSON 事件流） |
 | GET | `/api/order/brief-record` | 查询单份历史简报 |
 | GET | `/api/order/brief-records` | 查询历史简报列表 |
+| GET | `/api/ticket/{ticketId}` | 取工单信息（深链 loading） |
+| POST | `/api/ticket/download` | 下载工单文档 |
+| GET | `/api/ticket/audit-record` | 查询工单审核记录 |
+| POST | `/api/ticket/async-audit` | 异步提交工单审核 |
+| GET | `/api/ticket/async-task/{taskId}` | 查询工单审核任务状态 |
+
+### 权限组（`PermissionGroupController`）
+
+| 方法 | 路径 | 描述 |
+|------|------|------|
+| GET | `/api/permission-groups` | 权限组列表 |
+| GET | `/api/permission-groups/{permKey}` | 按 `?pgroup=` 参数取生效权限（查不到返回 `found:false`） |
+| POST | `/api/permission-groups` | 新增权限组 |
+| PUT | `/api/permission-groups/{id}` | 更新权限组 |
+| DELETE | `/api/permission-groups/{id}` | 删除权限组 |
 
 ## 打包部署
 

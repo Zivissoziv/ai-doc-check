@@ -329,6 +329,37 @@ const RuleTrainingAPI = {
     }
 };
 
+/** 提示词自定义：读取当前生效内容（自定义优先）/ 保存（空内容=恢复默认） */
+const PromptTemplateAPI = {
+    async get(key) {
+        const response = await fetch(`/api/config/prompts/${encodeURIComponent(key)}`);
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || '读取提示词失败');
+        }
+        return response.json();
+    },
+
+    async save(key, content) {
+        const response = await fetch(`/api/config/prompts/${encodeURIComponent(key)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content })
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || '保存提示词失败');
+        }
+        return response.json();
+    },
+
+    async list() {
+        const response = await fetch('/api/config/prompts');
+        if (!response.ok) throw new Error('读取提示词清单失败');
+        return response.json();
+    }
+};
+
 const ConfigLoader = {
     async loadTemplateList() {
         return { 

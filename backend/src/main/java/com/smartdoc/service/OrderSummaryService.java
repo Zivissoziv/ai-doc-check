@@ -2,7 +2,6 @@ package com.smartdoc.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.smartdoc.dto.AsyncOrderTaskStatusDto;
 import com.smartdoc.dto.RuleGroupDto;
 import com.smartdoc.dto.RuleDto;
 import com.smartdoc.entity.ApiConfig;
@@ -10,22 +9,16 @@ import com.smartdoc.entity.OrderBriefRecord;
 import com.smartdoc.mapper.OrderBriefRecordMapper;
 import com.smartdoc.template.PromptTemplate;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
-import org.springframework.web.client.RestTemplate;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -33,10 +26,12 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 /**
  * 变更简报 AI 总结服务：
  * 与工单审核（OrderAsyncAuditService）独立，输出 Markdown 简报并落库到 order_brief_record。
+ * 生成走流式（{@link #streamLLMForSummary}），由 OrderController#summarizeStream 逐段透传给浏览器。
  */
 @Slf4j
 @Service
@@ -57,90 +52,25 @@ public class OrderSummaryService {
     private final OrderBriefRecordMapper orderBriefRecordMapper;
     private final RuleGroupService ruleGroupService;
     private final ObjectMapper objectMapper;
-    private final ThreadPoolTaskExecutor asyncAuditExecutor;
 
     public OrderSummaryService(ApiConfigService apiConfigService,
                                OrderDataService orderDataService,
                                OrderBriefRecordMapper orderBriefRecordMapper,
                                RuleGroupService ruleGroupService,
-                               ObjectMapper objectMapper,
-                               @Qualifier("asyncAuditExecutor") ThreadPoolTaskExecutor asyncAuditExecutor) {
+                               ObjectMapper objectMapper) {
         this.apiConfigService = apiConfigService;
         this.orderDataService = orderDataService;
         this.orderBriefRecordMapper = orderBriefRecordMapper;
         this.ruleGroupService = ruleGroupService;
         this.objectMapper = objectMapper;
-        this.asyncAuditExecutor = asyncAuditExecutor;
     }
 
     @EventListener(ApplicationReadyEvent.class)
     public void recoverUnfinishedTasks() {
         int count = orderBriefRecordMapper.markUnfinishedTasksFailed("Service restarted, please resubmit order summary");
         if (count > 0) {
-            log.warn("Marked {} unfinished async order summary tasks as FAILED on startup", count);
+            log.warn("Marked {} unfinished order summary tasks as FAILED on startup", count);
         }
-    }
-
-    @Transactional
-    public String createAsyncTask(String ts, String ruleGroupId, List<Map<String, Object>> orders) {
-        String normalizedTs = normalizeTs(ts);
-        // 综合简报：一次任务覆盖搜索结果中的所有工单，记录以 ALL 标识批次
-        String batchOrderId = "ALL";
-        String taskId;
-        boolean created;
-        Object lock = lockFor(batchOrderId, normalizedTs);
-        synchronized (lock) {
-            OrderBriefRecord latest = orderBriefRecordMapper.findLatestByOrderIdAndTs(batchOrderId, normalizedTs);
-            if (latest != null && latest.getTaskId() != null
-                    && (OrderBriefRecord.STATUS_PENDING.equals(latest.getStatus())
-                    || OrderBriefRecord.STATUS_RUNNING.equals(latest.getStatus()))) {
-                log.info("Order summary task already running: taskId={}, ts={}",
-                        latest.getTaskId(), normalizedTs);
-                return latest.getTaskId();
-            }
-
-            taskId = UUID.randomUUID().toString();
-            OrderBriefRecord record = OrderBriefRecord.builder()
-                    .orderId(batchOrderId)
-                    .ts(normalizedTs)
-                    .taskId(taskId)
-                    .status(OrderBriefRecord.STATUS_PENDING)
-                    .build();
-            orderBriefRecordMapper.insert(record);
-            created = true;
-        }
-
-        if (created) {
-            final String finalTaskId = taskId;
-            final String finalTs = normalizedTs;
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    submitAsyncTask(finalTaskId, finalTs, ruleGroupId, orders);
-                }
-            });
-            log.info("Created order summary task: taskId={}, ts={}, ruleGroupId={}, orderCount={}",
-                    taskId, normalizedTs, ruleGroupId, orders == null ? 0 : orders.size());
-        }
-        return taskId;
-    }
-
-    public AsyncOrderTaskStatusDto getTaskStatus(String taskId) {
-        OrderBriefRecord record = orderBriefRecordMapper.findByTaskId(taskId);
-        if (record == null) {
-            return null;
-        }
-        return AsyncOrderTaskStatusDto.builder()
-                .taskId(record.getTaskId())
-                .orderId(record.getOrderId())
-                .ts(record.getTs())
-                .status(record.getStatus())
-                .errorMessage(record.getErrorMessage())
-                .auditBatchNo(record.getBriefBatchNo())
-                .documentName(record.getDocumentName())
-                .createdAt(record.getCreatedAt())
-                .updatedAt(record.getUpdatedAt())
-                .build();
     }
 
     /**
@@ -200,103 +130,155 @@ public class OrderSummaryService {
         return result;
     }
 
-    private void submitAsyncTask(String taskId, String ts, String ruleGroupId,
-                                 List<Map<String, Object>> orders) {
-        try {
-            asyncAuditExecutor.execute(() -> doAsyncSummarize(taskId, ts, ruleGroupId, orders));
-        } catch (RuntimeException e) {
-            String message = "Async summary queue is full, please retry later";
-            log.warn("Rejected order summary task: taskId={}, ts={}", taskId, ts, e);
-            updateStatus(taskId, OrderBriefRecord.STATUS_FAILED, message);
+    /**
+     * 流式简报的准备工作结果。
+     */
+    public static class SummaryPrep {
+        public final String orderJson;
+        public final int orderCount;
+        public final String rulesList;
+        public final String briefStyle;
+        public final Long groupDbId;
+
+        SummaryPrep(String orderJson, int orderCount, String rulesList, String briefStyle, Long groupDbId) {
+            this.orderJson = orderJson;
+            this.orderCount = orderCount;
+            this.rulesList = rulesList;
+            this.briefStyle = briefStyle;
+            this.groupDbId = groupDbId;
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private void doAsyncSummarize(String taskId, String ts, String ruleGroupId,
-                                  List<Map<String, Object>> orders) {
-        updateStatus(taskId, OrderBriefRecord.STATUS_RUNNING, null);
+    /**
+     * 简报落库结果（供流式接口透出给前端）。
+     */
+    public static class SummaryResult {
+        public final String documentName;
+        public final String briefBatchNo;
 
-        try {
-            if (orders == null || orders.isEmpty()) {
-                throw new RuntimeException("No orders to summarize");
-            }
-            // 整理所有工单详情：优先使用前端透传的 data，缺失时回退到按 orderId 拉取
-            List<Map<String, Object>> validOrders = new ArrayList<>();
-            for (Map<String, Object> order : orders) {
-                Map<String, Object> data = asDataMap(order.get("data"));
-                if (data == null || data.isEmpty()) {
-                    data = asDataMap(order.get("orderData"));
-                }
-                String orderId = order.get("orderId") == null ? "" : String.valueOf(order.get("orderId"));
-                if ((data == null || data.isEmpty()) && !orderId.isEmpty()) {
-                    ApiConfig config = apiConfigService.getRawApiConfig();
-                    if (config != null && config.getOrderAuditEndpoint() != null && !config.getOrderAuditEndpoint().isEmpty()) {
-                        Map<String, Object> orderInfo = orderDataService.fetchOrderInfo(config, orderId);
-                        if (orderInfo != null && orderInfo.get("data") != null) {
-                            data = objectMapper.convertValue(orderInfo.get("data"), Map.class);
-                        }
-                    }
-                }
-                if (data == null || data.isEmpty()) {
-                    log.warn("Skip order without data in summary task: taskId={}, orderId={}", taskId, orderId);
-                    continue;
-                }
-                Map<String, Object> item = new HashMap<>();
-                item.put("orderId", orderId);
-                if (order.get("documentName") != null) {
-                    item.put("documentName", order.get("documentName"));
-                }
-                item.put("data", data);
-                validOrders.add(item);
-            }
-            if (validOrders.isEmpty()) {
-                throw new RuntimeException("Orders have no data to summarize");
-            }
-            String orderJson = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(validOrders);
-            int orderCount = validOrders.size();
-
-            // 读取 BRIEF 类型总结规则与简报风格
-            List<RuleDto> rules = ruleGroupService.getRulesByGroupId(ruleGroupId, "brief");
-            if (rules.isEmpty()) {
-                throw new RuntimeException("Summary rule group is empty: " + ruleGroupId);
-            }
-            String rulesList = buildRulesList(rules);
-            String briefStyle = "";
-            Long groupDbId = null;
-            try {
-                RuleGroupDto group = ruleGroupService.getRuleGroupByGroupId(ruleGroupId);
-                if (group != null) {
-                    groupDbId = group.getId();
-                    if (group.getBriefStyle() != null) {
-                        briefStyle = group.getBriefStyle();
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("Failed to load brief style for group {}: {}", ruleGroupId, e.getMessage());
-            }
-
-            ApiConfig config = apiConfigService.getRawApiConfig();
-            String brief = callLLMForSummary(orderJson, rulesList, briefStyle, config);
-            if (brief == null || brief.trim().isEmpty()) {
-                throw new RuntimeException("LLM returned empty brief");
-            }
-
-            OrderBriefRecord record = orderBriefRecordMapper.findByTaskId(taskId);
-            if (record != null) {
-                record.setRuleGroupId(groupDbId);
-                record.setDocumentName("共 " + orderCount + " 条工单");
-                record.setBriefContent(brief);
-                record.setBriefBatchNo(UUID.randomUUID().toString().replace("-", "").substring(0, 16) + "_brief");
-                record.setStatus(OrderBriefRecord.STATUS_COMPLETED);
-                record.setErrorMessage(null);
-                orderBriefRecordMapper.updateById(record);
-            }
-
-            log.info("Order summary task completed: taskId={}, orderCount={}", taskId, orderCount);
-        } catch (Exception e) {
-            log.error("Order summary task failed: taskId={}, error={}", taskId, e.getMessage(), e);
-            updateStatus(taskId, OrderBriefRecord.STATUS_FAILED, e.getMessage());
+        SummaryResult(String documentName, String briefBatchNo) {
+            this.documentName = documentName;
+            this.briefBatchNo = briefBatchNo;
         }
+    }
+
+    /**
+     * 整理工单数据并加载 BRIEF 总结规则与简报风格（流式生成前调用一次）。
+     */
+    public SummaryPrep prepareSummary(String ruleGroupId, List<Map<String, Object>> orders) throws Exception {
+        if (orders == null || orders.isEmpty()) {
+            throw new RuntimeException("No orders to summarize");
+        }
+        // 整理所有工单详情：优先使用前端透传的 data，缺失时回退到按 orderId 拉取
+        List<Map<String, Object>> validOrders = new ArrayList<>();
+        for (Map<String, Object> order : orders) {
+            Map<String, Object> data = asDataMap(order.get("data"));
+            if (data == null || data.isEmpty()) {
+                data = asDataMap(order.get("orderData"));
+            }
+            String orderId = order.get("orderId") == null ? "" : String.valueOf(order.get("orderId"));
+            if ((data == null || data.isEmpty()) && !orderId.isEmpty()) {
+                ApiConfig config = apiConfigService.getRawApiConfig();
+                if (config != null && config.getOrderAuditEndpoint() != null && !config.getOrderAuditEndpoint().isEmpty()) {
+                    Map<String, Object> orderInfo = orderDataService.fetchOrderInfo(config, orderId);
+                    if (orderInfo != null && orderInfo.get("data") != null) {
+                        data = objectMapper.convertValue(orderInfo.get("data"), Map.class);
+                    }
+                }
+            }
+            if (data == null || data.isEmpty()) {
+                continue;
+            }
+            Map<String, Object> item = new HashMap<>();
+            item.put("orderId", orderId);
+            if (order.get("documentName") != null) {
+                item.put("documentName", order.get("documentName"));
+            }
+            item.put("data", data);
+            validOrders.add(item);
+        }
+        if (validOrders.isEmpty()) {
+            throw new RuntimeException("Orders have no data to summarize");
+        }
+        String orderJson = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(validOrders);
+        int orderCount = validOrders.size();
+
+        // 读取 BRIEF 类型总结规则与简报风格
+        List<RuleDto> rules = ruleGroupService.getRulesByGroupId(ruleGroupId, "brief");
+        if (rules.isEmpty()) {
+            throw new RuntimeException("Summary rule group is empty: " + ruleGroupId);
+        }
+        String rulesList = buildRulesList(rules);
+        String briefStyle = "";
+        Long groupDbId = null;
+        try {
+            RuleGroupDto group = ruleGroupService.getRuleGroupByGroupId(ruleGroupId);
+            if (group != null) {
+                groupDbId = group.getId();
+                if (group.getBriefStyle() != null) {
+                    briefStyle = group.getBriefStyle();
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to load brief style for group {}: {}", ruleGroupId, e.getMessage());
+        }
+        return new SummaryPrep(orderJson, orderCount, rulesList, briefStyle, groupDbId);
+    }
+
+    /**
+     * 简报生成成功后落库（流式生成结束时调用）。
+     */
+    public SummaryResult completeSummary(String taskId, SummaryPrep prep, String brief) {
+        OrderBriefRecord record = orderBriefRecordMapper.findByTaskId(taskId);
+        String briefBatchNo = null;
+        if (record != null) {
+            briefBatchNo = UUID.randomUUID().toString().replace("-", "").substring(0, 16) + "_brief";
+            record.setRuleGroupId(prep.groupDbId);
+            record.setDocumentName("共 " + prep.orderCount + " 条工单");
+            record.setBriefContent(brief);
+            record.setBriefBatchNo(briefBatchNo);
+            record.setStatus(OrderBriefRecord.STATUS_COMPLETED);
+            record.setErrorMessage(null);
+            orderBriefRecordMapper.updateById(record);
+        }
+        return new SummaryResult(record == null ? null : record.getDocumentName(), briefBatchNo);
+    }
+
+    /**
+     * 流式简报：同步创建任务记录（PENDING，orderId=ALL 批次），由调用方在流结束后更新状态。
+     * 同一批次已有未完成任务时抛异常，避免并发重复调用 LLM。
+     */
+    public String createSyncTask(String ts, String ruleGroupId) {
+        String normalizedTs = normalizeTs(ts);
+        String batchOrderId = "ALL";
+        Object lock = lockFor(batchOrderId, normalizedTs);
+        synchronized (lock) {
+            OrderBriefRecord latest = orderBriefRecordMapper.findLatestByOrderIdAndTs(batchOrderId, normalizedTs);
+            if (latest != null && latest.getTaskId() != null
+                    && (OrderBriefRecord.STATUS_PENDING.equals(latest.getStatus())
+                    || OrderBriefRecord.STATUS_RUNNING.equals(latest.getStatus()))) {
+                throw new RuntimeException("该批次已有简报任务在执行，请稍后再试");
+            }
+            String taskId = UUID.randomUUID().toString();
+            OrderBriefRecord record = OrderBriefRecord.builder()
+                    .orderId(batchOrderId)
+                    .ts(normalizedTs)
+                    .taskId(taskId)
+                    .status(OrderBriefRecord.STATUS_PENDING)
+                    .build();
+            orderBriefRecordMapper.insert(record);
+            log.info("Created streaming order summary task: taskId={}, ts={}, ruleGroupId={}",
+                    taskId, normalizedTs, ruleGroupId);
+            return taskId;
+        }
+    }
+
+    public void markRunning(String taskId) {
+        updateStatus(taskId, OrderBriefRecord.STATUS_RUNNING, null);
+    }
+
+    public void markFailed(String taskId, String errorMessage) {
+        updateStatus(taskId, OrderBriefRecord.STATUS_FAILED, errorMessage);
     }
 
     private Map<String, Object> asDataMap(Object value) {
@@ -320,17 +302,18 @@ public class OrderSummaryService {
     }
 
     /**
-     * 简报专用 LLM 调用：system 使用 summary-system 模板，输出 Markdown（无 JSON 校验）
+     * 构建 LLM 请求（system=summary-system，user=summary-user 模板）。
+     * 固定 stream=true：简报只走流式生成，逐段透传给浏览器。
      */
-    private String callLLMForSummary(String orderJson, String rulesList, String briefStyle, ApiConfig apiConfig) {
+    private HttpEntity<Map<String, Object>> buildSummaryRequest(String orderJson, String rulesList,
+                                                                String briefStyle, ApiConfig apiConfig) {
         String endpoint = apiConfig.getEndpoint();
-        String apiKey = apiConfig.getApiKey();
-        String model = apiConfig.getModel();
-        String auditRole = apiConfig.getAuditRole();
-
         if (endpoint == null || endpoint.isEmpty()) {
             throw new IllegalArgumentException("API endpoint 未配置");
         }
+        String apiKey = apiConfig.getApiKey();
+        String model = apiConfig.getModel();
+        String auditRole = apiConfig.getAuditRole();
 
         Map<String, String> userParams = new HashMap<>();
         userParams.put("orderContent", orderJson);
@@ -340,6 +323,7 @@ public class OrderSummaryService {
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("model", model);
         requestBody.put("temperature", 0.3);
+        requestBody.put("stream", true);
 
         List<Map<String, String>> messages = new ArrayList<>();
         Map<String, String> systemMessage = new HashMap<>();
@@ -360,39 +344,89 @@ public class OrderSummaryService {
         if (apiKey != null && !apiKey.isEmpty()) {
             headers.setBearerAuth(apiKey);
         }
-
-        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
-        log.info("Calling LLM for order summary, model={}", model);
-
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(120000);
-        factory.setReadTimeout(120000);
-        RestTemplate rt = new RestTemplate(factory);
-
-        ResponseEntity<String> response = rt.exchange(endpoint, HttpMethod.POST, entity, String.class);
-        if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
-            throw new RuntimeException("LLM returned: " + response.getStatusCode());
-        }
-
-        return extractContent(response.getBody());
+        return new HttpEntity<>(requestBody, headers);
     }
 
-    private String extractContent(String responseBody) {
+    /**
+     * 简报专用 LLM 流式调用：上游 stream=true 返回 SSE，解析 delta.content 逐段回调 onDelta，
+     * 同时累积返回完整 Markdown 文本。
+     * 用 HttpURLConnection 而非 RestTemplate：需要逐行增量读响应体（流式透传给浏览器）。
+     */
+    public String streamLLMForSummary(String orderJson, String rulesList, String briefStyle,
+                                      ApiConfig apiConfig, Consumer<String> onDelta) {
+        HttpEntity<Map<String, Object>> entity = buildSummaryRequest(orderJson, rulesList, briefStyle, apiConfig);
+        log.info("Calling LLM for order summary (streaming), model={}", apiConfig.getModel());
+
+        StringBuilder full = new StringBuilder();
+        java.net.HttpURLConnection conn = null;
         try {
-            JsonNode root = objectMapper.readTree(responseBody);
-            JsonNode choices = root.path("choices");
-            if (choices.isArray() && choices.size() > 0) {
-                JsonNode content = choices.get(0).path("message").path("content");
-                if (!content.isMissingNode()) {
-                    return content.asText();
+            java.net.URL url = new java.net.URL(apiConfig.getEndpoint());
+            conn = (java.net.HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setConnectTimeout(120000);
+            conn.setReadTimeout(120000);
+            conn.setDoOutput(true);
+            conn.setRequestProperty("Content-Type", "application/json;charset=UTF-8");
+            HttpHeaders headers = entity.getHeaders();
+            for (Map.Entry<String, List<String>> h : headers.entrySet()) {
+                if ("Content-Type".equalsIgnoreCase(h.getKey())) {
+                    continue;
+                }
+                conn.setRequestProperty(h.getKey(), String.join(", ", h.getValue()));
+            }
+            try (java.io.OutputStream os = conn.getOutputStream()) {
+                os.write(objectMapper.writeValueAsBytes(entity.getBody()));
+            }
+
+            int code = conn.getResponseCode();
+            if (code < 200 || code >= 300) {
+                throw new RuntimeException("LLM returned: " + code);
+            }
+
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    // SSE 行：data: {...} / data: [DONE]，忽略注释行与 event: 行
+                    if (line.isEmpty() || line.startsWith(":") || line.startsWith("event:") || line.startsWith("id:")) {
+                        continue;
+                    }
+                    if (!line.startsWith("data:")) {
+                        continue;
+                    }
+                    String payload = line.substring(5).trim();
+                    if (payload.isEmpty()) {
+                        continue;
+                    }
+                    if ("[DONE]".equals(payload)) {
+                        break;
+                    }
+                    try {
+                        JsonNode node = objectMapper.readTree(payload);
+                        JsonNode delta = node.path("choices").path(0).path("delta").path("content");
+                        // 必须是字符串节点：部分分片 content 为 JSON null，直接 asText() 会拼进字面量 "null"
+                        if (delta.isTextual()) {
+                            String text = delta.asText();
+                            if (!text.isEmpty()) {
+                                full.append(text);
+                                if (onDelta != null) {
+                                    onDelta.accept(text);
+                                }
+                            }
+                        }
+                    } catch (Exception e) {
+                        log.debug("Skip non-JSON SSE line: {}", payload);
+                    }
                 }
             }
-            throw new RuntimeException("LLM响应中未找到content字段");
-        } catch (RuntimeException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new RuntimeException("解析LLM响应失败: " + e.getMessage(), e);
+        } catch (java.io.IOException e) {
+            throw new RuntimeException("LLM streaming call failed: " + e.getMessage(), e);
+        } finally {
+            if (conn != null) {
+                conn.disconnect();
+            }
         }
+        return full.toString();
     }
 
     private void updateStatus(String taskId, String status, String errorMessage) {

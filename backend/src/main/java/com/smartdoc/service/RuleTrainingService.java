@@ -33,6 +33,7 @@ public class RuleTrainingService {
 
     private final ApiConfigService apiConfigService;
     private final RuleGroupService ruleGroupService;
+    private final PromptOverrideService promptOverrideService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${smartdoc.audit.timeout:120}")
@@ -65,6 +66,10 @@ public class RuleTrainingService {
         return "ticket".equalsIgnoreCase(auditMode) ? "ticket" : "document";
     }
 
+    /**
+     * 组装训练提示词：优先使用用户在界面上自定义的内容（prompt_override 表），
+     * 未自定义时回退到内置模板；两者都做同样的占位符替换。
+     */
     private String buildTrainingPrompt(String reviewReport, String scope, String existingRules) {
         Map<String, String> params = new HashMap<>();
         params.put("auditScope", scope);
@@ -72,6 +77,11 @@ public class RuleTrainingService {
         params.put("existingRules", existingRules);
         // 变更简报（brief）用总结规则专用模板，其余沿用审核规则模板
         String template = "brief".equals(scope) ? "rule-training-brief-user" : "rule-training-user";
+        String custom = promptOverrideService.findOverrideOrNull(template);
+        if (custom != null) {
+            log.info("规则训练使用自定义提示词: {} ({} 字)", template, custom.length());
+            return PromptTemplate.formatText(custom, params);
+        }
         return PromptTemplate.format(template, params);
     }
 
