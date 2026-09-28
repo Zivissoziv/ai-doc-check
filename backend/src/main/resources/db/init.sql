@@ -1,4 +1,15 @@
--- SmartDoc 数据库初始化脚本
+-- ============================================================================
+-- SmartDoc 数据库初始化脚本（全量最新结构）
+-- ============================================================================
+-- 用途：全新环境一次性建库建表。已整合 db/ 目录下全部升级脚本的内容：
+--   upgrade-20260903-brief.sql          -> rule_group.group_type/brief_style、rule.group_type、order_brief_record
+--   upgrade-20260915-permission-group.sql -> permission_group
+--   upgrade-20260916-order-api-post.sql -> api_config.order_http_method/order_list_body/order_detail_body
+--   upgrade-20260918-prompt-override.sql -> prompt_override
+-- 存量数据库请勿执行本脚本，按 db/upgrade-*.sql 顺序升级即可。
+-- 本脚本只做 CREATE TABLE IF NOT EXISTS，可安全重复执行；不含任何初始化数据。
+-- ============================================================================
+
 SET NAMES utf8mb4;
 SET CHARACTER SET utf8mb4;
 
@@ -8,24 +19,33 @@ USE smartdoc;
 
 SET CHARACTER SET utf8mb4;
 
+-- ---------------------------------------------------------------------------
+-- 规则组表
+-- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS rule_group (
     id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键',
     group_id VARCHAR(50) NOT NULL UNIQUE COMMENT '规则组标识',
     group_name VARCHAR(200) NOT NULL COMMENT '规则组名称',
+    group_type VARCHAR(20) NOT NULL DEFAULT 'AUDIT' COMMENT '规则组类型：AUDIT=审核规则组/BRIEF=变更简报总结规则组',
+    brief_style TEXT DEFAULT NULL COMMENT '简报风格（仅BRIEF规则组使用，自由文本引导模型输出格式）',
     is_default BOOLEAN DEFAULT FALSE COMMENT '是否默认规则组',
     is_locked BOOLEAN DEFAULT FALSE COMMENT '是否锁定',
     lock_password VARCHAR(100) DEFAULT NULL COMMENT '锁定密码',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    INDEX idx_group_group_id (group_id),
+    -- group_id 已由 UNIQUE 约束自带索引，无需重复建普通索引
+    INDEX idx_group_type (group_type),
     INDEX idx_group_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='规则组表';
 
+-- ---------------------------------------------------------------------------
+-- 规则表
+-- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS rule (
     id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键',
     rule_group_id BIGINT NOT NULL COMMENT '规则组ID',
     rule_name VARCHAR(200) NOT NULL COMMENT '规则名称',
-    prompt VARCHAR(5000) NOT NULL COMMENT '审核提示词',
+    prompt TEXT NOT NULL COMMENT '审核提示词',
     severity VARCHAR(20) DEFAULT 'WARNING' COMMENT '严重级别：ERROR/WARNING/INFO',
     is_enabled BOOLEAN DEFAULT TRUE COMMENT '是否启用',
     sort_order INT DEFAULT 0 COMMENT '排序序号',
@@ -39,6 +59,9 @@ CREATE TABLE IF NOT EXISTS rule (
     INDEX idx_rule_group_scope (rule_group_id, audit_scope)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='规则表';
 
+-- ---------------------------------------------------------------------------
+-- API 配置表
+-- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS api_config (
     id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键',
     provider VARCHAR(50) DEFAULT 'custom' COMMENT '服务提供方',
@@ -56,6 +79,9 @@ CREATE TABLE IF NOT EXISTS api_config (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='API配置表';
 
+-- ---------------------------------------------------------------------------
+-- 模板表
+-- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS template (
     id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键',
     template_name VARCHAR(200) NOT NULL COMMENT '模板名称',
@@ -66,6 +92,9 @@ CREATE TABLE IF NOT EXISTS template (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='模板表';
 
+-- ---------------------------------------------------------------------------
+-- 文档审核反馈表
+-- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS audit_feedback (
     id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键',
     rule_id BIGINT DEFAULT NULL COMMENT '规则ID',
@@ -73,7 +102,7 @@ CREATE TABLE IF NOT EXISTS audit_feedback (
     audit_batch_no VARCHAR(32) DEFAULT NULL COMMENT '审核批次号',
     pass BOOLEAN DEFAULT NULL COMMENT '审核是否通过',
     confidence INT DEFAULT NULL COMMENT '置信度',
-    results_json VARCHAR(10000) DEFAULT NULL COMMENT '审核结果JSON',
+    results_json TEXT DEFAULT NULL COMMENT '审核结果JSON',
     feedback_type VARCHAR(20) DEFAULT NULL COMMENT '反馈类型：ACCURATE/INACCURATE',
     reason VARCHAR(500) DEFAULT NULL COMMENT '反馈原因',
     duration_ms BIGINT DEFAULT NULL COMMENT '审核耗时，单位毫秒',
@@ -85,6 +114,9 @@ CREATE TABLE IF NOT EXISTS audit_feedback (
     INDEX idx_feedback_batch_no (audit_batch_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='文档审核反馈表';
 
+-- ---------------------------------------------------------------------------
+-- 工单审核记录表
+-- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS audit_ticket_record (
     id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键',
     ticket_id VARCHAR(100) NOT NULL COMMENT '工单ID',
@@ -101,6 +133,9 @@ CREATE TABLE IF NOT EXISTS audit_ticket_record (
     INDEX idx_audit_ticket_batch_no (audit_batch_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='工单审核记录表';
 
+-- ---------------------------------------------------------------------------
+-- 工单审核反馈表
+-- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS audit_order_feedback (
     id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键',
     rule_id BIGINT DEFAULT NULL COMMENT '规则ID',
@@ -108,7 +143,7 @@ CREATE TABLE IF NOT EXISTS audit_order_feedback (
     audit_batch_no VARCHAR(32) DEFAULT NULL COMMENT '审核批次号',
     pass BOOLEAN DEFAULT NULL COMMENT '审核是否通过',
     confidence INT DEFAULT NULL COMMENT '置信度',
-    results_json VARCHAR(10000) DEFAULT NULL COMMENT '审核结果JSON',
+    results_json TEXT DEFAULT NULL COMMENT '审核结果JSON',
     feedback_type VARCHAR(20) DEFAULT NULL COMMENT '反馈类型：ACCURATE/INACCURATE',
     reason VARCHAR(500) DEFAULT NULL COMMENT '反馈原因',
     duration_ms BIGINT DEFAULT NULL COMMENT '审核耗时，单位毫秒',
@@ -120,6 +155,9 @@ CREATE TABLE IF NOT EXISTS audit_order_feedback (
     INDEX idx_order_feedback_batch_no (audit_batch_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='工单审核反馈表';
 
+-- ---------------------------------------------------------------------------
+-- 工单审核记录表
+-- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS audit_order_record (
     id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键',
     order_id VARCHAR(100) NOT NULL COMMENT '工单ID',
@@ -136,6 +174,9 @@ CREATE TABLE IF NOT EXISTS audit_order_record (
     INDEX idx_audit_order_batch_no (audit_batch_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='工单审核记录表';
 
+-- ---------------------------------------------------------------------------
+-- 变更简报总结记录表
+-- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS order_brief_record (
     id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键',
     order_id VARCHAR(100) NOT NULL COMMENT '工单ID',
@@ -154,6 +195,9 @@ CREATE TABLE IF NOT EXISTS order_brief_record (
     INDEX idx_brief_batch_no (brief_batch_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='变更简报总结记录表';
 
+-- ---------------------------------------------------------------------------
+-- 权限组表
+-- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS permission_group (
     id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键',
     perm_key VARCHAR(64) NOT NULL UNIQUE COMMENT 'URL参数值（?pgroup=xxx）',
@@ -165,7 +209,9 @@ CREATE TABLE IF NOT EXISTS permission_group (
     INDEX idx_perm_key (perm_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='权限组表';
 
-
+-- ---------------------------------------------------------------------------
+-- 提示词自定义覆盖表
+-- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS prompt_override (
     id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键',
     prompt_key VARCHAR(64) NOT NULL UNIQUE COMMENT '提示词模板名（对应 prompts/{key}.prompt）',
